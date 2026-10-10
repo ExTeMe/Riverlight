@@ -1,0 +1,366 @@
+[
+  {
+    "id": "cottage",
+    "name": "河畔小屋",
+    "category": "home",
+    "kind": "house",
+    "w": 2,
+    "d": 2,
+    "color": "#ece1c7",
+    "floors": 1,
+    "roof": "#b35d43"
+  },
+  {
+    "id": "sage-house",
+    "name": "鼠尾草小屋",
+    "category": "home",
+    "kind": "house",
+    "w": 2,
+    "d": 2,
+    "color": "#a7b9a5",
+    "floors": 1,
+    "roof": "#586c6b"
+  },
+  {
+    "id": "rose-house",
+    "name": "蔷薇小屋",
+    "category": "home",
+    "kind": "house",
+    "w": 2,
+    "d": 2,
+    "color": "#dab0a2",
+    "floors": 1,
+    "roof": "#9a5445"
+  },
+  {
+    "id": "villa",
+    "name": "花园别墅",
+    "category": "home",
+    "kind": "house",
+    "w": 3,
+    "d": 2,
+    "color": "#e9e3d2",
+    "floors": 2,
+    "roof": "#9c6550"
+  },
+  {
+    "id": "townhouse",
+    "name": "沿街联排",
+    "category": "home",
+    "kind": "apartment",
+    "w": 2,
+    "d": 2,
+    "color": "#b8755b",
+    "floors": 3
+  },
+  {
+    "id": "apartment",
+    "name": "阳光公寓",
+    "category": "home",
+    "kind": "apartment",
+    "w": 2,
+    "d": 2,
+    "color": "#e2d1af",
+    "floors": 5
+  },
+  {
+    "id": "mint-apartment",
+    "name": "薄荷公寓",
+    "category": "home",
+    "kind": "apartment",
+    "w": 2,
+    "d": 2,
+    "color": "#a4b9b2",
+    "floors": 4
+  },
+  {
+    "id": "residence",
+    "name": "空中花园",
+    "category": "home",
+    "kind": "tower",
+    "w": 3,
+    "d": 3,
+    "color": "#d9d8c8",
+    "floors": 10
+  },
+  {
+    "id": "cafe",
+    "name": "转角咖啡",
+    "category": "city",
+    "kind": "shop",
+    "w": 2,
+    "d": 2,
+    "color": "#e6dac4",
+    "floors": 2,
+    "awning": "#627b62"
+  },
+  {
+    "id": "bakery",
+    "name": "晨光面包房",
+    "category": "city",
+    "kind": "shop",
+    "w": 2,
+    "d": 2,
+    "color": "#dab49a",
+    "floors": 2,
+    "awning": "#b65f45"
+  },
+  {
+    "id": "bookshop",
+    "name": "河岸书店",
+    "category": "city",
+    "kind": "shop",
+    "w": 2,
+    "d": 2,
+    "color": "#c1cdcb",
+    "floors": 2,
+    "awning": "#4d777a"
+  },
+  {
+    "id": "market",
+    "name": "街区集市",
+    "category": "city",
+    "kind": "shop",
+    "w": 3,
+    "d": 2,
+    "color": "#e7c58e",
+    "floors": 1,
+    "awning": "#d49e4f"
+  },
+  {
+    "id": "mall",
+    "name": "河光购物中心",
+    "category": "city",
+    "kind": "mall",
+    "w": 5,
+    "d": 4,
+    "color": "#d9c9ad",
+    "floors": 2
+  },
+  {
+    "id": "office",
+    "name": "白榆办公楼",
+    "category": "city",
+    "kind": "office",
+    "w": 3,
+    "d": 3,
+    "color": "#e4e4d9",
+    "floors": 9
+  },
+  {
+    "id": "glass-tower",
+    "name": "滨江中心",
+    "category": "city",
+    "kind": "tower",
+    "w": 3,
+    "d": 3,
+    "color": "#789b9e",
+    "floors": 15
+  },
+  {
+    "id": "terrace-tower",
+    "name": "云阶大厦",
+    "category": "city",
+    "kind": "tower",
+    "w": 3,
+    "d": 3,
+    "color": "#d9d3c3",
+    "floors": 12,
+    "stepped": true
+  },
+  {
+    "id": "hotel",
+    "name": "日落酒店",
+    "category": "city",
+    "kind": "office",
+    "w": 3,
+    "d": 2,
+    "color": "#d2b09b",
+    "floors": 7
+  },
+  {
+    "id": "library",
+    "name": "城市图书馆",
+    "category": "civic",
+    "kind": "civic",
+    "w": 3,
+    "d": 3,
+    "color": "#e2dac8",
+    "floors": 2
+  },
+  {
+    "id": "museum",
+    "name": "河畔美术馆",
+    "category": "civic",
+    "kind": "civic",
+    "w": 3,
+    "d": 2,
+    "color": "#e8e6d9",
+    "floors": 2
+  },
+  {
+    "id": "school",
+    "name": "梧桐小学",
+    "category": "civic",
+    "kind": "apartment",
+    "w": 3,
+    "d": 2,
+    "color": "#dfbb95",
+    "floors": 3
+  },
+  {
+    "id": "clinic",
+    "name": "社区诊所",
+    "category": "civic",
+    "kind": "civic",
+    "w": 2,
+    "d": 2,
+    "color": "#dfebe1",
+    "floors": 2
+  },
+  {
+    "id": "clocktower",
+    "name": "时光钟楼",
+    "category": "civic",
+    "kind": "clock",
+    "w": 2,
+    "d": 2,
+    "color": "#cfac87",
+    "floors": 5
+  },
+  {
+    "id": "park",
+    "name": "口袋公园",
+    "category": "park",
+    "kind": "park",
+    "w": 2,
+    "d": 2,
+    "color": "#81a077"
+  },
+  {
+    "id": "plaza",
+    "name": "喷泉广场",
+    "category": "park",
+    "kind": "fountain",
+    "w": 3,
+    "d": 3,
+    "color": "#c9c6af"
+  },
+  {
+    "id": "grove",
+    "name": "城市小森林",
+    "category": "park",
+    "kind": "grove",
+    "w": 3,
+    "d": 3,
+    "color": "#719774"
+  },
+  {
+    "id": "garden",
+    "name": "花间庭院",
+    "category": "park",
+    "kind": "garden",
+    "w": 2,
+    "d": 2,
+    "color": "#a9ac76"
+  },
+  {
+    "id": "amusement",
+    "name": "河畔游乐园",
+    "category": "park",
+    "kind": "amusement",
+    "w": 6,
+    "d": 5,
+    "color": "#c58c63"
+  },
+  {
+    "id": "road",
+    "name": "城市道路",
+    "category": "road",
+    "kind": "road",
+    "w": 1,
+    "d": 1,
+    "color": "#747b7d"
+  },
+  {
+    "id": "bridge",
+    "name": "跨河桥梁",
+    "category": "road",
+    "kind": "bridge",
+    "w": 1,
+    "d": 1,
+    "color": "#b4b8ae"
+  },
+  {
+    "id": "path",
+    "name": "步行小径",
+    "category": "road",
+    "kind": "path",
+    "w": 1,
+    "d": 1,
+    "color": "#d5c8ac"
+  },
+  {
+    "id": "tree",
+    "name": "阔叶树",
+    "category": "detail",
+    "kind": "tree",
+    "w": 1,
+    "d": 1,
+    "color": "#6d9568"
+  },
+  {
+    "id": "pine",
+    "name": "常青松",
+    "category": "detail",
+    "kind": "pine",
+    "w": 1,
+    "d": 1,
+    "color": "#4c786a"
+  },
+  {
+    "id": "cherry",
+    "name": "樱花树",
+    "category": "detail",
+    "kind": "cherry",
+    "w": 1,
+    "d": 1,
+    "color": "#d9aaae"
+  },
+  {
+    "id": "flowers",
+    "name": "四季花坛",
+    "category": "detail",
+    "kind": "flowers",
+    "w": 1,
+    "d": 1,
+    "color": "#b8806b"
+  },
+  {
+    "id": "bench",
+    "name": "公园长椅",
+    "category": "detail",
+    "kind": "bench",
+    "w": 1,
+    "d": 1,
+    "color": "#a67d52"
+  },
+  {
+    "id": "lamp",
+    "name": "街角路灯",
+    "category": "detail",
+    "kind": "lamp",
+    "w": 1,
+    "d": 1,
+    "color": "#e3cb91"
+  },
+  {
+    "id": "pier",
+    "name": "水岸小码头",
+    "category": "detail",
+    "kind": "pier",
+    "w": 2,
+    "d": 2,
+    "color": "#ae9065"
+  }
+]
