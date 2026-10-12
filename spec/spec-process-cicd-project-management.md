@@ -27,7 +27,7 @@ tags: [process, github-actions, project-management]
 | 仓库访问 | 仓库令牌仅需源码读取、Issues 写入 |
 | Project 访问 | 独立 Secret `PROJECT_TOKEN`；个人 Projects 与私有仓库所需授权由所有者设置；令牌不进入源码、输出或任务正文 |
 | 项目标识 | 可选变量 `PROJECT_NUMBER` 指向现有项目；未设置时精确匹配 `Riverlight 开发`，初始化才能创建 |
-| 阶段与关系 | 阶段和任务 ID 在 Issue 中保留；阶段规格来自 DEVELOPMENT_PLAN，关联关系使用原生子任务与阻塞关系 |
+| 阶段与关系 | 阶段和任务 ID 在 Issue 中保留；阶段规格来自 DEVELOPMENT_PLAN，关联关系使用原生子任务与阻塞关系。变更阶段同步里程碑和父任务；明确修改前置字段时移除本项目中失效的任务依赖，保留其他引用 |
 | 状态入口 | Issue 的状态与互斥标签 `status:in-progress`、`status:review`、`status:blocked`；Project 为自动生成的视图，不同时手工维护两套状态 |
 | 视觉验收 | 需用户确认的任务，只有收到当前版本确认后才添加 `visual-approved`；提前关闭但缺确认时仍显示待验收 |
 

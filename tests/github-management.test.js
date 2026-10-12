@@ -47,9 +47,9 @@ test('bootstrap links repository and project; later issue events use fresh state
       { id: 2, node_id: 'I2', number: 2, title: '[BASE-02] 基线', body: '**阶段**：R0\n**系统与优先级**：S13 / P1\n**前置**：BASE-01', labels: [], state: 'open' },
       { id: 3, node_id: 'I3', number: 3, title: '[R1] 画风阶段验收', body: '**阶段**：R1\n**前置**：R0 出口', labels: [], state: 'open' },
     ];
-    const labels = [], milestones = [], children = [], items = new Map();
+    const labels = [], milestones = [], children = new Map(), items = new Map();
     let options = ['Todo', 'In Progress', 'Done'].map((name, i) => ({ id: `O${i}`, name }));
-    const blockers = [];
+    const blockers = new Map();
     let linked = false, linkWrites = 0, optionWrites = 0, childWrites = 0, blockerWrites = 0;
     let freshLabels = [], discardStatusWrites = false;
     const response = data => ({ ok: true, status: 200, json: async () => structuredClone(data) });
@@ -73,10 +73,27 @@ test('bootstrap links repository and project; later issue events use fresh state
       if (endpoint === 'repos/owner/repo/milestones') { if (request.method === 'POST') { const milestone = { ...body, number: milestones.length + 1 }; milestones.push(milestone); return response(milestone); } return response(milestones); }
       if (endpoint === 'repos/owner/repo/issues') return response(issues);
       if (/\/issues\/\d+\/dependencies\/blocked_by$/.test(endpoint)) {
-        if (request.method === 'POST') { blockerWrites++; blockers.push(issues.find(i => i.id === body.issue_id)); }
-        return response(blockers);
+        const number = Number(endpoint.match(/\/issues\/(\d+)/)[1]);
+        if (!blockers.has(number)) blockers.set(number, []);
+        if (request.method === 'POST') { blockerWrites++; blockers.get(number).push(issues.find(i => i.id === body.issue_id)); }
+        return response(blockers.get(number));
       }
-      if (endpoint.endsWith('/sub_issues')) { if (request.method === 'POST') { childWrites++; children.push(issues.find(i => i.id === body.sub_issue_id)); } return response(children); }
+      const deletion = endpoint.match(/\/issues\/(\d+)\/dependencies\/blocked_by\/(\d+)$/);
+      if (deletion && request.method === 'DELETE') {
+        const number = Number(deletion[1]);
+        blockers.set(number, blockers.get(number).filter(i => i.id !== Number(deletion[2])));
+        return response(issues.find(i => i.id === Number(deletion[2])));
+      }
+      if (endpoint.endsWith('/sub_issues')) {
+        const parent = Number(endpoint.match(/\/issues\/(\d+)/)[1]);
+        if (!children.has(parent)) children.set(parent, []);
+        if (request.method === 'POST') {
+          childWrites++;
+          for (const [number, entries] of children) children.set(number, entries.filter(i => i.id !== body.sub_issue_id));
+          children.get(parent).push(issues.find(i => i.id === body.sub_issue_id));
+        }
+        return response(children.get(parent));
+      }
       const match = endpoint.match(/\/issues\/(\d+)(\/labels)?$/);
       if (match) {
         const issue = issues.find(i => i.number === Number(match[1]));
@@ -94,7 +111,7 @@ test('bootstrap links repository and project; later issue events use fresh state
     assert.deepEqual(options.map(o => o.name), STATUS);
     assert.equal(childWrites, 1);
     assert.equal(blockerWrites, 1);
-    assert.equal(blockers[0].number, 1);
+    assert.equal(blockers.get(3)[0].number, 1);
     assert.equal(items.get('I2').fieldValueByName.name, '待办');
     freshLabels = [{ name: 'status:review' }];
     await runManagement({ ...env, MANAGEMENT_BOOTSTRAP: 'false' }, mock);
@@ -104,6 +121,14 @@ test('bootstrap links repository and project; later issue events use fresh state
     assert.equal(childWrites, 1);
     assert.equal(blockerWrites, 1);
     assert.equal(items.get('I2').fieldValueByName.name, '待验收');
+    const external = { id: 99, number: 99 };
+    blockers.set(2, [issues[0], external]);
+    issues[1].body = '**阶段**：R1\n**系统与优先级**：S13 / P1\n**前置**：无';
+    await runManagement({ ...env, MANAGEMENT_BOOTSTRAP: 'false' }, mock);
+    assert.equal(issues[1].milestone.title.startsWith('R1 '), true);
+    assert.deepEqual(children.get(1), []);
+    assert.equal(children.get(3)[0].id, 2);
+    assert.deepEqual(blockers.get(2), [external]);
     freshLabels = [{ name: 'status:blocked' }];
     discardStatusWrites = true;
     await assert.rejects(runManagement({ ...env, MANAGEMENT_BOOTSTRAP: 'false' }, mock), /could not be verified/);

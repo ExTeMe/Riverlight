@@ -82,7 +82,7 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap)
   }
   for (const issue of targets) {
     const metadata = issueMetadata(issue), milestone = milestones.find(m => m.title.startsWith(`${metadata.phase} `));
-    if (milestone && !issue.milestone) await api(`${base}/issues/${issue.number}`, 'PATCH', { milestone: milestone.number });
+    if (milestone && issue.milestone?.number !== milestone.number) await api(`${base}/issues/${issue.number}`, 'PATCH', { milestone: milestone.number });
     if (metadata.priority && !issue.labels.some(label => label.name === `priority:${metadata.priority}`)) {
       await api(`${base}/issues/${issue.number}/labels`, 'POST', { labels: [`priority:${metadata.priority}`] });
     }
@@ -93,6 +93,17 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap)
     }
     if (metadata.task || /^\[R\d+\]/.test(issue.title)) {
       const blockers = await api.all(`${base}/issues/${issue.number}/dependencies/blocked_by`);
+      const expected = new Set(metadata.dependencies.map(id => (tasks.get(id) || stageParents.get(id))?.id).filter(Boolean));
+      // Only reconcile dependencies within this task namespace when the field is explicit.
+      // Preserve external/manual references that do not belong to the managed task set.
+      if (/\*\*前置\*\*：/.test(issue.body || '')) {
+        const managedIds = new Set([...tasks.values(), ...stageParents.values()].map(i => i.id));
+        for (const blocker of blockers) {
+          if (managedIds.has(blocker.id) && !expected.has(blocker.id)) {
+            await api(`${base}/issues/${issue.number}/dependencies/blocked_by/${blocker.id}`, 'DELETE');
+          }
+        }
+      }
       for (const id of metadata.dependencies) {
         const blocker = tasks.get(id) || stageParents.get(id);
         if (blocker && blocker.id !== issue.id && !blockers.some(b => b.id === blocker.id)) {
