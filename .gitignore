@@ -6,3 +6,17 @@ dist/
 .env.*
 !.env.example
 *.local
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Blender automatic backups; keep authored .blend files tracked
+*.blend[0-9]*
+
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
