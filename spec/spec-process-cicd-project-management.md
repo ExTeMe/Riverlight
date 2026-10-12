@@ -9,7 +9,7 @@ tags: [process, github-actions, project-management]
 
 ## 目标与范围
 
-在 GitHub 管理任务、阶段与验收，维护仓库里程碑、任务关系和个人 Project。任务数据来自 Issues，不维护本地状态镜像，不依赖 GitHub CLI。本文描述已经写入工作区的行为契约；远端运行尚待验证。
+在 GitHub 管理任务、阶段与验收，维护仓库里程碑、任务关系和个人 Project。任务数据来自 Issues，不维护本地状态镜像，不依赖 GitHub CLI。
 
 ## 事件与结果
 
@@ -30,7 +30,6 @@ tags: [process, github-actions, project-management]
 | 阶段与关系 | 阶段和任务 ID 在 Issue 中保留；阶段规格来自 DEVELOPMENT_PLAN，关联关系使用原生子任务与阻塞关系 |
 | 状态入口 | Issue 的状态与互斥标签 `status:in-progress`、`status:review`、`status:blocked`；Project 为自动生成的视图，不同时手工维护两套状态 |
 | 视觉验收 | 需用户确认的任务，只有收到当前版本确认后才添加 `visual-approved`；提前关闭但缺确认时仍显示待验收 |
-| 完成 | 工作流不自动关闭 Issue、合并 PR、发布网页或宣布阶段通过 |
 
 ## 执行与失败边界
 
