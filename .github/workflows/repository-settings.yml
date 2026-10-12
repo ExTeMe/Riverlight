@@ -1,0 +1,41 @@
+name: Configure main protection
+
+on:
+  workflow_dispatch:
+    inputs:
+      ruleset_id:
+        description: Exact reviewed ruleset ID that exclusively targets main
+        required: true
+        type: string
+      expected_updated_at:
+        description: Updated timestamp from the reviewed ruleset
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-settings-${{ github.repository }}
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  configure:
+    if: github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - run: node --test tests/github-settings.test.js
+      - run: node scripts/github-settings.mjs
+        env:
+          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          RULESET_ID: ${{ inputs.ruleset_id }}
+          RULESET_EXPECTED_UPDATED_AT: ${{ inputs.expected_updated_at }}

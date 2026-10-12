@@ -1,22 +1,75 @@
 name: 开发任务或阶段
 description: 基础设施、验证工作或阶段交付
 body:
+  - type: input
+    id: task
+    attributes:
+      label: 任务编号
+      description: "维护者分诊后填写稳定编号，例如 EDIT-01；保留已有编号。"
+  - type: dropdown
+    id: phase
+    attributes:
+      label: 阶段
+      options:
+        - "待分诊"
+        - "R0"
+        - "R1"
+        - "R2"
+        - "R3"
+        - "R4"
+        - "R5"
+        - "R6"
+        - "R7"
+        - "R8"
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: 优先级
+      options:
+        - "待分诊"
+        - "P0"
+        - "P1"
+        - "P2"
+        - "P3"
+    validations:
+      required: true
+  - type: input
+    id: dependencies
+    attributes:
+      label: 前置
+      description: "任务 ID 或阶段出口，例如 ROAD-04、R2；无依赖填写 无；未知时填写 待分诊。"
+    validations:
+      required: true
+  - type: dropdown
+    id: visual
+    attributes:
+      label: 视觉验收
+      options:
+        - "按可复现规则与行为检查"
+        - "需要用户确认"
+    validations:
+      required: true
   - type: textarea
     id: objective
     attributes:
       label: 目标与范围
+      description: "具体问题、交付物、非目标和对应规范。"
     validations:
       required: true
   - type: textarea
     id: checklist
     attributes:
       label: 交付与验收清单
-      description: 阶段使用子 Issue；不可独立验收的小步骤留在检查清单。
-      placeholder: "- [ ] 交付物与验收结果"
+      description: "步骤与期望结果；阶段出口配原生子任务；小步骤留在清单。"
+      placeholder: "- [ ] 给定…，执行…，结果…"
     validations:
       required: true
   - type: textarea
-    id: dependencies
+    id: constraints
     attributes:
-      label: 依赖与约束
-      description: 前置任务、兼容性要求和对应规范。
+      label: 兼容性与证据要求
+      description: "权限、失败恢复、数据保护、证据类型、未验证边界和待确认项。"
+    validations:
+      required: true

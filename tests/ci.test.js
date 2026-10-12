@@ -17,6 +17,7 @@ test('only dev application pushes and explicit dev runs can publish', () => {
   assert.equal(shouldPublish({ eventName: 'push', ref: 'refs/heads/dev', changedFiles: ['README.md', 'AGENTS.md', 'docs/PROGRESS.md'] }), false);
   assert.equal(shouldPublish({ eventName: 'push', ref: 'refs/heads/dev', changedFiles: ['docs/PROGRESS.md', 'public/models/house.glb'] }), true);
   assert.equal(shouldPublish({ eventName: 'push', ref: 'refs/heads/dev', changedFiles: ['.github/workflows/project-management.yml', 'scripts/github-management.mjs', 'tests/github-management.test.js'] }), false);
+  assert.equal(shouldPublish({ eventName: 'push', ref: 'refs/heads/dev', changedFiles: ['scripts/github-settings.mjs', 'scripts/ci-policy.mjs', 'tests/github-settings.test.js', 'tests/ci.test.js'] }), false);
 });
 
 test('static snapshots preserve source checkout, update assets, remove obsolete output, and keep history', () => {
