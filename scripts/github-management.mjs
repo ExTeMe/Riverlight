@@ -360,7 +360,7 @@ export async function runManagement(env = process.env, request = fetch) {
   const warnings = [...problems].map(([number, messages]) => `- #${number}: ${messages.join('；')}`).join('\n');
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `Project synchronized: ${project.url}\nIssues checked: ${issues.length}\n\n${warnings}\n`);
   console.log(`Project synchronized: ${project.url}; ${issues.length} issues checked.`);
-  if (problems.size) throw new Error(`${problems.size} issues require triage; see the workflow summary. Project status reflects those blockers.`);
+  if (problems.size) console.warn(`::warning::${problems.size} issues require triage; see the workflow summary. Project status reflects those blockers.`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
