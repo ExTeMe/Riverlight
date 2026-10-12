@@ -1,6 +1,6 @@
 # 系统需求、边界与接口约定
 
-更新：2026-10-10。本文定义目标设计，**不是当前实现清单**。现状见 PROGRESS/IMPLEMENTATION，执行状态见 BACKLOG。
+更新：2026-10-13。本文定义目标设计，**不是当前实现清单**。实际实现边界见 IMPLEMENTATION，执行状态与验收证据直接在 GitHub Issues/Projects 查询。
 
 ## 0. 共同约定
 

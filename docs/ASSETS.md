@@ -10,7 +10,7 @@
 - 可编辑源文件：`assets/blender/riverlight-city-library.blend`（住宅、商业、公共、景观等库）、`assets/blender/riverlight-shopping-gallery.blend`（商场）。既有 Blender 场景保留，建模使用独立场景。
 - 建模/导出脚本：`scripts/blender/build_city_assets.py`、`scripts/blender/build_mall.py`。`assets/catalog-reference.json` 记录建模时原始尺度，运行时可按目录占地适配；修改时需保持原始尺度依据一致。
 - 建模脚本不硬编码开发者本机路径：优先使用本地 `RIVERLIGHT_PROJECT_ROOT` 变量，其次从脚本、当前工作目录或已保存 BLEND 的位置向上查找项目。无法识别时明确报错；环境变量的实际值不提交仓库。
-- 动画资产包括商场旋转门、游乐园摩天轮及座舱、旋转木马、喷泉动态部件。实际浏览器动画与远景策略仍需按 `PROGRESS.md` 完成最终验收。
+- 动画资产包括商场旋转门、游乐园摩天轮及座舱、旋转木马、喷泉动态部件。实际浏览器动画与远景策略仍需按 GitHub 中关联任务完成最终验收。
 - 本轮修正美术馆、诊所的外墙材质语义并重新导出近远景 GLB；可编辑城市库源文件同步保存。该修复不等同于新一轮造型精修完成。
 - `src/asset-loader.js` 加载 GLB，`src/models.js` 转换共享材质、合批静态几何并保留动态部件；`src/architecture.js` 是加载失败时的备用模型，不是正式 Blender 资产的替代交付。
 - 道路、桥梁与连接几何由 `src/roads.js` 在运行时生成；河岸地形与部分沿岸家具由 `src/world.js`、`src/models.js` 生成。车辆、船只、人物目前仍是运行时原创几何，后续可扩展 Blender 资产。

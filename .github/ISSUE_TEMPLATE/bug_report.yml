@@ -1,0 +1,28 @@
+name: 缺陷报告
+description: 提供可复现的问题与影响
+body:
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 问题与复现步骤
+      description: 最小复现场景、操作顺序；存档请先脱敏。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 版本与环境
+      description: 提交或版本、浏览器版本、必要的画质设置。
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 影响与证据
+      description: 是否影响存档、启动或核心建造；必要截图、日志、相关任务。
