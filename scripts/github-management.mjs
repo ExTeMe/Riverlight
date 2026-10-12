@@ -153,13 +153,17 @@ async function syncProject(api, project, issues, bootstrap) {
     });
     field = result.updateProjectV2Field.projectV2Field;
   }
-  const items = new Map(); let cursor = null;
-  do {
-    const data = await api.graphql('query($id:ID!,$cursor:String){node(id:$id){... on ProjectV2{items(first:100,after:$cursor){nodes{id content{... on Issue{id}} fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}} pageInfo{hasNextPage endCursor}}}}}', { id: project.id, cursor });
-    const page = data.node.items;
-    for (const item of page.nodes) if (item.content?.id) items.set(item.content.id, item);
-    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
-  } while (cursor);
+  const readItems = async () => {
+    const items = new Map(); let cursor = null;
+    do {
+      const data = await api.graphql('query($id:ID!,$cursor:String){node(id:$id){... on ProjectV2{items(first:100,after:$cursor){nodes{id content{... on Issue{id}} fieldValueByName(name:"Status"){... on ProjectV2ItemFieldSingleSelectValue{name}}} pageInfo{hasNextPage endCursor}}}}}', { id: project.id, cursor });
+      const page = data.node.items;
+      for (const item of page.nodes) if (item.content?.id) items.set(item.content.id, item);
+      cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+    } while (cursor);
+    return items;
+  };
+  const items = await readItems();
   for (const issue of issues) {
     let item = items.get(issue.node_id);
     if (!item) {
@@ -170,6 +174,12 @@ async function syncProject(api, project, issues, bootstrap) {
     if (item.fieldValueByName?.name !== status) await api.graphql('mutation($project:ID!,$item:ID!,$field:ID!,$option:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{singleSelectOptionId:$option}}){projectV2Item{id}}}', {
       project: project.id, item: item.id, field: field.id, option: field.options.find(o => o.name === status).id,
     });
+  }
+  const synchronized = await readItems();
+  for (const issue of issues) {
+    if (synchronized.get(issue.node_id)?.fieldValueByName?.name !== desiredStatus(issue)) {
+      throw new Error(`Project synchronization could not be verified for Issue #${issue.number}.`);
+    }
   }
 }
 
