@@ -1,0 +1,22 @@
+name: 开发任务或阶段
+description: 基础设施、验证工作或阶段交付
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: 目标与范围
+    validations:
+      required: true
+  - type: textarea
+    id: checklist
+    attributes:
+      label: 交付与验收清单
+      description: 阶段使用子 Issue；不可独立验收的小步骤留在检查清单。
+      placeholder: "- [ ] 交付物与验收结果"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依赖与约束
+      description: 前置任务、兼容性要求和对应规范。

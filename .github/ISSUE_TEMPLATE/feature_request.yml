@@ -1,0 +1,30 @@
+name: 功能需求
+description: 提出可独立验收的产品功能
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 目标与动机
+      description: 解决什么问题，用户将看到什么变化？请先搜索已有任务。
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 范围与当前实现
+      description: 包含哪些行为，现有原型还缺什么？涉及系统规范时引用相关章节。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收条件
+      description: 用可复现的操作和期望结果描述；视觉任务给出固定场景和镜头。
+      placeholder: "- [ ] 验收条件"
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 阶段与依赖
+      description: 所属阶段、已有任务编号、阻塞任务和建议优先级；由维护者分诊。
