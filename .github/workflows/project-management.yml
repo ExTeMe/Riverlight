@@ -6,6 +6,8 @@ on:
   push:
     branches: [dev]
     paths: ['.github/workflows/project-management.yml', 'scripts/github-management.mjs']
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
       bootstrap:
@@ -20,6 +22,7 @@ permissions:
 concurrency:
   group: project-management-${{ github.repository }}
   cancel-in-progress: false
+  queue: max
 
 jobs:
   synchronize:
