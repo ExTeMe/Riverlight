@@ -25,6 +25,7 @@ permissions:
 concurrency:
   group: city-${{ github.ref }}
   cancel-in-progress: false
+  queue: max
 
 env:
   SITE_BASE: /${{ github.event.repository.name }}/
@@ -47,6 +48,16 @@ jobs:
       - run: npm ci
       - run: npm run check:privacy
       - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: browser-evidence
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 7
       - run: npm run build -- --base="$SITE_BASE"
       - run: node scripts/check-dist.mjs "$SITE_BASE"
       - id: policy

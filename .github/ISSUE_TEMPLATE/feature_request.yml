@@ -1,6 +1,16 @@
 name: 功能需求
 description: 提出可独立验收的产品功能
 body:
+  - type: dropdown
+    id: collaboration
+    attributes:
+      label: 协作流程
+      options: [v2]
+    validations:
+      required: true
+  - type: markdown
+    attributes:
+      value: "实施前在本任务认领并等待成功回执；认领记录负责人、执行者、分支和独占资源。任务分支经 PR 集成到 dev，产品验收另行确认。"
   - type: input
     id: task
     attributes:

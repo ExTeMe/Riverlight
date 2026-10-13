@@ -1,14 +1,19 @@
-name: Configure main protection
+name: Configure integration protection
 
 on:
   workflow_dispatch:
     inputs:
+      branch:
+        description: Exact branch to protect (main or dev)
+        type: choice
+        options: [dev, main]
+        default: dev
       ruleset_id:
-        description: Exact reviewed ruleset ID that exclusively targets main
+        description: Exact reviewed ruleset ID; use 0 only to create absent dev protection
         required: true
         type: string
       expected_updated_at:
-        description: Updated timestamp from the reviewed ruleset
+        description: Reviewed updated timestamp; use absent only for a new dev ruleset
         required: true
         type: string
 
@@ -39,3 +44,4 @@ jobs:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           RULESET_ID: ${{ inputs.ruleset_id }}
           RULESET_EXPECTED_UPDATED_AT: ${{ inputs.expected_updated_at }}
+          PROTECTED_BRANCH: ${{ inputs.branch || 'main' }}
