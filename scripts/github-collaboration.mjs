@@ -3,8 +3,37 @@ export const RECEIPT = '<!-- riverlight:coordination:v1 -->';
 const commands = new Set(['claim', 'release', 'touch']);
 const loginKey = value => String(value || '').toLowerCase();
 
+export function commentField(body, name) {
+  const lines = (body || '').split(/\r?\n/).map(line => line.replace(/^\s*-\s*/, '').trim());
+  const values = lines.map(line => line.match(new RegExp(`^(?:\\*\\*)?${name}(?:\\*\\*)?[：:]\\s*(.*)$`))?.[1]).filter(v => v !== undefined);
+  if (values.length > 1) throw new Error('Repeated coordination field.');
+  return values[0]?.replace(/^`(.*)`$/, '$1').trim();
+}
+
+export function readableApproval(body, visual) {
+  const heading = visual ? '视觉验收' : '客观验收';
+  if (!new RegExp(`^#{2,3} ${heading}\\s*\\n`).test((body || '').trim())) return null;
+  try {
+    return commentField(body, '验收结论') === '通过'
+      ? { sha: commentField(body, '验收版本'), fingerprint: commentField(body, '验收范围摘要') } : null;
+  } catch { return null; }
+}
+
 export function parseCommand(comment) {
   if (comment.user?.type === 'Bot') return null;
+  const human = (comment.body || '').trim().match(/^#{2,3} (任务认领|认领更新|任务交接)\s*\n/);
+  if (human) {
+    const action = ({ '任务认领': 'claim', '认领更新': 'touch', '任务交接': 'release' })[human[1]];
+    try {
+      const field = name => commentField(comment.body, name);
+      const split = value => value && value !== '无' ? value.split('、').map(s => s.trim()).filter(Boolean) : [];
+      const hasResources = field('独占文件') !== undefined || field('独占会话') !== undefined;
+      return { action, id: comment.id, actor: comment.user?.login, at: comment.created_at,
+        executor: field('执行者代号'), display: field('执行者'), branch: field('任务分支'), scope: field('交付范围'),
+        ...(hasResources ? { resources: [...split(field('独占文件')).map(s => `file:${s}`), ...split(field('独占会话')).map(s => `blender:${s}`)] } : {}),
+        claim: Number(field('认领编号')), reason: field('交接说明') || field('代办原因'), override: field('提前启动原因') };
+    } catch { return { action, id: comment.id, actor: comment.user?.login, at: comment.created_at, invalid: true }; }
+  }
   const match = (comment.body || '').trim().match(/^\/riverlight (claim|release|touch)\s+(\{[^]*\})$/);
   if (!match) return null;
   try { return { ...JSON.parse(match[2]), action: match[1], id: comment.id, actor: comment.user?.login, at: comment.created_at }; }
@@ -14,7 +43,7 @@ export function parseCommand(comment) {
 export function readReceipts(comments) {
   return comments.filter(c => c.user?.login === 'github-actions[bot]' && c.user?.type === 'Bot' && c.body?.startsWith(RECEIPT))
     .map(c => {
-      const payload = c.body.match(/```json\n([^]*?)\n```/);
+      const payload = c.body.match(/<!-- riverlight-state:([^]*?) -->/) || c.body.match(/```json\n([^]*?)\n```/);
       try { const value = JSON.parse(payload?.[1]); return { ...value, receiptId: c.id }; }
       catch { throw new Error('A coordination receipt is damaged; restore it before accepting new claims.'); }
     }).sort((a, b) => a.receiptId - b.receiptId);
@@ -58,7 +87,7 @@ export function decideCommand({ command, issue, states, permission, ready, metad
       if (resources.some(a => state.claim.resources.some(b => resourcesOverlap(a, b)))) return reject(`独占资源被 #${number} 认领`);
     }
     return { accepted: true, reason: '认领成功', claim: {
-      id: command.id, owner: command.actor, executor: command.executor, branch: command.branch,
+      id: command.id, owner: command.actor, executor: command.executor, display: command.display || command.executor, branch: command.branch,
       scope: command.scope.trim(), resources: [...new Set(resources)], updated: command.at,
       ...(command.override ? { override: command.override } : {}),
     } };
@@ -70,14 +99,22 @@ export function decideCommand({ command, issue, states, permission, ready, metad
     if (typeof command.reason !== 'string' || !command.reason.trim()) return reject('释放前写明任务级下一步或完成范围');
     return { accepted: true, reason: command.reason, claim: null, releasedOwner: current.owner };
   }
-  return { accepted: true, reason: '认领仍有效', claim: { ...current, updated: command.at } };
+  if (command.resources) {
+    if (!Array.isArray(command.resources) || command.resources.length > 30 || !command.resources.every(resourceValid)) return reject('独占文件或会话格式无效');
+    for (const [number, state] of states) if (number !== issue.number && state.claim
+      && command.resources.some(a => state.claim.resources.some(b => resourcesOverlap(a, b)))) return reject(`独占资源被 #${number} 认领`);
+  }
+  return { accepted: true, reason: '认领已更新', claim: { ...current,
+    ...(command.resources ? { resources: [...new Set(command.resources)] } : {}),
+    ...(command.display ? { display: command.display } : {}), updated: command.at } };
 }
 
 export function receiptBody(command, decision) {
   const claim = decision.claim;
-  return `${RECEIPT}\n${decision.accepted ? '✅' : '⛔'} ${decision.reason}\n\n请求：#issuecomment-${command.id}`
-    + (claim ? `\n\n负责人：${claim.owner} · 执行者：${claim.executor}\n分支：\`${claim.branch}\`\n范围：${claim.scope}\n独占资源：${claim.resources.join('、') || '无'}` : '\n\n当前没有有效认领。')
-    + `\n\n\`\`\`json\n${JSON.stringify({ commandId: command.id, ...decision })}\n\`\`\``;
+  const payload = JSON.stringify({ commandId: command.id, ...decision }).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+  return `${RECEIPT}\n## ${decision.accepted ? '认领记录已确认' : '认领需要协调'}\n\n${decision.reason}`
+    + (claim ? `\n\n- **负责人**：@${claim.owner}\n- **执行者**：${claim.display || claim.executor}\n- **认领编号**：${claim.id}\n- **任务分支**：${claim.branch}\n- **交付范围**：${claim.scope}\n- **独占文件或会话**：${claim.resources.map(r => r.replace(/^file:/, '').replace(/^blender:/, 'Blender 会话 ')).join('、') || '无'}` : '\n\n当前没有有效认领。')
+    + `\n\n[查看请求](#issuecomment-${command.id})\n\n<!-- riverlight-state:${payload} -->`;
 }
 
 // The caller shares a repository-wide concurrency group with full management sync.
@@ -88,6 +125,12 @@ export async function reconcileClaims(api, repository, issues, isReady) {
   for (const issue of issues) {
     const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
     const receipts = readReceipts(comments);
+    for (const receipt of receipts) {
+      const previous = comments.find(c => c.id === receipt.receiptId);
+      if (previous.body.includes('```json')) await api(`repos/${repository}/issues/comments/${receipt.receiptId}`, 'PATCH', {
+        body: receiptBody({ id: receipt.commandId }, { accepted: receipt.accepted, reason: receipt.reason, claim: receipt.claim, ...(receipt.releasedOwner ? { releasedOwner: receipt.releasedOwner } : {}) }),
+      });
+    }
     const processed = new Set(receipts.map(r => r.commandId));
     const last = receipts.filter(r => r.accepted).at(-1);
     states.set(issue.number, { claim: last?.claim || null, releasedOwner: last?.releasedOwner });
@@ -128,6 +171,13 @@ export function codeReviewState(pr, reviews) {
 export function maintainerReview(pr, comments, reviewers) {
   return comments.some(comment => {
     if (comment.user?.type === 'Bot' || !reviewers.some(user => loginKey(user) === loginKey(comment.user?.login))) return false;
+    if (/^#{2,3} 代码审查\s*\n/.test((comment.body || '').trim())) {
+      try {
+        return commentField(comment.body, '审查版本') === pr.head.sha && commentField(comment.body, '审查结论') === '通过'
+          && commentField(comment.body, '审查类型') === '自动审查（共用账号）'
+          && (commentField(comment.body, '审查范围') || '').length >= 12;
+      } catch { return false; }
+    }
     const match = comment.body?.trim().match(/^\/riverlight review\s+(\{[^]*\})$/);
     try {
       const record = JSON.parse(match?.[1]);

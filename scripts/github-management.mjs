@@ -2,7 +2,7 @@ import { readFileSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { reconcileClaims, codeReviewState, maintainerReview } from './github-collaboration.mjs';
+import { reconcileClaims, codeReviewState, maintainerReview, readableApproval } from './github-collaboration.mjs';
 
 export const STATUS = ['待办', '进行中', '待验收', '完成', '阻塞'];
 
@@ -54,9 +54,12 @@ export async function approvalSurvivesReopening(api, repository, issue, reviewer
   if (!confirmation?.created_at || confirmation.user?.type === 'Bot'
     || !reviewers.some(login => login.toLowerCase() === confirmation.user?.login?.toLowerCase())) return false;
   const match = confirmation.body?.trim().match(/^\/riverlight (approve-visual|approve-objective)\s+(\{[^]*\})$/);
-  if (match?.[1] !== (issueMetadata(issue).visual ? 'approve-visual' : 'approve-objective')) return false;
   let approved;
-  try { approved = JSON.parse(match?.[2]); } catch { return false; }
+  if (match) {
+    if (match[1] !== (issueMetadata(issue).visual ? 'approve-visual' : 'approve-objective')) return false;
+    try { approved = JSON.parse(match[2]); } catch { return false; }
+  } else approved = readableApproval(confirmation.body, issueMetadata(issue).visual);
+  if (!approved) return false;
   if (approved.sha !== issueField(issue.body || '', '交付版本') || approved.fingerprint !== acceptanceFingerprint(issue)) return false;
   const events = await api.all(`repos/${repository}/issues/${issue.number}/timeline`);
   return !events.some(event => event.event === 'reopened' && event.created_at >= confirmation.created_at);
@@ -274,7 +277,7 @@ export async function syncCoordinationFields(api, project, issues, states) {
   const expected = new Map();
   for (const issue of issues) {
     const state = states.get(issue.number) || {}, claim = state.claim;
-    const values = [claim?.executor || '', claim?.branch || '', claim?.scope || '', claim?.resources.join('、') || '', claim?.updated || '',
+    const values = [claim?.display || claim?.executor || '', claim?.branch || '', claim?.scope || '', claim?.resources.map(r => r.replace(/^file:/, '').replace(/^blender:/, 'Blender 会话 ')).join('、') || '', claim?.updated || '',
       state.review || '无当前任务 PR', desiredStatus(issue, issues) === '完成' ? '已验收' : issue.labels.some(l => l.name === 'status:review') ? '待验收' : '未验收',
       state.pr?.merged_at ? '已集成 dev；发布单独确认' : '未集成'];
     const item = items.get(issue.node_id);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand, readReceipts, receiptBody, decideCommand, reconcileClaims, resourcesOverlap, codeReviewState, maintainerReview } from '../scripts/github-collaboration.mjs';
+import { parseCommand, readReceipts, receiptBody, decideCommand, reconcileClaims, resourcesOverlap, codeReviewState, maintainerReview, readableApproval } from '../scripts/github-collaboration.mjs';
 import { approvalSurvivesReopening, acceptanceFingerprint, desiredStatus, syncCoordinationFields, COORD_FIELDS } from '../scripts/github-management.mjs';
 
 const issue = { number: 71, state: 'open', assignees: [] };
@@ -20,6 +20,20 @@ test('first claim wins across Issue, shared files, directories, and Blender sess
   assert.equal(decide(request, new Map(), { ready: false }).accepted, false);
   assert.equal(decide({ ...request, override: '维护基础设施，不等待产品出口' }, new Map(), { ready: false, permission: 'admin' }).accepted, true);
   assert.equal(decide({ ...request, override: '提前开发' }, new Map(), { ready: false, metadataValid: false, permission: 'admin' }).accepted, false);
+});
+
+test('readable Markdown records drive claims and reviews while machine state stays hidden', () => {
+  const comment = { id: 5, user: { login: 'owner', type: 'User' }, created_at: request.at,
+    body: '## 任务认领\n\n- **执行者**：道路开发代理 A\n- **执行者代号**：agent-road-a\n- **任务分支**：codex/71-road\n- **交付范围**：道路数据契约\n- **独占文件**：src/roads.js、src/core.js\n- **独占会话**：shared-session' };
+  const command = parseCommand(comment), decision = decide(command);
+  assert.equal(decision.accepted, true); assert.equal(decision.claim.display, '道路开发代理 A');
+  assert.deepEqual(command.resources, ['file:src/roads.js', 'file:src/core.js', 'blender:shared-session']);
+  const receipt = receiptBody(command, decision);
+  assert.equal(receipt.includes('```json'), false);
+  assert.equal(receipt.split('<!-- riverlight-state:')[0].includes('"commandId"'), false);
+  assert.equal(readReceipts([{ id: 10, user: { login: 'github-actions[bot]', type: 'Bot' }, body: receipt }])[0].claim.id, 5);
+  assert.equal(maintainerReview({ head: { sha: 'current' } }, [{ user: comment.user, body: '## 代码审查\n\n- **审查类型**：自动审查（共用账号）\n- **审查版本**：current\n- **审查结论**：通过\n- **审查范围**：认领竞争、恢复和版本绑定已检查' }], ['owner']), true);
+  assert.deepEqual(readableApproval('## 客观验收\n\n- **验收结论**：通过\n- **验收版本**：current\n- **验收范围摘要**：scope', false), { sha: 'current', fingerprint: 'scope' });
 });
 
 test('shared accounts retain execution identity; stale release cannot free a successor', () => {
