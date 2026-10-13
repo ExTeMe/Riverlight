@@ -97,7 +97,7 @@ export function decideCommand({ command, issue, states, permission, ready, metad
   if (!owns && !(maintainer && typeof command.reason === 'string' && command.reason.trim())) return reject('仅当前执行者可更新/释放；维护者代办须写 reason');
   if (command.action === 'release') {
     if (typeof command.reason !== 'string' || !command.reason.trim()) return reject('释放前写明任务级下一步或完成范围');
-    return { accepted: true, reason: command.reason, claim: null, releasedOwner: current.owner };
+    return { accepted: true, reason: command.reason, claim: null, releasedOwner: current.owner, previousClaim: current };
   }
   if (command.resources) {
     if (!Array.isArray(command.resources) || command.resources.length > 30 || !command.resources.every(resourceValid)) return reject('独占文件或会话格式无效');
@@ -133,7 +133,7 @@ export async function reconcileClaims(api, repository, issues, isReady) {
     }
     const processed = new Set(receipts.map(r => r.commandId));
     const last = receipts.filter(r => r.accepted).at(-1);
-    states.set(issue.number, { claim: last?.claim || null, releasedOwner: last?.releasedOwner });
+    states.set(issue.number, { claim: last?.claim || null, releasedOwner: last?.releasedOwner, lastClaim: last?.claim || last?.previousClaim });
     for (const comment of comments) {
       const command = parseCommand(comment);
       if (command && !processed.has(command.id)) pending.push({ issue, command });
@@ -147,7 +147,7 @@ export async function reconcileClaims(api, repository, issues, isReady) {
     }
     const decision = decideCommand({ command, issue, states, permission: permissions.get(command.actor), ready: isReady(issue), metadataValid: isReady.valid ? isReady.valid(issue) : true });
     await api(`repos/${repository}/issues/${issue.number}/comments`, 'POST', { body: receiptBody(command, decision) });
-    if (decision.accepted) states.set(issue.number, { claim: decision.claim, releasedOwner: decision.releasedOwner });
+    if (decision.accepted) states.set(issue.number, { claim: decision.claim, releasedOwner: decision.releasedOwner, lastClaim: decision.claim || decision.previousClaim });
   }
   return states;
 }

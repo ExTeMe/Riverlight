@@ -110,6 +110,10 @@ test('Project fields are verified and released claims clear stale executor and b
   assert.equal(item.fieldValues.nodes.find(v => v.field.name === '执行者').text, 'agent-a');
   await syncCoordinationFields(api, project, [target], new Map());
   assert.equal(item.fieldValues.nodes.some(v => v.field.name === '执行者'), false);
+  await syncCoordinationFields(api, project, [target], new Map([[71, { lastClaim: decide().claim, review: '已集成', pr: { merged_at: 'now' } }]]));
+  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '任务分支').text, 'codex/71-test');
+  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '代码审查').text, '已集成');
+  assert.equal(item.fieldValues.nodes.some(v => v.field.name === '独占资源'), false);
   discard = true;
   await assert.rejects(syncCoordinationFields(api, project, [target], new Map([[71, { claim: decide().claim }]])), /could not be verified/);
 });

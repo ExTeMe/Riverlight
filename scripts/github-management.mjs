@@ -276,10 +276,10 @@ export async function syncCoordinationFields(api, project, issues, states) {
   } while (cursor);
   const expected = new Map();
   for (const issue of issues) {
-    const state = states.get(issue.number) || {}, claim = state.claim;
-    const values = [claim?.display || claim?.executor || '', claim?.branch || '', claim?.scope || '', claim?.resources.map(r => r.replace(/^file:/, '').replace(/^blender:/, 'Blender 会话 ')).join('、') || '', claim?.updated || '',
+    const state = states.get(issue.number) || {}, claim = state.claim, delivery = claim || state.lastClaim;
+    const values = [claim?.display || claim?.executor || '', delivery?.branch || '', delivery?.scope || '', claim?.resources.map(r => r.replace(/^file:/, '').replace(/^blender:/, 'Blender 会话 ')).join('、') || '', claim?.updated || '',
       state.review || '无当前任务 PR', desiredStatus(issue, issues) === '完成' ? '已验收' : issue.labels.some(l => l.name === 'status:review') ? '待验收' : '未验收',
-      state.pr?.merged_at ? '已集成 dev；发布单独确认' : '未集成'];
+      state.pr?.merged_at ? '已集成 dev；发布单独确认' : state.pr ? '未集成' : '未记录发布'];
     const item = items.get(issue.node_id);
     if (!item) throw new Error(`Missing Project item for #${issue.number}`);
     expected.set(issue.node_id, values);
@@ -444,6 +444,10 @@ export async function runManagement(env = process.env, request = fetch) {
     const prs = await api.all(`repos/${repository}/pulls?state=all`);
     for (const issue of issues) {
       const state = states.get(issue.number), claim = state?.claim;
+      if (!claim && state?.lastClaim) {
+        state.pr = prs.find(pr => pr.head.ref === state.lastClaim.branch && pr.head.repo?.full_name === repository && pr.base.ref === 'dev');
+        state.review = state.pr ? codeReviewState(state.pr, await api.all(`repos/${repository}/pulls/${state.pr.number}/reviews`)) : '无当前任务 PR';
+      }
       if (!claim && state?.releasedOwner) {
         if (issue.assignees?.some(a => a.login.toLowerCase() === state.releasedOwner.toLowerCase())) {
           await api(`repos/${repository}/issues/${issue.number}/assignees`, 'DELETE', { assignees: [state.releasedOwner] });

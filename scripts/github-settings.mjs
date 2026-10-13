@@ -16,6 +16,8 @@ export function mainRuleset(existing) {
     required_review_thread_resolution: true,
     dismiss_stale_reviews_on_push: true,
     require_last_push_approval: false,
+    require_code_owner_review: false,
+    allowed_merge_methods: rules.get('pull_request')?.parameters?.allowed_merge_methods || ['merge', 'squash', 'rebase'],
   } });
   rules.set('required_status_checks', { type: 'required_status_checks', parameters: {
     strict_required_status_checks_policy: true,
