@@ -1,0 +1,50 @@
+{
+  "id": "BASE-02-v1",
+  "sceneVersion": 1,
+  "seed": 20261013,
+  "city": {
+    "version": 1,
+    "name": "基线 · 旧城原件",
+    "radius": 64,
+    "nextId": 3,
+    "environment": {
+      "season": "summer",
+      "weather": "clear",
+      "hour": 16.5,
+      "playing": false,
+      "speed": 1,
+      "wind": 0.4,
+      "quality": "high"
+    },
+    "entities": [
+      {
+        "id": 1,
+        "type": "cottage",
+        "x": -30,
+        "z": -10,
+        "rotation": 1,
+        "color": 2
+      },
+      {
+        "id": 2,
+        "type": "road",
+        "x": -30,
+        "z": -5,
+        "rotation": 0,
+        "color": 0
+      }
+    ]
+  },
+  "camera": {
+    "position": [
+      120,
+      115,
+      150
+    ],
+    "target": [
+      0,
+      0,
+      0
+    ]
+  }
+}
