@@ -32,6 +32,8 @@ test('settings changes reject stale review state before writing and verify actua
 
 test('dev creation is explicit, requires PR and checks, and never widens a main ruleset', async () => {
   const desired = devRuleset();
+  assert.equal(desired.rules.find(r => r.type === 'pull_request').parameters.require_code_owner_review, false);
+  assert.deepEqual(desired.rules.find(r => r.type === 'pull_request').parameters.allowed_merge_methods, ['merge', 'squash', 'rebase']);
   assert.deepEqual(desired.conditions.ref_name.include, ['refs/heads/dev']);
   assert.equal(desired.rules.find(r => r.type === 'required_status_checks').parameters.strict_required_status_checks_policy, true);
   assert.throws(() => devRuleset(existing), /exclusively target dev/);
