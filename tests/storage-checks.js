@@ -1,6 +1,6 @@
 import { City } from '../src/core.js';
 import { createSaveStore, BACKUP_LIMIT } from '../src/storage.js';
-import { SaveSession } from '../src/save-session.js';
+import { SaveSession, parseCityFile } from '../src/save-session.js';
 import { createBaseline, createLegacyBaseline } from '../src/baseline.js';
 
 function check(value, message) { if (!value) throw new Error(message); }
@@ -124,7 +124,8 @@ export const storageChecks = [
       await isolated(factory, [original], async store => {
         const session = new SaveSession(store); const opened = await session.open();
         check(!session.protected, `有效城市未打开：${opened.error?.message}`);
-        const next = new City(); next.name = '替换城市';
+        const parsed = parseCityFile(JSON.stringify(createLegacyBaseline()));
+        const next = parsed.city;
         const put = ObjectStore.prototype.put;
         let intercepted = false, aborted = false;
         try {
@@ -136,16 +137,17 @@ export const storageChecks = [
             }
             return request;
           };
-          let failure;try{await session.replace(previous,view(),next,view());}catch(error){failure=error;}
+          let failure;try{await session.replace(previous,view(),next,view(),parsed.original);}catch(error){failure=error;}
           check(intercepted&&aborted, `未触发事务中止：拦截=${intercepted}, 中止=${aborted}`);
           check(failure, '中止事务被报告成功');
         } finally { ObjectStore.prototype.put = put; }
         equal(await store.load('autosave'), original, '中止事务改写了原存档');
         check((await store.list()).length === 1, '中止事务留下了半完成备份');
-        await session.replace(previous, view(), next, view());
+        await session.replace(previous, view(), next, view(), parsed.original);
         equal((await store.load('autosave')).data, next.snapshot(), '重试失败');
         const backup = (await store.list()).find(item => item.kind === 'backup');
         equal((await store.load(backup.id)).data, previous.snapshot(), '切换前城市未备份');
+        check((await store.list()).some(item => item.kind === 'original'), '重试导入未保留原件');
       });
     },
   },
@@ -183,6 +185,46 @@ export const storageChecks = [
         check(list.filter(item => item.kind === 'backup').length === BACKUP_LIMIT, '滚动备份超限');
         check(list.some(item => item.id === 'city-manual') && list.some(item => item.kind === 'original'), '清理删除了收藏或原件');
         equal(await store.load('backup-historical'), historical, '清理删除了历史备份');
+      });
+    },
+  },
+  {
+    name: '旧格式文件导入同时保存完整原件，未知版本拒绝且不改当前城市',
+    async run(factory) {
+      const input = createLegacyBaseline(), previous = current();
+      await isolated(factory, [rawRecord(previous.snapshot())], async store => {
+        const session = new SaveSession(store), parsed = parseCityFile(JSON.stringify(input));
+        await session.open();
+        await session.replace(previous, view(), parsed.city, parsed.camera, parsed.original);
+        const archived = (await store.list()).find(item => item.kind === 'original');
+        check(archived, '导入文件未归档原件');
+        const raw = await store.load(archived.id);
+        equal(raw.data, input.city, '原始 v1 数据被迁移改写');
+        equal(raw.input, input, '原始输入包装未保留');
+        equal(raw.camera, input.camera, '原始镜头未保留');
+        const reopened = parseCityFile(JSON.stringify(raw));
+        equal(reopened.city.snapshot(), parsed.city.snapshot(), '导出原记录不能恢复');
+        const before = await store.load('autosave');
+        await rejected(() => parseCityFile(JSON.stringify({ ...input, city: { ...input.city, version: 99 } })), '接受了未来格式');
+        await rejected(() => parseCityFile('null'), '接受了空数据');
+        equal(await store.load('autosave'), before, '拒绝导入改写了当前城市');
+      });
+    },
+  },
+  {
+    name: '隔离存档续用恢复布局、环境和镜头，默认基线仍从固定输入开始',
+    async run(factory) {
+      const saved = current(); saved.name = '已保存的隔离城市';
+      saved.environment.season = 'winter'; saved.environment.hour = 22;
+      const camera = { position: [150, 160, 170], target: [-10, 0, 20] };
+      await isolated(factory, [], async store => {
+        await store.write('autosave', saved, camera);
+        const resumed = await new SaveSession(store).open(createBaseline(), { resume: true });
+        equal(resumed.city.snapshot(), saved.snapshot(), '续用没有恢复城市或环境');
+        equal(resumed.camera, camera, '续用没有恢复镜头');
+        const fresh = await new SaveSession(store).open(createBaseline());
+        equal(fresh.city.snapshot(), createBaseline().city, '固定基线误读了上次修改');
+        equal((await store.load('autosave')).data, saved.snapshot(), '基线初始化改写隔离存档');
       });
     },
   },

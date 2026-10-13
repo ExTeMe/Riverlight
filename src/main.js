@@ -14,7 +14,7 @@ import { getTemplate } from './models.js';
 import { UI } from './ui.js';
 import { Soundscape } from './audio.js';
 import { saves, createSaveStore, download } from './storage.js';
-import { SaveSession } from './save-session.js';
+import { SaveSession, parseCityFile } from './save-session.js';
 import { icon } from './icons.js';
 import { loadArchitectureAssets } from './asset-loader.js';
 
@@ -25,7 +25,7 @@ class App {
       const {createBaseline}=await import('./baseline.js');this.baseline=createBaseline();
     }
     this.saves=this.baseline?createSaveStore({name:'riverlight-baselines'}):saves;
-    this.saveSession=new SaveSession(this.saves);const opened=await this.saveSession.open(this.baseline);this.city=opened.city;
+    this.saveSession=new SaveSession(this.saves);const opened=await this.saveSession.open(this.baseline,{resume:!!this.baseline&&new URLSearchParams(location.search).get('resume')==='1'});this.city=opened.city;
     this.canvas=document.querySelector('#scene');this.renderer=new T.WebGLRenderer({canvas:this.canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));this.renderer.setSize(innerWidth,innerHeight);this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=T.PCFSoftShadowMap;this.renderer.toneMapping=T.ACESFilmicToneMapping;this.renderer.toneMappingExposure=.98;this.renderer.outputColorSpace=T.SRGBColorSpace;
     this.scene=new T.Scene();this.camera=new T.PerspectiveCamera(39,innerWidth/innerHeight,.5,4500);this.camera.position.set(183,180,230);
@@ -97,17 +97,17 @@ class App {
     try{await this.saveSession.persist(this.city,this.cameraState(),id);this.ui.saved(this.saveSession.protected?'已保存恢复城市 · 原存档已保护':this.baseline?'已保存 · 隔离测试城市':'已保存 · 只属于你的节奏');return true;}catch(error){console.error(error);this.ui.saved('保存失败，请导出备份');this.ui.toast('浏览器保存失败，请导出城市文件备份',true);return false;}
   }
   async listSaves(){return this.saves.list();}
-  async replaceCity(city,camera){
+  async replaceCity(city,camera,original){
     if(this.replacing)return false;this.replacing=true;clearTimeout(this.saveTimer);
     const view=camera||{position:[183,180,230],target:[4,0,15]};
     try{
-      try{await this.saveSession.replace(this.city,this.cameraState(),city,view);}
+      try{await this.saveSession.replace(this.city,this.cameraState(),city,view,original);}
       catch(error){console.error(error);this.ui.toast('城市切换失败，原城市已保留。请导出备份后重试。',true);return false;}
       this.cancel();this.selected=null;this.city=city;this.world.setCity(city);this.environment.city=city;this.environment.refreshSources();this.follow=false;this.controls.autoRotate=false;this.setQuality();this.restoreCamera(view);this.ui.refresh();this.ui.closeModal();
       this.ui.saved(this.saveSession.protected?'已保存恢复城市 · 原存档已保护':'已保存 · 当前城市已备份');return true;
     }finally{this.replacing=false;}
   }
-  async importFile(file){try{if(file.size>20*1024*1024)throw new Error('城市文件超过 20 MB');const data=JSON.parse(await file.text());const city=new City(data.city||data.data||data);if(await this.replaceCity(city,data.camera))this.ui.toast('城市已导入，欢迎回来');}catch(error){this.ui.toast(`无法导入：${error.message}`,true);}}
+  async importFile(file){try{if(file.size>20*1024*1024)throw new Error('城市文件超过 20 MB');const parsed=parseCityFile(await file.text());if(await this.replaceCity(parsed.city,parsed.camera,parsed.original))this.ui.toast('城市已导入，欢迎回来');}catch(error){this.ui.toast(`无法导入：${error.message}`,true);}}
   home(){this.follow=false;this.controls.autoRotate=false;this.keys.clear();this.camera.position.set(183,180,230);this.controls.target.set(4,0,15);this.controls.update();}
   zoom(factor){const direction=this.camera.position.clone().sub(this.controls.target);const length=T.MathUtils.clamp(direction.length()*factor,this.controls.minDistance,this.controls.maxDistance);this.camera.position.copy(this.controls.target).add(direction.setLength(length));this.controls.update();}
   keydown(e){
@@ -153,7 +153,7 @@ class App {
       case 'export':download(`${this.city.name}.riverlight.json`,JSON.stringify({city:this.city.snapshot(),camera:this.cameraState()},null,2));this.ui.toast('城市文件已导出');break;
       case 'export-original':{const original=await this.saveSession.originalRecord();if(!original)throw new Error('原记录暂时无法读取，请保留浏览器数据并稍后重试');download('riverlight-original-record.json',JSON.stringify(original,null,2));this.ui.toast('原存档记录已导出，未作修改');break;}
       case 'export-save':{const record=await this.saves.load(el.dataset.saveId);if(!record)throw new Error('该记录暂时无法读取');download(`${record.name||'未命名城市'}.riverlight-record.json`,JSON.stringify(record,null,2));this.ui.toast('存档原记录已导出');break;}
-      case 'reset-baseline':if(import.meta.env.DEV&&this.baseline){const {createBaseline}=await import('./baseline.js');const initial=createBaseline();await this.replaceCity(new City(initial.city),initial.camera);}break;
+      case 'reset-baseline':if(import.meta.env.DEV&&this.baseline){const {createBaseline}=await import('./baseline.js');const initial=createBaseline();if(await this.replaceCity(new City(initial.city),initial.camera)){const url=new URL(location.href);url.searchParams.delete('resume');location.assign(url);}}break;
       case 'import':document.querySelector('#import-file').click();break;
       case 'close-modal':this.ui.closeModal();break;case 'help':this.ui.help();break;case 'audio':this.ui.audio();break;
       case 'toggle-audio':await this.sound.enable();document.querySelector('.top-actions [data-action=audio]').innerHTML=icon(this.sound.enabled?'sound':'mute');this.ui.audio();break;

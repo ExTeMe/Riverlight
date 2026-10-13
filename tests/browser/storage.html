@@ -5,6 +5,7 @@
 <p>仅创建本次检查专用的测试数据库，不读取正常城市。</p>
 <p id="browser"></p><ol id="results"></ol><strong id="summary">正在检查…</strong>
 <p><a href="/?baseline=BASE-02">打开固定城市基线</a></p>
+<p><a href="/?baseline=BASE-02&amp;resume=1">恢复隔离测试存档（可刷新）</a></p>
 <script type="module">
   import { storageChecks } from '../storage-checks.js';
   document.querySelector('#browser').textContent = navigator.userAgent;

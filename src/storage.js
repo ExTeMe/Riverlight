@@ -72,7 +72,7 @@ export function createSaveStore({ indexedDB = globalThis.indexedDB,
     return { id, name: data.name, date: now(), data, camera: structuredClone(camera), ...(kind ? { kind } : {}) };
   }
 
-  async function commit(next, backup) {
+  async function commit(next, backup, importedOriginal) {
     const db = await database();
     return new Promise((resolve, reject) => {
       const tx = db.transaction([RECORDS, METADATA], 'readwrite');
@@ -90,6 +90,7 @@ export function createSaveStore({ indexedDB = globalThis.indexedDB,
             put({ ...original, id: makeId('original'), kind: 'original' });
           }
           if (backup) put(backup);
+          if (importedOriginal) put(importedOriginal);
           put(next);
           // Only rolling switch backups expire; originals, recoveries and manual saves remain.
           const all = summaries.getAll();
@@ -112,8 +113,11 @@ export function createSaveStore({ indexedDB = globalThis.indexedDB,
     list: () => read(METADATA, store => store.getAll()),
     load: id => read(RECORDS, store => store.get(id)),
     write: (id, city, camera) => commit(record(id, city, camera)),
-    replace: (id, city, camera, previous, previousCamera) =>
-      commit(record(id, city, camera), record(makeId('backup'), previous, previousCamera, 'backup')),
+    replace: (id, city, camera, previous, previousCamera, original) => {
+      const imported = original ? { ...record(makeId('original'), original.data, original.camera, 'original'),
+        input: structuredClone(original.input) } : undefined;
+      return commit(record(id, city, camera), record(makeId('backup'), previous, previousCamera, 'backup'), imported);
+    },
     close: async () => { if (dbPromise) { const db = await dbPromise; db.close(); dbPromise = undefined; } },
   };
 }

@@ -1,5 +1,14 @@
 import { City, createDemo } from './core.js';
 
+export function parseCityFile(text) {
+  const input = JSON.parse(text);
+  if (!input || typeof input !== 'object') throw new Error('存档格式不受支持');
+  const data = input.city || input.data || input;
+  const city = new City(data);
+  return { city, camera: input.camera,
+    original: data.version === 1 ? { data, camera: input.camera, input } : undefined };
+}
+
 // Owns save ordering and recovery; rendering and UI do not choose which original record to overwrite.
 export class SaveSession {
   constructor(store, { makeId = () => `recovery-${globalThis.crypto.randomUUID()}` } = {}) {
@@ -11,11 +20,12 @@ export class SaveSession {
     this.original = undefined;
   }
 
-  async open(initial) {
-    if (initial) return { city: new City(initial.city), camera: structuredClone(initial.camera) };
+  async open(initial, { resume = false } = {}) {
+    const fresh = () => initial ? { city: new City(initial.city), camera: structuredClone(initial.camera) } : { city: createDemo() };
+    if (initial && !resume) return fresh();
     try {
       this.original = await this.store.load('autosave');
-      if (!this.original) return { city: createDemo() };
+      if (!this.original) return fresh();
       if (!this.original.data) throw new Error('原存档缺少城市数据');
       return { city: new City(this.original.data), camera: this.original.camera };
     } catch (error) {
@@ -35,7 +45,7 @@ export class SaveSession {
           } catch { /* Keep invalid recovery records intact and try the next one. */ }
         }
       } catch { /* The in-memory city can still be exported if storage is unavailable. */ }
-      return { city: createDemo(), error };
+      return { ...fresh(), error };
     }
   }
 
@@ -49,10 +59,11 @@ export class SaveSession {
     return this.enqueue(() => this.store.write(id, snapshot, view));
   }
 
-  replace(previous, previousCamera, next, camera) {
+  replace(previous, previousCamera, next, camera, original) {
     const before = previous.snapshot(), after = next.snapshot();
     const oldView = structuredClone(previousCamera), newView = structuredClone(camera);
-    return this.enqueue(() => this.store.replace(this.target, after, newView, before, oldView));
+    const source = structuredClone(original);
+    return this.enqueue(() => this.store.replace(this.target, after, newView, before, oldView, source));
   }
 
   async originalRecord() {
