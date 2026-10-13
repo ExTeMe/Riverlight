@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><title>Riverlight 存档保护检查</title>
+<style>body{max-width:900px;margin:40px auto;padding:0 24px;font:16px/1.8 system-ui;background:#f5f5ed;color:#243b35}li{padding:8px}pre{white-space:pre-wrap}a{color:#176b55}</style>
+<h1>存档保护 · 独立测试</h1>
+<p>仅创建本次检查专用的测试数据库，不读取正常城市。</p>
+<p id="browser"></p><ol id="results"></ol><strong id="summary">正在检查…</strong>
+<p><a href="/?baseline=BASE-02">打开固定城市基线</a></p>
+<script type="module">
+  import { storageChecks } from '../storage-checks.js';
+  document.querySelector('#browser').textContent = navigator.userAgent;
+  let failures = 0;
+  for (const scenario of storageChecks) {
+    const row = document.createElement('li');
+    try { await scenario.run(indexedDB, IDBObjectStore); row.textContent = `通过：${scenario.name}`; }
+    catch (error) { failures++; row.textContent = `失败：${scenario.name} — ${error.message}`; console.error(error); }
+    document.querySelector('#results').append(row);
+  }
+  document.querySelector('#summary').textContent = `${storageChecks.length - failures}/${storageChecks.length} 通过${failures ? '，需要修复' : '，原始记录保护与事务回滚检查完成'}`;
+</script></html>

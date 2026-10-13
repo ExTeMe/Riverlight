@@ -1,0 +1,654 @@
+{
+  "id": "BASE-02",
+  "sceneVersion": 1,
+  "seed": 20261013,
+  "camera": {
+    "position": [
+      120,
+      115,
+      150
+    ],
+    "target": [
+      0,
+      0,
+      0
+    ]
+  },
+  "limitations": [
+    "任意角度、信号通行、目的地行为、雨伞和桥船净空尚未实现"
+  ],
+  "city": {
+    "version": 2,
+    "terrain": "meander",
+    "name": "基线 · 河畔编辑院",
+    "radius": 64,
+    "nextId": 78,
+    "environment": {
+      "season": "summer",
+      "weather": "clear",
+      "hour": 16.5,
+      "playing": false,
+      "speed": 1,
+      "wind": 0.4,
+      "quality": "high"
+    },
+    "entities": [
+      {
+        "id": 1,
+        "type": "road",
+        "x": -28,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 2,
+        "type": "road",
+        "x": -27,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 3,
+        "type": "road",
+        "x": -26,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 4,
+        "type": "road",
+        "x": -25,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 5,
+        "type": "road",
+        "x": -24,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 6,
+        "type": "road",
+        "x": -23,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 7,
+        "type": "road",
+        "x": -22,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 8,
+        "type": "road",
+        "x": -21,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 9,
+        "type": "road",
+        "x": -20,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 10,
+        "type": "road",
+        "x": -19,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 11,
+        "type": "road",
+        "x": -18,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 12,
+        "type": "road",
+        "x": -17,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 13,
+        "type": "road",
+        "x": -16,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 14,
+        "type": "road",
+        "x": -15,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 15,
+        "type": "road",
+        "x": -14,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 16,
+        "type": "road",
+        "x": -13,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 17,
+        "type": "road",
+        "x": -12,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 18,
+        "type": "road",
+        "x": -11,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 19,
+        "type": "road",
+        "x": -10,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 20,
+        "type": "road",
+        "x": -9,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 21,
+        "type": "road",
+        "x": -8,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 22,
+        "type": "road",
+        "x": -7,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 23,
+        "type": "road",
+        "x": -6,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 24,
+        "type": "road",
+        "x": -5,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 25,
+        "type": "road",
+        "x": -4,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 26,
+        "type": "bridge",
+        "x": -3,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 27,
+        "type": "bridge",
+        "x": -2,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 28,
+        "type": "bridge",
+        "x": -1,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 29,
+        "type": "bridge",
+        "x": 0,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 30,
+        "type": "bridge",
+        "x": 1,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 31,
+        "type": "bridge",
+        "x": 2,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 32,
+        "type": "bridge",
+        "x": 3,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 33,
+        "type": "road",
+        "x": 4,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 34,
+        "type": "road",
+        "x": 5,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 35,
+        "type": "road",
+        "x": 6,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 36,
+        "type": "road",
+        "x": 7,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 37,
+        "type": "road",
+        "x": 8,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 38,
+        "type": "road",
+        "x": 9,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 39,
+        "type": "road",
+        "x": 10,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 40,
+        "type": "road",
+        "x": 11,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 41,
+        "type": "road",
+        "x": 12,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 42,
+        "type": "road",
+        "x": 13,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 43,
+        "type": "road",
+        "x": 14,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 44,
+        "type": "road",
+        "x": 15,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 45,
+        "type": "road",
+        "x": 16,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 46,
+        "type": "road",
+        "x": 17,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 47,
+        "type": "road",
+        "x": 18,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 48,
+        "type": "road",
+        "x": 19,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 49,
+        "type": "road",
+        "x": 20,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 50,
+        "type": "road",
+        "x": 21,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 51,
+        "type": "road",
+        "x": 22,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 52,
+        "type": "road",
+        "x": 23,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 53,
+        "type": "road",
+        "x": 24,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 54,
+        "type": "road",
+        "x": 25,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 55,
+        "type": "road",
+        "x": 26,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 56,
+        "type": "road",
+        "x": 27,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 57,
+        "type": "road",
+        "x": 28,
+        "z": 0,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 58,
+        "type": "road",
+        "x": -36,
+        "z": -14,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 59,
+        "type": "road",
+        "x": -35,
+        "z": -14,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 60,
+        "type": "road",
+        "x": -34,
+        "z": -14,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 61,
+        "type": "road",
+        "x": -33,
+        "z": -14,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 62,
+        "type": "road",
+        "x": -32,
+        "z": -14,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 63,
+        "type": "path",
+        "x": -18,
+        "z": 1,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 64,
+        "type": "path",
+        "x": -18,
+        "z": 2,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 65,
+        "type": "path",
+        "x": -18,
+        "z": 3,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 66,
+        "type": "path",
+        "x": -18,
+        "z": 4,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 67,
+        "type": "path",
+        "x": -18,
+        "z": 5,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 68,
+        "type": "path",
+        "x": -18,
+        "z": 6,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 69,
+        "type": "path",
+        "x": -18,
+        "z": 7,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 70,
+        "type": "path",
+        "x": -18,
+        "z": 8,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 71,
+        "type": "cottage",
+        "x": -26.5,
+        "z": -5.5,
+        "rotation": 0,
+        "color": 1
+      },
+      {
+        "id": 72,
+        "type": "villa",
+        "x": -24,
+        "z": 5.5,
+        "rotation": 1,
+        "color": 2
+      },
+      {
+        "id": 73,
+        "type": "bakery",
+        "x": -20,
+        "z": -4,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 74,
+        "type": "cafe",
+        "x": 18,
+        "z": -4,
+        "rotation": 0,
+        "color": 2
+      },
+      {
+        "id": 75,
+        "type": "park",
+        "x": 20,
+        "z": 5,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 76,
+        "type": "tree",
+        "x": -29,
+        "z": 3,
+        "rotation": 0,
+        "color": 0
+      },
+      {
+        "id": 77,
+        "type": "bench",
+        "x": -18.5,
+        "z": 10,
+        "rotation": 0,
+        "color": 0
+      }
+    ]
+  }
+}
