@@ -68,6 +68,6 @@ npm run build
 npm run preview
 ```
 
-开发任务和缺陷直接在 [GitHub Issues](https://github.com/ExTeMe/Riverlight/issues) 与 [Projects](https://github.com/ExTeMe/Riverlight/projects) 查看。开始参与前阅读 [开发流程](docs/GIT_WORKFLOW.md)；模型来源和制作方式见 [素材说明](docs/ASSETS.md)。
+开发任务和缺陷直接在 [GitHub Issues](https://github.com/ExTeMe/Riverlight/issues) 与 [Projects](https://github.com/ExTeMe/Riverlight/projects) 查看。开始参与前阅读 [贡献指南](CONTRIBUTING.md) 与 [开发流程](docs/GIT_WORKFLOW.md)；模型来源和制作方式见 [素材说明](docs/ASSETS.md)。开发预览显示源码版本，反馈时可一并提供。
 
 报告问题时提供复现步骤、预期与实际结果、浏览器版本，以及必要的截图或脱敏存档。

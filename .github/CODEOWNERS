@@ -1,0 +1,7 @@
+# Routing for review; shared-account automated review is not human approval.
+* @ExTeMe
+/.github/ @ExTeMe
+/scripts/github-*.mjs @ExTeMe
+/src/storage.js @ExTeMe
+/src/save-session.js @ExTeMe
+/docs/SYSTEMS.md @ExTeMe

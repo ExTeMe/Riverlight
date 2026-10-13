@@ -128,7 +128,7 @@ test('bootstrap links repository and project; later issue events use fresh state
     assert.equal(blockerWrites, 1);
     assert.equal(blockers.get(3)[0].number, 1);
     assert.equal(items.get('I2').fieldValueByName.name, '待办');
-    assert.equal(views.length, 4);
+    assert.equal(views.length, 7);
     assert.equal(issues[1].labels.some(l => l.name === 'management:ready'), true);
     freshLabels = [{ name: 'status:review' }];
     await runManagement({ ...env, MANAGEMENT_BOOTSTRAP: 'false' }, mock);
@@ -201,7 +201,7 @@ test('full audit invalidates pre-reopen approval but preserves a newer confirmat
   issue.body += `\n\n## 验收记录\n**交付版本**：${'a'.repeat(40)}\n**验收版本**：${'a'.repeat(40)}\n**验收范围摘要**：${acceptanceFingerprint(issue)}\n**验收证据**：https://github.com/owner/repo/issues/1\n**确认来源**：https://github.com/owner/repo/issues/1#issuecomment-123`;
   let confirmedAt = '2026-10-12T10:00:00Z';
   const api = { all: async endpoint => endpoint.endsWith('/comments')
-    ? [{ id: 123, created_at: confirmedAt }] : [{ event: 'reopened', created_at: '2026-10-12T11:00:00Z' }] };
+    ? [{ id: 123, created_at: confirmedAt, user: { login: 'owner', type: 'User' }, body: `/riverlight approve-visual ${JSON.stringify({ sha: 'a'.repeat(40), fingerprint: acceptanceFingerprint(issue) })}` }] : [{ event: 'reopened', created_at: '2026-10-12T11:00:00Z' }] };
   assert.equal(await approvalSurvivesReopening(api, 'owner/repo', issue), false);
   confirmedAt = '2026-10-12T12:00:00Z';
   assert.equal(await approvalSurvivesReopening(api, 'owner/repo', issue), true);

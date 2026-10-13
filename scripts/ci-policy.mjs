@@ -8,8 +8,8 @@ export function shouldPublish({ eventName, ref, changedFiles = [] }) {
   if (eventName === 'workflow_dispatch') return true;
   if (eventName !== 'push') return false;
   return changedFiles.some(file => {
-    if (['scripts/github-management.mjs', 'scripts/github-settings.mjs', 'scripts/ci-policy.mjs',
-      'tests/github-management.test.js', 'tests/github-settings.test.js', 'tests/ci.test.js'].includes(file)) return false;
+    if (['scripts/github-management.mjs', 'scripts/github-collaboration.mjs', 'scripts/github-settings.mjs', 'scripts/ci-policy.mjs',
+      'tests/github-management.test.js', 'tests/github-collaboration.test.js', 'tests/github-settings.test.js', 'tests/ci.test.js'].includes(file)) return false;
     return /^(src\/|public\/|tests\/|scripts\/|\.github\/workflows\/site\.yml$|index\.html$|vite\.config\.[^/]+$|package(?:-lock)?\.json$)/.test(file);
   });
 }

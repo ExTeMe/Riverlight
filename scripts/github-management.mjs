@@ -2,6 +2,7 @@ import { readFileSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import { reconcileClaims, codeReviewState, maintainerReview } from './github-collaboration.mjs';
 
 export const STATUS = ['待办', '进行中', '待验收', '完成', '阻塞'];
 
@@ -38,7 +39,11 @@ export function visualApprovalValid(issue) {
     && /^https:\/\/github\.com\/.+#issuecomment-\d+$/.test(issueField(body, '确认来源') || '');
 }
 
-export async function approvalSurvivesReopening(api, repository, issue) {
+export function objectiveApprovalValid(issue) {
+  return visualApprovalValid(issue);
+}
+
+export async function approvalSurvivesReopening(api, repository, issue, reviewers = [repository.split('/')[0]]) {
   if (!visualApprovalValid(issue)) return false;
   const source = issueField(issue.body || '', '确认来源');
   const prefix = `https://github.com/${repository}/issues/${issue.number}#issuecomment-`;
@@ -46,7 +51,13 @@ export async function approvalSurvivesReopening(api, repository, issue) {
   const commentId = Number(source.slice(prefix.length));
   const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
   const confirmation = comments.find(comment => comment.id === commentId);
-  if (!confirmation?.created_at) return false;
+  if (!confirmation?.created_at || confirmation.user?.type === 'Bot'
+    || !reviewers.some(login => login.toLowerCase() === confirmation.user?.login?.toLowerCase())) return false;
+  const match = confirmation.body?.trim().match(/^\/riverlight (approve-visual|approve-objective)\s+(\{[^]*\})$/);
+  if (match?.[1] !== (issueMetadata(issue).visual ? 'approve-visual' : 'approve-objective')) return false;
+  let approved;
+  try { approved = JSON.parse(match?.[2]); } catch { return false; }
+  if (approved.sha !== issueField(issue.body || '', '交付版本') || approved.fingerprint !== acceptanceFingerprint(issue)) return false;
   const events = await api.all(`repos/${repository}/issues/${issue.number}/timeline`);
   return !events.some(event => event.event === 'reopened' && event.created_at >= confirmation.created_at);
 }
@@ -64,7 +75,7 @@ export function managementProblems(issues) {
     const dependencies = issueField(issue.body || '', '前置');
     if (!dependencies || /待分诊|_No response_/.test(dependencies)
       || (dependencies !== '无' && !meta.dependencies.length)) add(issue, '缺明确前置（无依赖填写无）');
-    const selected = (issue.labels || []).filter(l => /^status:(blocked|review|in-progress)$/.test(typeof l === 'string' ? l : l.name));
+    const selected = (issue.labels || []).filter(l => /^status:(blocked|review|in-progress|code-review)$/.test(typeof l === 'string' ? l : l.name));
     if (selected.length > 1) add(issue, '状态标签冲突');
   }
   for (const issue of issues) for (const id of issueMetadata(issue).dependencies) {
@@ -89,6 +100,8 @@ export function desiredStatus(issue, issues = [], problems = new Map(), stack = 
   const names = new Set((issue.labels || []).map(label => typeof label === 'string' ? label : label.name));
   if (problems.has(issue.number)) return '阻塞';
   if (issue.state === 'closed') {
+    if (issueField(issue.body || '', '协作流程') === 'v2'
+      && (!names.has('acceptance-approved') || !objectiveApprovalValid(issue))) return '待验收';
     if (issueMetadata(issue).visual && (!names.has('visual-approved') || !visualApprovalValid(issue))) return '待验收';
     const stage = issue.title.match(/^\[(R\d+)\]/)?.[1];
     if (stage) {
@@ -100,9 +113,9 @@ export function desiredStatus(issue, issues = [], problems = new Map(), stack = 
     }
     return '完成';
   }
-  const selected = ['status:blocked', 'status:review', 'status:in-progress'].filter(name => names.has(name));
+  const selected = ['status:blocked', 'status:review', 'status:in-progress', 'status:code-review'].filter(name => names.has(name));
   if (selected.length > 1) throw new Error(`Issue #${issue.number} has conflicting status labels.`);
-  return ({ 'status:blocked': '阻塞', 'status:review': '待验收', 'status:in-progress': '进行中' })[selected[0]] || '待办';
+  return ({ 'status:blocked': '阻塞', 'status:review': '待验收', 'status:in-progress': '进行中', 'status:code-review': '进行中' })[selected[0]] || '待办';
 }
 
 export function apiClient(token, request = fetch, pause = ms => new Promise(resolve => setTimeout(resolve, ms))) {
@@ -139,7 +152,7 @@ export function apiClient(token, request = fetch, pause = ms => new Promise(reso
   return call;
 }
 
-async function syncRepository(api, repository, issues, root, targets, bootstrap, problems) {
+async function syncRepository(api, repository, issues, root, targets, bootstrap, problems, reviewers) {
   const base = `repos/${repository}`;
   const plan = readFileSync(path.join(root, 'docs/DEVELOPMENT_PLAN.md'), 'utf8');
   const stages = plan.split(/\r?\n/).filter(line => /^\| R\d /.test(line)).map(line => {
@@ -150,6 +163,9 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap,
   for (const [name, color, description] of [
     ['status:in-progress', '0969da', '任务正在实现'], ['status:review', 'd4a72c', '实现结束，等待验收'],
     ['status:blocked', 'cf222e', '有明确阻塞原因'], ['visual-approved', '1a7f37', '已收到用户对当前版本的视觉验收确认'],
+    ['status:code-review', '8250df', '代码审查中；尚未完成产品验收'],
+    ['management:stale', 'd4a72c', '认领长期无更新，提醒协调，不自动释放'],
+    ['acceptance-approved', '1a7f37', '授权验收者已确认当前版本和范围'],
     ['management:triage', 'cf222e', '元数据或依赖需要分诊；不能视为可开始'],
     ['management:ready', '1a7f37', '前置已验收且元数据有效；执行前仍需核对复现场景'],
     ...[0, 1, 2, 3].map(p => [`priority:P${p}`, p === 0 ? 'cf222e' : '57606a', `优先级 P${p}`]),
@@ -183,8 +199,10 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap,
       }
     };
     // Reopening and changed requirements invalidate the old version's visual approval.
-    if (metadata.visual && issue.labels.some(label => label.name === 'visual-approved')) {
-      if (!await approvalSurvivesReopening(api, repository, issue)) await setLabel('visual-approved', false);
+    if (metadata.visual || issueField(issue.body || '', '协作流程') === 'v2') {
+      const valid = await approvalSurvivesReopening(api, repository, issue, reviewers);
+      await setLabel(metadata.visual ? 'visual-approved' : 'acceptance-approved', valid);
+      if (metadata.visual && issueField(issue.body || '', '协作流程') === 'v2') await setLabel('acceptance-approved', valid);
     }
     await setLabel('management:triage', problems.has(issue.number));
     const parentDependencies = issueMetadata(stageParents.get(metadata.phase) || { title: '', body: '' }).dependencies;
@@ -226,11 +244,66 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap,
 const FIELD_QUERY = 'fields(first:30){nodes{... on ProjectV2Field{id name} ... on ProjectV2SingleSelectField{id name options{id name}}}}';
 
 export const PROJECT_VIEWS = [
-  { name: '当前可开始', filter: 'is:open label:management:ready -label:status:in-progress -label:status:review -label:status:blocked' },
-  { name: '当前工作', filter: 'is:open label:status:in-progress' },
+  { name: '当前可开始', filter: 'is:open no:assignee label:management:ready -label:status:in-progress -label:status:code-review -label:status:review -label:status:blocked' },
+  { name: '当前工作', filter: 'is:open status:进行中' },
   { name: '等待验收', filter: 'status:待验收' },
   { name: '阻塞与分诊', filter: 'status:阻塞' },
+  { name: '我的任务', filter: 'is:open assignee:@me' },
+  { name: '代码审查', filter: 'is:open label:status:code-review' },
+  { name: '认领需协调', filter: 'is:open label:management:stale' },
 ];
+
+export const COORD_FIELDS = ['执行者', '任务分支', '交付范围', '独占资源', '认领更新', '代码审查', '产品验收', '发布状态'];
+
+export async function syncCoordinationFields(api, project, issues, states) {
+  for (const name of COORD_FIELDS) {
+    if (!project.fields.nodes.some(f => f.name === name)) {
+      const result = await api.graphql('mutation($project:ID!,$name:String!){createProjectV2Field(input:{projectId:$project,dataType:TEXT,name:$name}){projectV2Field{... on ProjectV2Field{id name}}}}', { project: project.id, name });
+      project.fields.nodes.push(result.createProjectV2Field.projectV2Field);
+    }
+  }
+  let cursor = null;
+  const items = new Map();
+  const query = 'query($id:ID!,$cursor:String){node(id:$id){... on ProjectV2{items(first:100,after:$cursor){nodes{id content{... on Issue{id}} fieldValues(first:100){nodes{... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{id name}}}}}} pageInfo{hasNextPage endCursor}}}}}';
+  do {
+    const data = await api.graphql(query, { id: project.id, cursor });
+    const page = data.node.items;
+    for (const item of page.nodes) items.set(item.content?.id, item);
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+  const expected = new Map();
+  for (const issue of issues) {
+    const state = states.get(issue.number) || {}, claim = state.claim;
+    const values = [claim?.executor || '', claim?.branch || '', claim?.scope || '', claim?.resources.join('、') || '', claim?.updated || '',
+      state.review || '无当前任务 PR', desiredStatus(issue, issues) === '完成' ? '已验收' : issue.labels.some(l => l.name === 'status:review') ? '待验收' : '未验收',
+      state.pr?.merged_at ? '已集成 dev；发布单独确认' : '未集成'];
+    const item = items.get(issue.node_id);
+    if (!item) throw new Error(`Missing Project item for #${issue.number}`);
+    expected.set(issue.node_id, values);
+    for (let index = 0; index < COORD_FIELDS.length; index++) {
+      const field = project.fields.nodes.find(f => f.name === COORD_FIELDS[index]), text = values[index];
+      const previous = item.fieldValues.nodes.find(v => v.field?.id === field.id)?.text || '';
+      if (previous === text) continue;
+      if (text) await api.graphql('mutation($project:ID!,$item:ID!,$field:ID!,$text:String!){updateProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field,value:{text:$text}}){projectV2Item{id}}}', { project: project.id, item: item.id, field: field.id, text });
+      else await api.graphql('mutation($project:ID!,$item:ID!,$field:ID!){clearProjectV2ItemFieldValue(input:{projectId:$project,itemId:$item,fieldId:$field}){projectV2Item{id}}}', { project: project.id, item: item.id, field: field.id });
+    }
+  }
+  cursor = null;
+  do {
+    const data = await api.graphql(query, { id: project.id, cursor });
+    const page = data.node.items;
+    for (const item of page.nodes) {
+      const values = expected.get(item.content?.id);
+      if (!values) continue;
+      for (let i = 0; i < COORD_FIELDS.length; i++) {
+        if ((item.fieldValues.nodes.find(v => v.field?.name === COORD_FIELDS[i])?.text || '') !== values[i]) throw new Error('Coordination field synchronization could not be verified.');
+      }
+      expected.delete(item.content.id);
+    }
+    cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+  if (expected.size) throw new Error('Missing Project coordination items after synchronization.');
+}
 
 export async function syncProjectViews(api, project) {
   const views = []; let cursor = null;
@@ -343,19 +416,88 @@ export async function runManagement(env = process.env, request = fetch) {
   // Always fetch the latest issue state; queued old events must not overwrite newer status.
   // Reconcile every task each time: dropped/coalesced events and changed blockers
   // must not leave another issue, parent stage or readiness label stale.
-  if (event.issue) {
+  if (event.issue && !event.issue.pull_request) {
     const latest = await api(`repos/${repository}/issues/${event.issue.number}`);
     const index = allIssues.findIndex(i => i.number === latest.number);
     if (index >= 0) allIssues[index] = latest; else allIssues.push(latest);
   }
   const issues = allIssues;
   const problems = managementProblems(issues);
-  await syncRepository(api, repository, allIssues, fileURLToPath(new URL('../', import.meta.url)), issues, bootstrap, problems);
+  let states;
+  if (env.COLLABORATION_ENABLED === 'true') {
+    const labels = await api.all(`repos/${repository}/labels`);
+    for (const [name, color] of [['status:code-review', '8250df'], ['management:stale', 'd4a72c']]) {
+      if (!labels.some(l => l.name === name)) await api(`repos/${repository}/labels`, 'POST', { name, color });
+    }
+    const stages = new Map(issues.filter(i => /^\[R\d+\]/.test(i.title)).map(i => [i.title.match(/^\[(R\d+)\]/)[1], i]));
+    const indexed = new Map(issues.map(i => [issueMetadata(i).task || i.title.match(/^\[(R\d+)\]/)?.[1], i]));
+    const isReady = issue => {
+      const meta = issueMetadata(issue), parent = stages.get(meta.phase);
+      return !!meta.task && !problems.has(issue.number) && !problems.has(parent?.number)
+        && [...meta.dependencies, ...issueMetadata(parent || { title: '', body: '' }).dependencies].every(id => indexed.has(id) && desiredStatus(indexed.get(id), issues, problems) === '完成');
+    };
+    isReady.valid = issue => !!issueMetadata(issue).task && !problems.has(issue.number);
+    states = await reconcileClaims(api, repository, issues, isReady);
+    const prs = await api.all(`repos/${repository}/pulls?state=all`);
+    for (const issue of issues) {
+      const state = states.get(issue.number), claim = state?.claim;
+      if (!claim && state?.releasedOwner) {
+        if (issue.assignees?.some(a => a.login.toLowerCase() === state.releasedOwner.toLowerCase())) {
+          await api(`repos/${repository}/issues/${issue.number}/assignees`, 'DELETE', { assignees: [state.releasedOwner] });
+          issue.assignees = issue.assignees.filter(a => a.login.toLowerCase() !== state.releasedOwner.toLowerCase());
+        }
+        for (const label of issue.labels.filter(l => ['status:in-progress', 'status:code-review'].includes(l.name))) {
+          await api(`repos/${repository}/issues/${issue.number}/labels/${encodeURIComponent(label.name)}`, 'DELETE');
+          issue.labels = issue.labels.filter(l => l.name !== label.name);
+        }
+      }
+      const active = issue.labels.some(l => ['status:in-progress', 'status:code-review'].includes(l.name));
+      if (active && !claim) problems.set(issue.number, [...(problems.get(issue.number) || []), '进行中任务缺有效认领']);
+      if (claim) {
+        if (!isReady(issue) && !claim.override) problems.set(issue.number, [...(problems.get(issue.number) || []), '认领后的前置不再满足，需重新协调']);
+        if (!(issue.assignees || []).some(a => a.login.toLowerCase() === claim.owner.toLowerCase())) {
+          await api(`repos/${repository}/issues/${issue.number}/assignees`, 'POST', { assignees: [claim.owner] });
+          issue.assignees = [...(issue.assignees || []), { login: claim.owner }];
+        }
+        if (issue.assignees.some(a => a.login.toLowerCase() !== claim.owner.toLowerCase())) problems.set(issue.number, [...(problems.get(issue.number) || []), '负责人和认领冲突，需明确交接']);
+        state.pr = prs.find(pr => pr.head.ref === claim.branch && pr.head.repo?.full_name === repository && pr.base.ref === 'dev');
+        state.review = state.pr ? codeReviewState(state.pr, await api.all(`repos/${repository}/pulls/${state.pr.number}/reviews`)) : '无当前任务 PR';
+        if (state.pr?.state === 'open') {
+          const reviewers = (env.CODE_REVIEWERS || repository.split('/')[0]).split(',').map(s => s.trim());
+          if (state.review === '待代码审查' && maintainerReview(state.pr, await api.all(`repos/${repository}/issues/${state.pr.number}/comments`), reviewers)) state.review = '已自动审查（共用账号）';
+          const linked = new RegExp(`(?:关联|Refs:?)\\s+#${issue.number}\\b`, 'i').test(state.pr.body || '');
+          const approved = linked && !problems.has(issue.number) && ['已审查', '已自动审查（共用账号）'].includes(state.review);
+          const desired = { state: approved ? 'success' : 'pending', context: 'collaboration', description: approved ? 'Task claim and current revision review verified' : 'Requires Issue reference and review of current head', target_url: state.pr.html_url };
+          const statuses = await api.all(`repos/${repository}/commits/${state.pr.head.sha}/statuses`);
+          const previous = statuses.find(s => s.context === 'collaboration');
+          if (previous?.state !== desired.state || previous?.description !== desired.description) await api(`repos/${repository}/statuses/${state.pr.head.sha}`, 'POST', desired);
+        }
+        const label = state.pr?.state === 'open' && !state.pr.draft ? 'status:code-review' : 'status:in-progress';
+        if (!issue.labels.some(l => ['status:review', 'status:blocked'].includes(l.name)) && issue.state === 'open') {
+          for (const old of issue.labels.filter(l => ['status:in-progress', 'status:code-review'].includes(l.name) && l.name !== label)) {
+            await api(`repos/${repository}/issues/${issue.number}/labels/${encodeURIComponent(old.name)}`, 'DELETE');
+            issue.labels = issue.labels.filter(l => l.name !== old.name);
+          }
+          if (!issue.labels.some(l => l.name === label)) {
+            await api(`repos/${repository}/issues/${issue.number}/labels`, 'POST', { labels: [label] }); issue.labels.push({ name: label });
+          }
+        }
+      }
+      const stale = claim && issue.state === 'open' && Date.now() - Date.parse(claim.updated) > Number(env.CLAIM_REMINDER_DAYS || 7) * 86400000;
+      if (!!stale !== issue.labels.some(l => l.name === 'management:stale')) {
+        if (stale) { await api(`repos/${repository}/issues/${issue.number}/labels`, 'POST', { labels: ['management:stale'] }); issue.labels.push({ name: 'management:stale' }); }
+        else { await api(`repos/${repository}/issues/${issue.number}/labels/management%3Astale`, 'DELETE'); issue.labels = issue.labels.filter(l => l.name !== 'management:stale'); }
+      }
+    }
+  }
+  const reviewers = (env.VISUAL_REVIEWERS || repository.split('/')[0]).split(',').map(s => s.trim()).filter(Boolean);
+  await syncRepository(api, repository, allIssues, fileURLToPath(new URL('../', import.meta.url)), issues, bootstrap, problems, reviewers);
   if (!env.PROJECT_TOKEN) throw new Error('Repository metadata is prepared; PROJECT_TOKEN is required for personal Projects.');
   const projectApi = apiClient(env.PROJECT_TOKEN, request), owner = repository.split('/')[0];
   const repositoryInfo = await api(`repos/${repository}`);
   const project = await findProject(projectApi, owner, repositoryInfo.node_id, env.PROJECT_NUMBER, env.PROJECT_TITLE || 'Riverlight 开发', bootstrap);
   await syncProject(projectApi, project, issues, bootstrap, problems);
+  if (states) await syncCoordinationFields(projectApi, project, issues, states);
   if (bootstrap) await syncProjectViews(projectApi, project);
   const warnings = [...problems].map(([number, messages]) => `- #${number}: ${messages.join('；')}`).join('\n');
   if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `Project synchronized: ${project.url}\nIssues checked: ${issues.length}\n\n${warnings}\n`);

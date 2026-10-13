@@ -1,8 +1,8 @@
 ---
 title: Riverlight 项目管理工作流规范
-version: 1.1
+version: 2.0
 date_created: 2026-10-13
-last_updated: 2026-10-13
+last_updated: 2026-10-14
 owner: Riverlight maintainers
 tags: [process, github-actions, project-management]
 ---
@@ -25,16 +25,16 @@ tags: [process, github-actions, project-management]
 
 | 项目 | 约束 |
 | --- | --- |
-| 仓库访问 | 仓库令牌仅需源码读取、Issues 写入 |
+| 仓库访问 | 管理令牌需要源码读取、Issues 写入、PR 读取及提交状态写入；不执行 PR head 的脚本 |
 | Project 访问 | 独立 Secret `PROJECT_TOKEN`；个人 Projects 与私有仓库所需授权由所有者设置；令牌不进入源码、输出或任务正文 |
 | 项目标识 | 可选变量 `PROJECT_NUMBER` 指向现有项目；未设置时精确匹配 `Riverlight 开发`，初始化才能创建 |
 | 阶段与关系 | 阶段和任务 ID 在 Issue 中保留；阶段规格来自 DEVELOPMENT_PLAN，关联关系使用原生子任务与阻塞关系。变更阶段同步里程碑和父任务；明确修改前置字段时移除本项目中失效的任务依赖，保留其他引用 |
-| 状态入口 | Issue 的状态与互斥标签 `status:in-progress`、`status:review`、`status:blocked`；Project 为自动生成的视图，不同时手工维护两套状态 |
+| 状态入口 | Issue 的状态与互斥标签 `status:in-progress`、`status:code-review`、`status:review`、`status:blocked`；Project 为自动生成的视图 |
 | 视觉验收 | 标签须配合交付/验收 SHA、需求范围摘要、证据及确认来源；重开或记录失效移除旧标签，关闭但缺有效确认仍显示待验收 |
 | 表单与分诊 | 同时解析旧正文及表单标题字段。待分诊、未知依赖、循环、状态冲突明确标记 `management:triage` 并显示阻塞，工作流报告问题；不静默忽略 |
 | 可开始 | `management:ready` 由任务及阶段前置的验收状态生成，仍须人工核对开始条件；优先级保留一个正文对应标签 |
 | 阶段出口 | 关闭父任务但出口未勾选、没有子任务或子任务未验收时仍显示待验收，不自动关闭里程碑 |
-| 看板视图 | 初始化幂等维护当前可开始、当前工作、等待验收、阻塞与分诊的过滤视图，不删除其他视图 |
+| 看板视图 | 初始化幂等维护可开始、当前工作、等待验收、阻塞与分诊、我的任务、代码审查、认领需协调及协作字段，不删除其他视图 |
 
 ## 执行与失败边界
 
@@ -45,7 +45,7 @@ tags: [process, github-actions, project-management]
 - 多个同名项目要求指定项目编号；重复任务编号和互相冲突的状态标签要求分诊修复。
 - 授权缺失/API 失败时报告失败，不能写成已同步；凭据及未过滤的 API 响应不打印。
 - GET 的 429/502/503/504 最多重试三次，延迟有上限；写操作不盲目重放，避免响应丢失后重复写入。
-- 分支保护由独立授权操作处理，不纳入日常 Issue 同步。仅修改明确选定、只针对 main 的规则集，要求预期更新时间相符并回读规则与分支保护；权限/套餐不足则失败。实现入口为 `scripts/github-settings.mjs`。
+- 分支保护由独立授权操作处理，不纳入日常 Issue 同步。只修改明确选定、专门针对 main 或 dev 的规则集，要求预期时间戳相符并回读实际保护；新建 dev 规则须显式 absent 预期。权限/套餐不足则失败。
 
 需求描述、版本确认和证据记录的规范定义见 [GIT_WORKFLOW](../docs/GIT_WORKFLOW.md#需求问题与验收契约)。流程规范定义目标行为，不记录逐次运行结果或账户配置步骤。
 
@@ -56,4 +56,16 @@ tags: [process, github-actions, project-management]
 - 新任务修改范围或依赖后可同步，任务数据只在 GitHub 更新。
 - 本地测试验证转换、分页、凭据保护和模拟 API 联调；真实 GitHub 首次运行另行核验权限与响应。
 
-实现入口：`.github/workflows/project-management.yml` 与 `scripts/github-management.mjs`。版本 1.1：全量核对、分诊/就绪、版本验收与管理视图；后续先更新行为契约，再修改和验证工作流。
+## 小团队协作契约
+
+- Issue 负责人变更、Issue/PR 评论、PR 状态与审查事件使用可信脚本回读现状，再全量核对。新增事件须工作流实际进入默认分支后才能称为启用；dev 可手动核验，配置提交不等于生效。
+- `/riverlight claim` 需要仓库写权限、明确范围、分支及独占资源。任务/资源冲突拒绝第二次认领；先写 bot 回执再投影负责人，响应丢失回读恢复，不盲目重放。负责人和执行者分别记录，共用账号的代号不能作为独立身份认证。
+- `/riverlight touch/release` 引用当前认领 ID；维护者代办须说明原因。中断保留，长期未更新只提醒，不自动释放、抢占或关闭。
+- 小团队按依赖、接口、共享资源和审查能力协调并行范围，不设置固定数量限制；维护者可明确提前探索范围，不改变阶段出口。
+- 代码审查来自当前版本的不同账号批准或授权维护者明确标记的自动审查记录；自我人工批准、旧 SHA 和未解决 Request changes 不放行。`collaboration` 提交状态用于 dev 合并门槛。
+- 视觉和 v2 客观验收核验授权登录名、明确结论、SHA、需求范围摘要、证据和重开时间；失效移除确认标签。既有非视觉关闭结果保留，不追溯伪造确认。
+- 看板增加我的任务、代码审查、认领需协调视图，以及执行者、任务分支、范围、资源、更新时间、代码审查、产品验收、发布状态字段；逐项投影并回读验证，不覆盖自定义视图。
+- 分支保护只操作明确选定的 main/dev 规则集；新建 dev 规则须显式 absent 预期并检查重叠，更新须校验时间戳，回读必要检查和禁止强推/删除。失败明确报告。
+- 任务分支经 PR 集成到 dev，预览展示版本，CI 保存浏览器回归报告和截图。产品验收与发布分别记录；PR 不自动关闭任务。协作者的仓库和 Project 权限由所有者分别维护。
+
+实现入口：`.github/workflows/project-management.yml`、`scripts/github-management.mjs`、`scripts/github-collaboration.mjs` 与 `scripts/github-settings.mjs`。命令和审查/验收格式以 GIT_WORKFLOW 为准，启用步骤和逐次测试日志留在聊天与 Actions。

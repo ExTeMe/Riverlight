@@ -2,10 +2,17 @@ name: Manage project
 
 on:
   issues:
-    types: [opened, edited, labeled, unlabeled, closed, reopened]
+    types: [opened, edited, labeled, unlabeled, closed, reopened, assigned, unassigned]
+  issue_comment:
+    types: [created, edited, deleted]
+  pull_request_target:
+    types: [opened, edited, synchronize, ready_for_review, converted_to_draft, closed, reopened]
+    branches: [dev, main]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
   push:
     branches: [dev]
-    paths: ['.github/workflows/project-management.yml', 'scripts/github-management.mjs']
+    paths: ['.github/workflows/project-management.yml', 'scripts/github-management.mjs', 'scripts/github-collaboration.mjs']
   schedule:
     - cron: '17 */6 * * *'
   workflow_dispatch:
@@ -18,6 +25,8 @@ on:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
+  statuses: write
 
 concurrency:
   group: project-management-${{ github.repository }}
@@ -26,19 +35,20 @@ concurrency:
 
 jobs:
   synchronize:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       # Issue text is data. Never check out or execute a contributor's PR code.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event_name == 'push' && github.ref_name || github.event.repository.default_branch }}
+          ref: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref || github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '22'
           package-manager-cache: false
-      - run: node --test tests/github-management.test.js
+      - run: node --test tests/github-management.test.js tests/github-collaboration.test.js
       - name: Synchronize repository and Project metadata
         run: node scripts/github-management.mjs
         env:
@@ -46,3 +56,7 @@ jobs:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
           MANAGEMENT_BOOTSTRAP: ${{ github.event_name == 'push' || inputs.bootstrap == true }}
+          COLLABORATION_ENABLED: 'true'
+          VISUAL_REVIEWERS: ${{ vars.VISUAL_REVIEWERS || github.repository_owner }}
+          CODE_REVIEWERS: ${{ vars.CODE_REVIEWERS || github.repository_owner }}
+          CLAIM_REMINDER_DAYS: ${{ vars.CLAIM_REMINDER_DAYS || '7' }}
