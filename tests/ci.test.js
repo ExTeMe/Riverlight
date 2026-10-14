@@ -4,8 +4,19 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { shouldPublish } from '../scripts/ci-policy.mjs';
+import { shouldPublish, checkPlan, changedFilesForEvent } from '../scripts/ci-policy.mjs';
 import { publishStatic } from '../scripts/publish-static.mjs';
+
+test('check selection keeps unknown and application changes on the complete suite', () => {
+  assert.deepEqual(checkPlan(['docs/GIT_WORKFLOW.md']), { documentation: true, management: false, application: false });
+  assert.deepEqual(checkPlan(['scripts/github-management.mjs', 'tests/github-management.test.js']), { documentation: true, management: true, application: false });
+  for (const files of [[], ['package-lock.json'], ['src/core.js'], ['assets/blender/city.blend'], ['.github/workflows/site.yml'], ['unknown.config']]) assert.equal(checkPlan(files).application, true);
+  assert.equal(checkPlan(['README.md'], true).application, true);
+  const calls = [];
+  assert.deepEqual(changedFilesForEvent('pull_request', { pull_request: { base: { sha: 'a'.repeat(40) } } }, 'b'.repeat(40), args => { calls.push(args); return 'docs/a.md\0src/core.js\0'; }), ['docs/a.md', 'src/core.js']);
+  assert.equal(calls[0].at(-2), 'a'.repeat(40));
+  assert.throws(() => changedFilesForEvent('push', {}, 'b'.repeat(40)), /valid comparison/);
+});
 
 test('only dev application pushes and explicit dev runs can publish', () => {
   for (const eventName of ['push', 'workflow_dispatch', 'pull_request', 'pull_request_target', 'workflow_run']) {

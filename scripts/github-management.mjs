@@ -2,7 +2,7 @@ import { readFileSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { reconcileClaims, codeReviewState, workflowReviewValid, readableApproval } from './github-collaboration.mjs';
+import { reconcileClaims, codeReviewState, workflowReviewValid, readableApproval, readReceipts, commentField } from './github-collaboration.mjs';
 
 export const STATUS = ['待办', '进行中', '待验收', '完成', '阻塞'];
 
@@ -23,18 +23,34 @@ export function issueMetadata(issue) {
   };
 }
 
-export function acceptanceFingerprint(issue) {
-  // Acceptance records and progress notes are outside the reviewed requirement scope.
+export function legacyAcceptanceFingerprint(issue) {
   const scope = (issue.body || '').split(/^## (?:验收记录|执行记录|交接记录)\s*$/m)[0].trim().replace(/\r\n/g, '\n');
   return createHash('sha256').update(`${issue.title}\n${scope}`).digest('hex');
 }
 
+export function acceptanceFingerprint(issue) {
+  // Unknown sections remain in scope; exclude only explicit records and metadata.
+  const excluded = new Set(['验收记录', '验收准备', '实现与证据', '执行记录', '交接记录', '依据', '任务编号', '协作流程', '阶段', '优先级', '前置']);
+  let include = true;
+  const scope = (issue.body || '').replace(/\r\n/g, '\n').split('\n').filter(line => {
+    const heading = line.match(/^#{2,3}\s+(.+?)\s*$/);
+    if (heading) include = !excluded.has(heading[1]);
+    return include && !/^\s*(?:-\s*)?\*\*(?:任务|协作流程|阶段|系统与优先级|优先级|前置|阶段父任务|交付版本)\*\*[：:]/.test(line);
+  }).map(line => line.replace(/^(\s*[-*+] )\[[ xX]\]/, '$1[ ]').trimEnd()).join('\n').trim();
+  return 'scope-v2:' + createHash('sha256').update(`${issue.title}\n${scope}`).digest('hex');
+}
+
+const fingerprintMatches = (issue, value) => value === acceptanceFingerprint(issue)
+  || (!value?.startsWith('scope-v2:') && value === legacyAcceptanceFingerprint(issue));
+export const acceptanceBody = issue => (issue.body || '').match(/^## 验收记录[^\S\n]*\n([^]*?)(?=^## |$(?![^]))/m)?.[1] || issue.body || '';
+const acceptanceField = (issue, name) => issueField(acceptanceBody(issue), name);
+
 export function visualApprovalValid(issue) {
-  const body = issue.body || '';
+  const body = acceptanceBody(issue);
   const delivered = issueField(body, '交付版本');
   return /^[a-f0-9]{40}$/.test(delivered || '')
     && issueField(body, '验收版本') === delivered
-    && issueField(body, '验收范围摘要') === acceptanceFingerprint(issue)
+    && fingerprintMatches(issue, issueField(body, '验收范围摘要'))
     && /^https:\/\/github\.com\//.test(issueField(body, '验收证据') || '')
     && /^https:\/\/github\.com\/.+#issuecomment-\d+$/.test(issueField(body, '确认来源') || '');
 }
@@ -45,7 +61,7 @@ export function objectiveApprovalValid(issue) {
 
 export async function approvalSurvivesReopening(api, repository, issue, reviewers = [repository.split('/')[0]]) {
   if (!visualApprovalValid(issue)) return false;
-  const source = issueField(issue.body || '', '确认来源');
+  const source = acceptanceField(issue, '确认来源');
   const prefix = `https://github.com/${repository}/issues/${issue.number}#issuecomment-`;
   if (!source.startsWith(prefix)) return false;
   const commentId = Number(source.slice(prefix.length));
@@ -53,16 +69,59 @@ export async function approvalSurvivesReopening(api, repository, issue, reviewer
   const confirmation = comments.find(comment => comment.id === commentId);
   if (!confirmation?.created_at || confirmation.user?.type === 'Bot'
     || !reviewers.some(login => login.toLowerCase() === confirmation.user?.login?.toLowerCase())) return false;
+  const approved = await approvalFromComment(confirmation, issue, comments, repository);
+  if (!approved || approved.sha !== acceptanceField(issue, '交付版本') || !fingerprintMatches(issue, approved.fingerprint)) return false;
+  const events = await api.all(`repos/${repository}/issues/${issue.number}/timeline`);
+  return !events.some(event => event.event === 'reopened' && event.created_at >= confirmation.created_at);
+}
+
+export async function approvalFromComment(confirmation, issue, comments, repository) {
   const match = confirmation.body?.trim().match(/^\/riverlight (approve-visual|approve-objective)\s+(\{[^]*\})$/);
   let approved;
   if (match) {
-    if (match[1] !== (issueMetadata(issue).visual ? 'approve-visual' : 'approve-objective')) return false;
-    try { approved = JSON.parse(match[2]); } catch { return false; }
+    if (match[1] !== (issueMetadata(issue).visual ? 'approve-visual' : 'approve-objective')) return null;
+    try { approved = JSON.parse(match[2]); } catch { return null; }
   } else approved = readableApproval(confirmation.body, issueMetadata(issue).visual);
-  if (!approved) return false;
-  if (approved.sha !== issueField(issue.body || '', '交付版本') || approved.fingerprint !== acceptanceFingerprint(issue)) return false;
-  const events = await api.all(`repos/${repository}/issues/${issue.number}/timeline`);
-  return !events.some(event => event.event === 'reopened' && event.created_at >= confirmation.created_at);
+  if (!approved?.preparation) return approved;
+  const prefix = `https://github.com/${repository}/issues/${issue.number}#issuecomment-`;
+  if (!approved.preparation.startsWith(prefix) || !/^\d+$/.test(approved.preparation.slice(prefix.length))) return null;
+  const preparation = comments.find(comment => comment.id === Number(approved.preparation.slice(prefix.length)));
+  if (preparation?.user?.login !== 'github-actions[bot]' || preparation.user.type !== 'Bot'
+    || !preparation.body?.startsWith('<!-- riverlight:acceptance-preparation:v2 -->')
+    || !preparation.created_at || preparation.created_at > confirmation.created_at) return null;
+  try {
+    return { sha: commentField(preparation.body, '交付版本'), fingerprint: commentField(preparation.body, '验收范围摘要'),
+      evidence: commentField(preparation.body, '验收证据') };
+  } catch { return null; }
+}
+
+export function updateAcceptanceBody(body, fields) {
+  const expression = /^## 验收记录[^\S\n]*\n([^]*?)(?=^## |$(?![^]))/m;
+  const existing = body.match(expression)?.[1] || '';
+  const remaining = existing.split('\n').filter(line => !/^\s*(?:-\s*)?\*\*(?:交付版本|验收版本|验收范围摘要|验收证据|确认来源)\*\*[：:]/.test(line)).join('\n').trim();
+  const record = '## 验收记录\n\n' + Object.entries(fields).map(([name, value]) => `- **${name}**：${value}`).join('\n') + (remaining ? `\n\n${remaining}` : '') + '\n\n';
+  return expression.test(body) ? body.replace(expression, () => record) : body.trimEnd() + '\n\n' + record;
+}
+
+export async function reconcileAcceptanceRecord(api, repository, issue, reviewers) {
+  const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
+  for (const comment of [...comments].sort((a, b) => b.id - a.id)) {
+    if (!comment.created_at || comment.user?.type === 'Bot' || !reviewers.some(login => login.toLowerCase() === comment.user?.login?.toLowerCase())) continue;
+    const approval = await approvalFromComment(comment, issue, comments, repository);
+    if (!approval?.evidence || approval.sha !== acceptanceField(issue, '交付版本') || !fingerprintMatches(issue, approval.fingerprint)
+      || !/^https:\/\/github\.com\//.test(approval.evidence)) continue;
+    const source = `https://github.com/${repository}/issues/${issue.number}#issuecomment-${comment.id}`;
+    const body = updateAcceptanceBody(issue.body || '', { 交付版本: approval.sha, 验收版本: approval.sha, 验收范围摘要: approval.fingerprint, 验收证据: approval.evidence, 确认来源: source });
+    const candidate = { ...issue, body };
+    if (!await approvalSurvivesReopening(api, repository, candidate, reviewers)) continue;
+    if (body !== issue.body) {
+      const latest = await api(`repos/${repository}/issues/${issue.number}`);
+      if (latest.body !== issue.body) throw new Error('Issue changed during acceptance recording; rerun from its current scope.');
+      await api(`repos/${repository}/issues/${issue.number}`, 'PATCH', { body });
+      issue.body = body;
+    }
+    return;
+  }
 }
 
 export function managementProblems(issues) {
@@ -111,7 +170,8 @@ export function desiredStatus(issue, issues = [], problems = new Map(), stack = 
       if (stack.has(issue.number)) return '待验收';
       const next = new Set([...stack, issue.number]);
       const children = issues.filter(i => issueMetadata(i).task && issueMetadata(i).phase === stage);
-      if (!children.length || !/- \[x\]/i.test(issue.body || '') || /- \[ \]/.test(issue.body || '')
+      const exit = (issue.body || '').match(/^## 阶段出口[^\S\n]*\n([^]*?)(?=^## |$(?![^]))/m)?.[1] || '';
+      if (!children.length || !/- \[x\]/i.test(exit) || /- \[ \]/.test(exit)
         || children.some(i => desiredStatus(i, issues, problems, next) !== '完成')) return '待验收';
     }
     return '完成';
@@ -153,6 +213,69 @@ export function apiClient(token, request = fetch, pause = ms => new Promise(reso
     return result.data;
   };
   return call;
+}
+
+export function cacheManagementReads(api) {
+  const reads = new Map();
+  const remember = (key, read) => {
+    if (!reads.has(key)) reads.set(key, Promise.resolve().then(read).catch(error => { reads.delete(key); throw error; }));
+    return reads.get(key);
+  };
+  const cached = async (endpoint, method = 'GET', body) => {
+    if (method === 'GET' && endpoint.endsWith('/permission')) return remember(endpoint, () => api(endpoint));
+    if (method !== 'GET') {
+      for (const key of reads.keys()) if (key === endpoint || key.startsWith(endpoint + '/') || endpoint.startsWith(key + '/')
+        || (/\/issues\/comments\//.test(endpoint) && key.endsWith('/comments'))) reads.delete(key);
+    }
+    return api(endpoint, method, body);
+  };
+  cached.all = endpoint => /\/(?:comments|sub_issues|reviews|timeline)$/.test(endpoint)
+    ? remember(endpoint, () => api.all(endpoint)) : api.all(endpoint);
+  cached.graphql = (...args) => api.graphql(...args);
+  return cached;
+}
+
+export function managementEventRelevant(eventName, event) {
+  if (eventName !== 'issue_comment') return true;
+  if (event.issue?.pull_request) return false; // PR body/review events own review state.
+  return [event.comment?.body, event.changes?.body?.from].some(body => /^(?:#{2,3} (?:任务认领|认领更新|任务交接|视觉验收|客观验收)\s*\n|\/riverlight (?:claim|release|touch|approve-visual|approve-objective)\b)/.test((body || '').trim()));
+}
+
+export async function prepareAcceptance(api, repository, issue, sha, evidence, actor) {
+  if (!/^[a-f0-9]{40}$/.test(sha || '') || !/^https:\/\/github\.com\//.test(evidence || '')) throw new Error('Acceptance preparation requires a full delivered SHA and a GitHub evidence link.');
+  const permission = await api(`repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`);
+  if (!['admin', 'maintain', 'write'].includes(permission.permission)) throw new Error('Acceptance preparation requires repository write permission.');
+  await api(`repos/${repository}/commits/${sha}`); // The delivery must exist in this repository.
+  const fingerprint = acceptanceFingerprint(issue);
+  const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
+  let candidate = comments.find(comment => comment.user?.login === 'github-actions[bot]' && comment.user.type === 'Bot'
+    && comment.body?.startsWith('<!-- riverlight:acceptance-preparation:v2 -->')
+    && commentField(comment.body, '交付版本') === sha && commentField(comment.body, '验收范围摘要') === fingerprint && commentField(comment.body, '验收证据') === evidence);
+  if (!candidate) candidate = await api(`repos/${repository}/issues/${issue.number}/comments`, 'POST', {
+    body: `<!-- riverlight:acceptance-preparation:v2 -->\n## 验收准备\n\n- **交付版本**：${sha}\n- **验收范围摘要**：${fingerprint}\n- **验收证据**：${evidence}\n\n确认前核对本任务需求、交付画面或客观证据。此记录不代表验收通过。`,
+  });
+  const latest = await api(`repos/${repository}/issues/${issue.number}`);
+  if (latest.body !== issue.body) throw new Error('Issue changed during preparation; rerun from its current scope.');
+  const body = updateAcceptanceBody(issue.body || '', { 交付版本: sha });
+  if (body !== issue.body) await api(`repos/${repository}/issues/${issue.number}`, 'PATCH', { body });
+  return `## ${issueMetadata(issue).visual ? '视觉验收' : '客观验收'}\n\n- **验收结论**：通过\n- **验收准备**：https://github.com/${repository}/issues/${issue.number}#issuecomment-${candidate.id}\n`;
+}
+
+export async function runReviewOnly(env, event, api, repository, issues) {
+  const pr = await api(`repos/${repository}/pulls/${env.REVIEW_PR}`);
+  const linked = issues.filter(issue => new RegExp(`(?:关联|Refs:?)\\s+#${issue.number}\\b`, 'i').test(pr.body || ''));
+  if (linked.length !== 1) throw new Error('Review confirmation requires one unambiguous task Issue reference.');
+  const issue = linked[0], comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
+  const claim = readReceipts(comments).filter(receipt => receipt.accepted).at(-1)?.claim;
+  const problems = managementProblems(issues);
+  if (!claim || claim.branch !== pr.head.ref || problems.has(issue.number)) throw new Error('Review confirmation requires a valid task claim.');
+  const stages = issues.find(item => item.title.startsWith(`[${issueMetadata(issue).phase}]`));
+  const indexed = new Map(issues.map(item => [issueMetadata(item).task || item.title.match(/^\[(R\d+)\]/)?.[1], item]));
+  if (!claim.override && [...issueMetadata(issue).dependencies, ...issueMetadata(stages || { title: '', body: '' }).dependencies]
+    .some(id => !indexed.has(id) || desiredStatus(indexed.get(id), issues, problems) !== '完成')) throw new Error('Review confirmation has unresolved task dependencies.');
+  await recordWorkflowReview(env, event, api, repository, new Map([[issue.number, { claim }]]));
+  await api(`repos/${repository}/statuses/${pr.head.sha}`, 'POST', { state: 'success', context: 'collaboration',
+    description: 'Task claim and current revision review verified', target_url: pr.html_url });
 }
 
 async function syncRepository(api, repository, issues, root, targets, bootstrap, problems, reviewers) {
@@ -203,6 +326,7 @@ async function syncRepository(api, repository, issues, root, targets, bootstrap,
     };
     // Reopening and changed requirements invalidate the old version's visual approval.
     if (metadata.visual || issueField(issue.body || '', '协作流程') === 'v2') {
+      await reconcileAcceptanceRecord(api, repository, issue, reviewers);
       const valid = await approvalSurvivesReopening(api, repository, issue, reviewers);
       await setLabel(metadata.visual ? 'visual-approved' : 'acceptance-approved', valid);
       if (metadata.visual && issueField(issue.body || '', '协作流程') === 'v2') await setLabel('acceptance-approved', valid);
@@ -444,10 +568,25 @@ export async function runManagement(env = process.env, request = fetch) {
   if (env.GITHUB_ACTIONS !== 'true' || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY || '')) {
     throw new Error('Run project management only inside the authorized repository workflow.');
   }
-  const api = apiClient(env.GITHUB_TOKEN, request), repository = env.GITHUB_REPOSITORY;
+  const repository = env.GITHUB_REPOSITORY;
+  const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
+  if (!managementEventRelevant(env.GITHUB_EVENT_NAME, event)) { console.log('Discussion comment: no management synchronization required.'); return; }
+  const api = cacheManagementReads(apiClient(env.GITHUB_TOKEN, request));
   const bootstrap = env.MANAGEMENT_BOOTSTRAP === 'true';
   const allIssues = (await api.all(`repos/${repository}/issues?state=all`)).filter(i => !i.pull_request);
-  const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
+  if (env.REVIEW_PR || env.REVIEW_SHA || env.REVIEW_SCOPE) {
+    await runReviewOnly(env, event, api, repository, allIssues);
+    console.log('Current revision review recorded; Project projection follows the next synchronization.');
+    return;
+  }
+  if (env.ACCEPTANCE_ISSUE) {
+    if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || event.sender?.login !== env.GITHUB_ACTOR || !/^[1-9]\d*$/.test(env.ACCEPTANCE_ISSUE)) throw new Error('Acceptance preparation requires an authenticated workflow request.');
+    const issue = await api(`repos/${repository}/issues/${env.ACCEPTANCE_ISSUE}`);
+    const confirmation = await prepareAcceptance(api, repository, issue, env.DELIVERY_SHA, env.ACCEPTANCE_EVIDENCE, env.GITHUB_ACTOR);
+    if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `\nPrepared acceptance record; confirm only after reviewing the delivery:\n\n\`\`\`markdown\n${confirmation}\`\`\`\n`);
+    console.log('Acceptance prepared; no approval or closure was performed.');
+    return;
+  }
   // Always fetch the latest issue state; queued old events must not overwrite newer status.
   // Reconcile every task each time: dropped/coalesced events and changed blockers
   // must not leave another issue, parent stage or readiness label stale.

@@ -14,15 +14,9 @@
 
 开发以“一个系统闭环 + 与其上下游联调 + 明确验收”推进。代码能运行、自动测试通过、画面通过三者必须分开记录。
 
-## 2. 文档职责和阅读顺序
+## 2. 文档职责
 
-1. 根目录 [AGENTS.md](../AGENTS.md)：每次工作的入口规则。
-   同时必读 [GIT_WORKFLOW.md](GIT_WORKFLOW.md)：按合理工作边界提交、本机信息保护与已确认的记录规则。
-2. [PROJECT_BRIEF.md](PROJECT_BRIEF.md)：用户需求与产品方向。
-3. GitHub Issues/Projects：当前阶段任务、依赖、负责人、状态与验收证据。
-4. 本文：开发顺序、阶段出口、变更流程。
-5. [SYSTEMS.md](SYSTEMS.md)：系统边界、接口约定、功能需求和验收标准。
-6. 本轮关联 Issue：独立范围、前置条件、复现场景、验收标准及关联提交/PR。
+首次进入与续作的阅读范围见 [GIT_WORKFLOW](GIT_WORKFLOW.md#工作入口)，代理入口为 [AGENTS](../AGENTS.md)。[PROJECT_BRIEF](PROJECT_BRIEF.md) 定义产品方向，本文定义长期阶段/出口，[SYSTEMS](SYSTEMS.md) 定义系统需求/接口，[IMPLEMENTATION](IMPLEMENTATION.md) 记录实际实现。任务、依赖和证据维护于 GitHub Issues/Projects。
 
 涉及模型再读 [ASSETS.md](ASSETS.md)，涉及现有实现再读 [IMPLEMENTATION.md](IMPLEMENTATION.md)。需求归 BRIEF，长期阶段标准归本文，接口归 SYSTEMS；任务状态、分诊、依赖与证据归 GitHub。PROGRESS 只保留无法及时同步的必要交接，不作为看板镜像。
 
@@ -73,7 +67,7 @@ flowchart TD
 ### 执行步骤
 
 1. 读规范与现状，在 GitHub 选择依赖已满足的一项或一组紧密关联任务。
-2. 在 Issue 明确认领的负责人、执行者、范围、分支与独占资源，收到成功回执后开始；从最新 dev 创建任务分支，在独立 checkout/worktree 工作，并及早创建 Draft PR。
+2. 按 GIT_WORKFLOW 完成认领和分支隔离；首批可审查改动建立 Draft PR。
 3. 先实现数据与规则，再接显示和 UI；共享同一事实来源，避免“画出来的路”和“算法走的路”各算一套。
 4. 在小场景检查：规则测试 → 可视化调试 → 正常界面实测。算法使用固定种子和可重复时间步。
 5. 接入完整城市，验证与上下游系统的交互、旧存档和资源生命周期。
