@@ -44,6 +44,9 @@ test('prepared acceptance binds an authorized human confirmation and refills can
   comments.push({ id: 11, user: { login: 'owner', type: 'User' }, created_at: '2026-10-14T02:00:00Z', body: confirmation });
   await reconcileAcceptanceRecord(api, 'owner/repo', target, ['owner']);
   assert.equal(await approvalSurvivesReopening(api, 'owner/repo', target), true);
+  const acceptedBody = target.body;
+  await prepareAcceptance(api, 'owner/repo', target, sha, 'https://github.com/owner/repo/issues/1', 'owner');
+  assert.equal(target.body, acceptedBody);
   target.body = target.body.replace('[ ]', '[x]');
   assert.equal(await approvalSurvivesReopening(api, 'owner/repo', target), true);
   target.body = target.body.replace('Fixed goal', 'Changed goal');

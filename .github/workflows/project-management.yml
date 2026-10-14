@@ -38,7 +38,7 @@ on:
         type: string
         default: ''
       delivery_sha:
-        description: Full delivered commit SHA for acceptance preparation
+        description: Optional delivered SHA (otherwise recorded delivery or selected ref)
         type: string
         default: ''
       acceptance_evidence:

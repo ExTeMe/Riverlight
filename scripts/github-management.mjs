@@ -241,7 +241,7 @@ export function managementEventRelevant(eventName, event) {
   return [event.comment?.body, event.changes?.body?.from].some(body => /^(?:#{2,3} (?:任务认领|认领更新|任务交接|视觉验收|客观验收)\s*\n|\/riverlight (?:claim|release|touch|approve-visual|approve-objective)\b)/.test((body || '').trim()));
 }
 
-export async function prepareAcceptance(api, repository, issue, sha, evidence, actor) {
+export async function prepareAcceptance(api, repository, issue, sha, evidence, actor, reviewers = [repository.split('/')[0]]) {
   if (!/^[a-f0-9]{40}$/.test(sha || '') || !/^https:\/\/github\.com\//.test(evidence || '')) throw new Error('Acceptance preparation requires a full delivered SHA and a GitHub evidence link.');
   const permission = await api(`repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`);
   if (!['admin', 'maintain', 'write'].includes(permission.permission)) throw new Error('Acceptance preparation requires repository write permission.');
@@ -256,7 +256,8 @@ export async function prepareAcceptance(api, repository, issue, sha, evidence, a
   });
   const latest = await api(`repos/${repository}/issues/${issue.number}`);
   if (latest.body !== issue.body) throw new Error('Issue changed during preparation; rerun from its current scope.');
-  const body = updateAcceptanceBody(issue.body || '', { 交付版本: sha });
+  const alreadyAccepted = acceptanceField(issue, '交付版本') === sha && await approvalSurvivesReopening(api, repository, issue, reviewers);
+  const body = alreadyAccepted ? issue.body : updateAcceptanceBody(issue.body || '', { 交付版本: sha });
   if (body !== issue.body) await api(`repos/${repository}/issues/${issue.number}`, 'PATCH', { body });
   return `## ${issueMetadata(issue).visual ? '视觉验收' : '客观验收'}\n\n- **验收结论**：通过\n- **验收准备**：https://github.com/${repository}/issues/${issue.number}#issuecomment-${candidate.id}\n`;
 }
@@ -268,7 +269,8 @@ export async function runReviewOnly(env, event, api, repository, issues) {
   const issue = linked[0], comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
   const claim = readReceipts(comments).filter(receipt => receipt.accepted).at(-1)?.claim;
   const problems = managementProblems(issues);
-  if (!claim || claim.branch !== pr.head.ref || problems.has(issue.number)) throw new Error('Review confirmation requires a valid task claim.');
+  if (!claim || claim.branch !== pr.head.ref || problems.has(issue.number) || issue.state !== 'open'
+    || (issue.assignees || []).some(assignee => assignee.login.toLowerCase() !== claim.owner.toLowerCase())) throw new Error('Review confirmation requires a valid task claim.');
   const stages = issues.find(item => item.title.startsWith(`[${issueMetadata(issue).phase}]`));
   const indexed = new Map(issues.map(item => [issueMetadata(item).task || item.title.match(/^\[(R\d+)\]/)?.[1], item]));
   if (!claim.override && [...issueMetadata(issue).dependencies, ...issueMetadata(stages || { title: '', body: '' }).dependencies]
@@ -572,6 +574,8 @@ export async function runManagement(env = process.env, request = fetch) {
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(readFileSync(env.GITHUB_EVENT_PATH, 'utf8')) : {};
   if (!managementEventRelevant(env.GITHUB_EVENT_NAME, event)) { console.log('Discussion comment: no management synchronization required.'); return; }
   const api = cacheManagementReads(apiClient(env.GITHUB_TOKEN, request));
+  const choices = [!!(env.REVIEW_PR || env.REVIEW_SHA || env.REVIEW_SCOPE), !!(env.ACCEPTANCE_ISSUE || env.DELIVERY_SHA || env.ACCEPTANCE_EVIDENCE), env.MANAGEMENT_BOOTSTRAP === 'true'];
+  if (choices.filter(Boolean).length > 1) throw new Error('Choose synchronization/bootstrap, review confirmation or acceptance preparation in separate runs.');
   const bootstrap = env.MANAGEMENT_BOOTSTRAP === 'true';
   const allIssues = (await api.all(`repos/${repository}/issues?state=all`)).filter(i => !i.pull_request);
   if (env.REVIEW_PR || env.REVIEW_SHA || env.REVIEW_SCOPE) {
@@ -579,10 +583,12 @@ export async function runManagement(env = process.env, request = fetch) {
     console.log('Current revision review recorded; Project projection follows the next synchronization.');
     return;
   }
-  if (env.ACCEPTANCE_ISSUE) {
+  if (env.ACCEPTANCE_ISSUE || env.DELIVERY_SHA || env.ACCEPTANCE_EVIDENCE) {
     if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || event.sender?.login !== env.GITHUB_ACTOR || !/^[1-9]\d*$/.test(env.ACCEPTANCE_ISSUE)) throw new Error('Acceptance preparation requires an authenticated workflow request.');
     const issue = await api(`repos/${repository}/issues/${env.ACCEPTANCE_ISSUE}`);
-    const confirmation = await prepareAcceptance(api, repository, issue, env.DELIVERY_SHA, env.ACCEPTANCE_EVIDENCE, env.GITHUB_ACTOR);
+    const delivery = env.DELIVERY_SHA || acceptanceField(issue, '交付版本') || env.GITHUB_SHA;
+    const reviewers = (env.VISUAL_REVIEWERS || repository.split('/')[0]).split(',').map(login => login.trim());
+    const confirmation = await prepareAcceptance(api, repository, issue, delivery, env.ACCEPTANCE_EVIDENCE, env.GITHUB_ACTOR, reviewers);
     if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, `\nPrepared acceptance record; confirm only after reviewing the delivery:\n\n\`\`\`markdown\n${confirmation}\`\`\`\n`);
     console.log('Acceptance prepared; no approval or closure was performed.');
     return;
