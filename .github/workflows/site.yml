@@ -3,17 +3,6 @@ name: Check and publish city
 on:
   push:
     branches: [dev, main]
-    paths:
-      - 'src/**'
-      - 'public/**'
-      - 'tests/**'
-      - 'scripts/**'
-      - '.github/workflows/**'
-      - '.gitignore'
-      - 'index.html'
-      - 'vite.config.*'
-      - 'package.json'
-      - 'package-lock.json'
   pull_request:
     branches: [dev, main]
   workflow_dispatch:
@@ -23,7 +12,7 @@ permissions:
 
 # Serialize each branch; a newer push must not be published before an older one.
 concurrency:
-  group: city-${{ github.ref }}
+  group: city-${{ github.event_name == 'pull_request' && github.run_id || github.ref }}
   cancel-in-progress: false
   queue: max
 
@@ -32,6 +21,9 @@ env:
 
 jobs:
   check:
+    concurrency:
+      group: city-check-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -45,13 +37,22 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - id: policy
+        run: node scripts/ci-policy.mjs
       - run: npm ci
+        if: steps.policy.outputs.application == 'true'
       - run: npm run check:privacy
+      - run: npm run check:docs
+      - run: node --test tests/github-*.test.js tests/ci.test.js tests/workflow-command.test.js tests/check-docs.test.js
+        if: steps.policy.outputs.management == 'true' && steps.policy.outputs.application != 'true'
       - run: npm test
+        if: steps.policy.outputs.application == 'true'
       - run: npx playwright install --with-deps chromium
+        if: steps.policy.outputs.application == 'true'
       - run: npm run test:browser
+        if: steps.policy.outputs.application == 'true'
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always()
+        if: always() && steps.policy.outputs.application == 'true'
         with:
           name: browser-evidence
           path: |
@@ -59,9 +60,9 @@ jobs:
             playwright-report/
           retention-days: 7
       - run: npm run build -- --base="$SITE_BASE"
+        if: steps.policy.outputs.application == 'true'
       - run: node scripts/check-dist.mjs "$SITE_BASE"
-      - id: policy
-        run: node scripts/ci-policy.mjs
+        if: steps.policy.outputs.application == 'true'
       - uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         if: steps.policy.outputs.publish == 'true'
         with:

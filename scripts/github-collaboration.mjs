@@ -16,8 +16,9 @@ export function readableApproval(body, visual) {
   const heading = visual ? '视觉验收' : '客观验收';
   if (!new RegExp(`^#{2,3} ${heading}\\s*\\n`).test((body || '').trim())) return null;
   try {
-    return commentField(body, '验收结论') === '通过'
-      ? { sha: commentField(body, '验收版本'), fingerprint: commentField(body, '验收范围摘要') } : null;
+    if (commentField(body, '验收结论') !== '通过') return null;
+    const preparation = commentField(body, '验收准备');
+    return preparation ? { preparation } : { sha: commentField(body, '验收版本'), fingerprint: commentField(body, '验收范围摘要') };
   } catch { return null; }
 }
 

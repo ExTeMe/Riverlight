@@ -76,17 +76,10 @@ body:
     validations:
       required: true
   - type: textarea
-    id: scenarios
-    attributes:
-      label: 验收场景与步骤
-      description: "初始存档/种子/镜头和环境，逐步列输入、期望结果及判定方式；覆盖取消、无效输入、拆改、撤销和旧档。"
-    validations:
-      required: true
-  - type: textarea
     id: acceptance
     attributes:
       label: 验收条件
-      description: "每项可独立判定；引用 T01～T07。预算未知时记录待测及前置任务，不虚构阈值。"
+      description: "每项注明初始场景、操作、预期与判定；引用 T01～T07，按相关性覆盖边界/恢复/旧档。远期保留目标，到执行前补齐。未知预算标待测。"
       placeholder: "- [ ] 给定…，执行…，观察…；通过条件…"
     validations:
       required: true
@@ -96,4 +89,4 @@ body:
       label: 兼容性与证据要求
       description: "旧城保护/迁移、失败恢复、截图或动态证据；视觉任务给出固定近中远镜头和用户确认条件。"
     validations:
-      required: true
+      required: false
