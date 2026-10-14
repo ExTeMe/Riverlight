@@ -180,20 +180,13 @@ export function codeReviewState(pr, reviews) {
   return '待代码审查';
 }
 
-export function maintainerReview(pr, comments, reviewers) {
-  return comments.some(comment => {
-    if (comment.user?.type === 'Bot' || !reviewers.some(user => loginKey(user) === loginKey(comment.user?.login))) return false;
-    if (/^#{2,3} 代码审查\s*\n/.test((comment.body || '').trim())) {
-      try {
-        return commentField(comment.body, '审查版本') === pr.head.sha && commentField(comment.body, '审查结论') === '通过'
-          && commentField(comment.body, '审查类型') === '自动审查（共用账号）'
-          && (commentField(comment.body, '审查范围') || '').length >= 12;
-      } catch { return false; }
-    }
-    const match = comment.body?.trim().match(/^\/riverlight review\s+(\{[^]*\})$/);
-    try {
-      const record = JSON.parse(match?.[1]);
-      return record.sha === pr.head.sha && record.mode === 'automated' && typeof record.summary === 'string' && record.summary.trim().length >= 12;
-    } catch { return false; }
-  });
+export function workflowReviewValid(pr, statuses, reviewers, repository) {
+  const status = statuses.find(s => s.context === 'maintainer-review');
+  const record = status?.description?.match(/^Automated review by ([\w-]+) for ([a-f0-9]{40})$/);
+  const prefix = `https://github.com/${repository}/actions/runs/`;
+  return status?.state === 'success' && status.creator?.login === 'github-actions[bot]'
+    && status.creator?.type === 'Bot' && record?.[2] === pr.head.sha
+    && reviewers.some(user => loginKey(user) === loginKey(record?.[1]))
+    && typeof status.target_url === 'string' && status.target_url.startsWith(prefix)
+    && /^\d+$/.test(status.target_url.slice(prefix.length));
 }

@@ -1,9 +1,37 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { issueMetadata, desiredStatus, apiClient, runManagement, STATUS, acceptanceFingerprint, managementProblems, approvalSurvivesReopening } from '../scripts/github-management.mjs';
+import { issueMetadata, desiredStatus, apiClient, runManagement, recordWorkflowReview, STATUS, acceptanceFingerprint, managementProblems, approvalSurvivesReopening } from '../scripts/github-management.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+test('workflow review confirmation binds initiator, active claim and current PR head without posting comments', async () => {
+  const sha = 'a'.repeat(40), states = new Map([[71, { claim: { branch: 'save-recovery' } }]]);
+  const env = { GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_ACTOR: 'owner', GITHUB_RUN_ID: '12',
+    REVIEW_PR: '75', REVIEW_SHA: sha, REVIEW_SCOPE: '核对认领竞争、版本绑定及引用边界' };
+  const event = { sender: { login: 'owner' } }, writes = [], statuses = [];
+  let permission = 'write', head = sha, reviews = [];
+  const api = Object.assign(async (endpoint, method, body) => {
+    if (method === 'POST') { writes.push({ endpoint, body }); statuses.unshift(body); return body; }
+    if (endpoint.endsWith('/permission')) return { permission };
+    if (endpoint.endsWith('/pulls/75')) return { number: 75, state: 'open', draft: false,
+      head: { ref: 'save-recovery', sha: head, repo: { full_name: 'owner/repo' } }, base: { ref: 'dev' } };
+    throw new Error('Unexpected review endpoint');
+  }, { all: async endpoint => endpoint.endsWith('/reviews') ? reviews : statuses });
+  await recordWorkflowReview(env, event, api, 'owner/repo', states);
+  await recordWorkflowReview(env, event, api, 'owner/repo', states);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].endpoint, `repos/owner/repo/statuses/${sha}`);
+  assert.equal(writes[0].body.context, 'maintainer-review');
+  await assert.rejects(recordWorkflowReview({ ...env, GITHUB_ACTOR: 'other' }, event, api, 'owner/repo', states), /authorized/);
+  await assert.rejects(recordWorkflowReview({ ...env, GITHUB_EVENT_NAME: 'push' }, event, api, 'owner/repo', states), /authorized/);
+  permission = 'read'; await assert.rejects(recordWorkflowReview(env, event, api, 'owner/repo', states), /permission/);
+  permission = 'write'; head = 'b'.repeat(40); await assert.rejects(recordWorkflowReview(env, event, api, 'owner/repo', states), /head changed/);
+  head = sha; reviews = [{ state: 'CHANGES_REQUESTED', user: { login: 'peer' } }];
+  await assert.rejects(recordWorkflowReview(env, event, api, 'owner/repo', states), /requested changes/);
+  reviews = []; await assert.rejects(recordWorkflowReview(env, event, api, 'owner/repo', new Map()), /active task claim/);
+  assert.equal(writes.length, 1);
+});
 
 test('task metadata retains phase, requirements dependencies, and visual review scope', () => {
   const issue = { title: '[LOOK-03] 城市构图', body: '**阶段**：R6\n**系统与优先级**：S10 / P1\n**前置**：ASSET-04、ROAD-05、R5 出口\n**视觉验收**：需要用户确认' };

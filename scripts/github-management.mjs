@@ -2,7 +2,7 @@ import { readFileSync, appendFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { reconcileClaims, codeReviewState, maintainerReview, readableApproval } from './github-collaboration.mjs';
+import { reconcileClaims, codeReviewState, workflowReviewValid, readableApproval } from './github-collaboration.mjs';
 
 export const STATUS = ['待办', '进行中', '待验收', '完成', '阻塞'];
 
@@ -408,6 +408,38 @@ async function syncProject(api, project, issues, bootstrap, problems) {
   }
 }
 
+export async function recordWorkflowReview(env, event, api, repository, states) {
+  if (!env.REVIEW_PR && !env.REVIEW_SHA && !env.REVIEW_SCOPE) return;
+  const reviewers = (env.CODE_REVIEWERS || repository.split('/')[0]).split(',').map(s => s.trim().toLowerCase());
+  const actor = env.GITHUB_ACTOR || '';
+  if (env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || event.sender?.login?.toLowerCase() !== actor.toLowerCase()
+    || !reviewers.includes(actor.toLowerCase())) throw new Error('Only an authorized workflow initiator can confirm a review.');
+  if (!/^[1-9]\d*$/.test(env.REVIEW_PR || '') || !/^[a-f0-9]{40}$/.test(env.REVIEW_SHA || '')
+    || !/^\d+$/.test(env.GITHUB_RUN_ID || '') || typeof env.REVIEW_SCOPE !== 'string'
+    || env.REVIEW_SCOPE.trim().length < 12 || env.REVIEW_SCOPE.length > 500 || /[\r\n]/.test(env.REVIEW_SCOPE)) {
+    throw new Error('Review confirmation requires a PR, full current SHA and a concise scope.');
+  }
+  const permission = await api(`repos/${repository}/collaborators/${encodeURIComponent(actor)}/permission`);
+  if (!['admin', 'maintain', 'write'].includes(permission.permission)) throw new Error('Review initiator lacks repository write permission.');
+  const pr = await api(`repos/${repository}/pulls/${env.REVIEW_PR}`);
+  const claimed = [...states.values()].some(s => s.claim?.branch === pr.head.ref);
+  if (!claimed || pr.state !== 'open' || pr.draft || pr.head.repo?.full_name !== repository || pr.base.ref !== 'dev') {
+    throw new Error('Review confirmation requires an active task claim and an open task PR into dev.');
+  }
+  if (pr.head.sha !== env.REVIEW_SHA) throw new Error('PR head changed; review the current revision before confirming.');
+  const reviews = await api.all(`repos/${repository}/pulls/${pr.number}/reviews`);
+  if (codeReviewState(pr, reviews) === '需修改') throw new Error('Resolve requested changes before confirming an automated review.');
+  const desired = { state: 'success', context: 'maintainer-review',
+    description: `Automated review by ${actor} for ${pr.head.sha}`,
+    target_url: `https://github.com/${repository}/actions/runs/${env.GITHUB_RUN_ID}` };
+  const previous = (await api.all(`repos/${repository}/commits/${pr.head.sha}/statuses`)).find(s => s.context === desired.context);
+  if (previous?.state !== desired.state || previous?.description !== desired.description) {
+    await api(`repos/${repository}/statuses/${pr.head.sha}`, 'POST', desired);
+  }
+  if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY,
+    `\nAutomated review (shared account): PR #${pr.number}, ${pr.head.sha}, @${actor}\n\n${env.REVIEW_SCOPE.trim()}\n`);
+}
+
 export async function runManagement(env = process.env, request = fetch) {
   if (env.GITHUB_ACTIONS !== 'true' || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY || '')) {
     throw new Error('Run project management only inside the authorized repository workflow.');
@@ -442,6 +474,7 @@ export async function runManagement(env = process.env, request = fetch) {
     isReady.valid = issue => !!issueMetadata(issue).task && !problems.has(issue.number);
     states = await reconcileClaims(api, repository, issues, isReady);
     const prs = await api.all(`repos/${repository}/pulls?state=all`);
+    await recordWorkflowReview(env, event, api, repository, states);
     for (const issue of issues) {
       const state = states.get(issue.number), claim = state?.claim;
       if (!claim && state?.lastClaim) {
@@ -471,11 +504,11 @@ export async function runManagement(env = process.env, request = fetch) {
         state.review = state.pr ? codeReviewState(state.pr, await api.all(`repos/${repository}/pulls/${state.pr.number}/reviews`)) : '无当前任务 PR';
         if (state.pr?.state === 'open') {
           const reviewers = (env.CODE_REVIEWERS || repository.split('/')[0]).split(',').map(s => s.trim());
-          if (state.review === '待代码审查' && maintainerReview(state.pr, await api.all(`repos/${repository}/issues/${state.pr.number}/comments`), reviewers)) state.review = '已自动审查（共用账号）';
+          const statuses = await api.all(`repos/${repository}/commits/${state.pr.head.sha}/statuses`);
+          if (state.review === '待代码审查' && workflowReviewValid(state.pr, statuses, reviewers, repository)) state.review = '已自动审查（共用账号）';
           const linked = new RegExp(`(?:关联|Refs:?)\\s+#${issue.number}\\b`, 'i').test(state.pr.body || '');
           const approved = linked && !problems.has(issue.number) && ['已审查', '已自动审查（共用账号）'].includes(state.review);
           const desired = { state: approved ? 'success' : 'pending', context: 'collaboration', description: approved ? 'Task claim and current revision review verified' : 'Requires Issue reference and review of current head', target_url: state.pr.html_url };
-          const statuses = await api.all(`repos/${repository}/commits/${state.pr.head.sha}/statuses`);
           const previous = statuses.find(s => s.context === 'collaboration');
           if (previous?.state !== desired.state || previous?.description !== desired.description) await api(`repos/${repository}/statuses/${state.pr.head.sha}`, 'POST', desired);
         }
