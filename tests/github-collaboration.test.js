@@ -4,7 +4,7 @@ import { parseCommand, readReceipts, receiptBody, decideCommand, reconcileClaims
 import { approvalSurvivesReopening, acceptanceFingerprint, desiredStatus, syncCoordinationFields, COORD_FIELDS } from '../scripts/github-management.mjs';
 
 const issue = { number: 71, state: 'open', assignees: [] };
-const request = { action: 'claim', id: 1, actor: 'owner', at: '2026-10-14T01:00:00Z', executor: 'agent-a', branch: 'codex/71-test', scope: '修复认领', resources: ['file:assets/blender/library.blend', 'blender:shared-session'] };
+const request = { action: 'claim', id: 1, actor: 'owner', at: '2026-10-14T01:00:00Z', executor: 'agent-a', branch: 'save-recovery', scope: '修复认领', resources: ['file:assets/blender/library.blend', 'blender:shared-session'] };
 const decide = (command = request, states = new Map(), extra = {}) => decideCommand({ command, issue, states, permission: 'write', ready: true, ...extra });
 
 test('first claim wins across Issue, shared files, directories, and Blender sessions', () => {
@@ -20,6 +20,19 @@ test('first claim wins across Issue, shared files, directories, and Blender sess
   assert.equal(decide(request, new Map(), { ready: false }).accepted, false);
   assert.equal(decide({ ...request, override: '维护基础设施，不等待产品出口' }, new Map(), { ready: false, permission: 'admin' }).accepted, true);
   assert.equal(decide({ ...request, override: '提前开发' }, new Map(), { ready: false, metadataValid: false, permission: 'admin' }).accepted, false);
+});
+
+test('task branches accept developer naming choices while protecting integration branches and exact references', () => {
+  for (const branch of ['save-recovery', 'feature/save-recovery', '71-branch-names', '修复存档', 'codex/71-test']) {
+    const decision = decide({ ...request, branch });
+    assert.equal(decision.accepted, true, branch);
+    assert.equal(decision.claim.branch, branch);
+  }
+  for (const branch of ['main', 'dev', 'gh-pages', 'HEAD', '@{-1}', '-bad', 'bad..name', 'bad/name.lock', 'bad//name', 'bad name', 'bad\nname', 'bad\0name']) {
+    assert.equal(decide({ ...request, branch }).accepted, false, branch);
+  }
+  const states = new Map([[71, { claim: decide().claim }]]);
+  assert.equal(decide({ ...request, resources: [] }, states, { issue: { ...issue, number: 72 } }).accepted, false);
 });
 
 test('readable Markdown records drive claims and reviews while machine state stays hidden', () => {
@@ -111,7 +124,7 @@ test('Project fields are verified and released claims clear stale executor and b
   await syncCoordinationFields(api, project, [target], new Map());
   assert.equal(item.fieldValues.nodes.some(v => v.field.name === '执行者'), false);
   await syncCoordinationFields(api, project, [target], new Map([[71, { lastClaim: decide().claim, review: '已集成', pr: { merged_at: 'now' } }]]));
-  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '任务分支').text, 'codex/71-test');
+  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '任务分支').text, 'save-recovery');
   assert.equal(item.fieldValues.nodes.find(v => v.field.name === '代码审查').text, '已集成');
   assert.equal(item.fieldValues.nodes.some(v => v.field.name === '独占资源'), false);
   discard = true;

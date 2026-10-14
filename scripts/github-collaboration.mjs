@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+
 // Coordination lives in bot-authored Issue receipts, never a local task database.
 export const RECEIPT = '<!-- riverlight:coordination:v1 -->';
 const commands = new Set(['claim', 'release', 'touch']);
@@ -64,6 +66,16 @@ export function resourcesOverlap(a, b) {
     && (a.startsWith(`${b}/`) || b.startsWith(`${a}/`)));
 }
 
+export function taskBranchValid(branch) {
+  if (typeof branch !== 'string' || !branch || branch.includes('\0') || branch.includes('@{')
+    || ['main', 'dev', 'gh-pages'].includes(branch.toLowerCase())) return false;
+  const result = spawnSync('git', ['check-ref-format', '--branch', branch], {
+    encoding: 'utf8', windowsHide: true, timeout: 5000,
+  });
+  if (result.error) throw new Error('Git branch-name validation is unavailable.');
+  return result.status === 0 && result.stdout.replace(/\r?\n$/, '') === branch;
+}
+
 export function decideCommand({ command, issue, states, permission, ready, metadataValid = true }) {
   const current = states.get(issue.number)?.claim || null;
   const reject = reason => ({ accepted: false, reason, claim: current });
@@ -77,7 +89,7 @@ export function decideCommand({ command, issue, states, permission, ready, metad
     if ((issue.assignees || []).some(a => loginKey(a.login) !== loginKey(command.actor))) return reject('任务已有其他负责人；先由负责人交接');
     if (!ready && !(maintainer && typeof command.override === 'string' && command.override.trim())) return reject('前置未验收或任务待分诊；维护者提前启动须给出 override 原因');
     if (!/^[a-z0-9][a-z0-9-]{2,63}$/.test(command.executor || '')) return reject('executor 应为 3～64 位可区分的英文执行者代号');
-    if (!new RegExp(`^codex/${issue.number}-[a-z0-9][a-z0-9-]*$`).test(command.branch || '')) return reject('branch 必须使用 codex/Issue编号-描述');
+    if (!taskBranchValid(command.branch)) return reject('任务分支须为有效 Git 分支名，不能使用 main、dev 或 gh-pages');
     if (typeof command.scope !== 'string' || !command.scope.trim() || command.scope.length > 500 || /[\r\n]/.test(command.scope)) return reject('scope 需要一行明确交付范围');
     const resources = command.resources || [];
     if (!Array.isArray(resources) || resources.length > 30 || !resources.every(resourceValid)) return reject('独占资源须为仓库相对 file:路径 或 blender:会话代号');
