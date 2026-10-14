@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand, readReceipts, receiptBody, decideCommand, reconcileClaims, resourcesOverlap, codeReviewState, maintainerReview, readableApproval } from '../scripts/github-collaboration.mjs';
+import { parseCommand, readReceipts, receiptBody, decideCommand, reconcileClaims, resourcesOverlap, codeReviewState, workflowReviewValid, readableApproval } from '../scripts/github-collaboration.mjs';
 import { approvalSurvivesReopening, acceptanceFingerprint, desiredStatus, syncCoordinationFields, COORD_FIELDS } from '../scripts/github-management.mjs';
 
 const issue = { number: 71, state: 'open', assignees: [] };
-const request = { action: 'claim', id: 1, actor: 'owner', at: '2026-10-14T01:00:00Z', executor: 'agent-a', branch: 'codex/71-test', scope: '修复认领', resources: ['file:assets/blender/library.blend', 'blender:shared-session'] };
+const request = { action: 'claim', id: 1, actor: 'owner', at: '2026-10-14T01:00:00Z', executor: 'agent-a', branch: 'save-recovery', scope: '修复认领', resources: ['file:assets/blender/library.blend', 'blender:shared-session'] };
 const decide = (command = request, states = new Map(), extra = {}) => decideCommand({ command, issue, states, permission: 'write', ready: true, ...extra });
 
 test('first claim wins across Issue, shared files, directories, and Blender sessions', () => {
@@ -22,6 +22,19 @@ test('first claim wins across Issue, shared files, directories, and Blender sess
   assert.equal(decide({ ...request, override: '提前开发' }, new Map(), { ready: false, metadataValid: false, permission: 'admin' }).accepted, false);
 });
 
+test('task branches accept developer naming choices while protecting integration branches and exact references', () => {
+  for (const branch of ['save-recovery', 'feature/save-recovery', '71-branch-names', '修复存档', 'codex/71-test']) {
+    const decision = decide({ ...request, branch });
+    assert.equal(decision.accepted, true, branch);
+    assert.equal(decision.claim.branch, branch);
+  }
+  for (const branch of ['main', 'dev', 'gh-pages', 'HEAD', '@{-1}', '-bad', 'bad..name', 'bad/name.lock', 'bad//name', 'bad name', 'bad\nname', 'bad\0name']) {
+    assert.equal(decide({ ...request, branch }).accepted, false, branch);
+  }
+  const states = new Map([[71, { claim: decide().claim }]]);
+  assert.equal(decide({ ...request, resources: [] }, states, { issue: { ...issue, number: 72 } }).accepted, false);
+});
+
 test('readable Markdown records drive claims and reviews while machine state stays hidden', () => {
   const comment = { id: 5, user: { login: 'owner', type: 'User' }, created_at: request.at,
     body: '## 任务认领\n\n- **执行者**：道路开发代理 A\n- **执行者代号**：agent-road-a\n- **任务分支**：codex/71-road\n- **交付范围**：道路数据契约\n- **独占文件**：src/roads.js、src/core.js\n- **独占会话**：shared-session' };
@@ -32,7 +45,6 @@ test('readable Markdown records drive claims and reviews while machine state sta
   assert.equal(receipt.includes('```json'), false);
   assert.equal(receipt.split('<!-- riverlight-state:')[0].includes('"commandId"'), false);
   assert.equal(readReceipts([{ id: 10, user: { login: 'github-actions[bot]', type: 'Bot' }, body: receipt }])[0].claim.id, 5);
-  assert.equal(maintainerReview({ head: { sha: 'current' } }, [{ user: comment.user, body: '## 代码审查\n\n- **审查类型**：自动审查（共用账号）\n- **审查版本**：current\n- **审查结论**：通过\n- **审查范围**：认领竞争、恢复和版本绑定已检查' }], ['owner']), true);
   assert.deepEqual(readableApproval('## 客观验收\n\n- **验收结论**：通过\n- **验收版本**：current\n- **验收范围摘要**：scope', false), { sha: 'current', fingerprint: 'scope' });
 });
 
@@ -85,11 +97,16 @@ test('code review distinguishes stale approvals, shared-account self approval, r
   assert.equal(codeReviewState({ ...pr, merged_at: 'now' }, []), '已集成');
 });
 
-test('shared-account automated review is explicit, authorized, and cannot follow another head', () => {
-  const pr = { head: { sha: 'a' } }, comment = { user: { login: 'owner', type: 'User' }, body: '/riverlight review {"sha":"a","mode":"automated","summary":"检查了认领状态、响应丢失恢复和投影一致性"}' };
-  assert.equal(maintainerReview(pr, [comment], ['owner']), true);
-  assert.equal(maintainerReview({ head: { sha: 'b' } }, [comment], ['owner']), false);
-  assert.equal(maintainerReview(pr, [comment], ['peer']), false);
+test('shared-account review uses current Actions status rather than PR comments', () => {
+  const sha = 'a'.repeat(40), pr = { head: { sha } };
+  const status = { context: 'maintainer-review', state: 'success', creator: { login: 'github-actions[bot]', type: 'Bot' },
+    description: `Automated review by owner for ${sha}`, target_url: 'https://github.com/owner/repo/actions/runs/12' };
+  assert.equal(workflowReviewValid(pr, [status], ['owner'], 'owner/repo'), true);
+  assert.equal(workflowReviewValid({ head: { sha: 'b'.repeat(40) } }, [status], ['owner'], 'owner/repo'), false);
+  assert.equal(workflowReviewValid(pr, [status], ['peer'], 'owner/repo'), false);
+  assert.equal(workflowReviewValid(pr, [{ ...status, creator: { login: 'owner', type: 'User' } }], ['owner'], 'owner/repo'), false);
+  assert.equal(workflowReviewValid(pr, [{ ...status, target_url: 'https://github.com/other/repo/actions/runs/12' }], ['owner'], 'owner/repo'), false);
+  assert.equal(workflowReviewValid(pr, [{ ...status, state: 'failure' }, status], ['owner'], 'owner/repo'), false);
 });
 
 test('Project fields are verified and released claims clear stale executor and branch without deleting fields', async () => {
@@ -111,7 +128,7 @@ test('Project fields are verified and released claims clear stale executor and b
   await syncCoordinationFields(api, project, [target], new Map());
   assert.equal(item.fieldValues.nodes.some(v => v.field.name === '执行者'), false);
   await syncCoordinationFields(api, project, [target], new Map([[71, { lastClaim: decide().claim, review: '已集成', pr: { merged_at: 'now' } }]]));
-  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '任务分支').text, 'codex/71-test');
+  assert.equal(item.fieldValues.nodes.find(v => v.field.name === '任务分支').text, 'save-recovery');
   assert.equal(item.fieldValues.nodes.find(v => v.field.name === '代码审查').text, '已集成');
   assert.equal(item.fieldValues.nodes.some(v => v.field.name === '独占资源'), false);
   discard = true;

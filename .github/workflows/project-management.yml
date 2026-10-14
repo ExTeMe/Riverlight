@@ -21,6 +21,18 @@ on:
         description: Prepare milestones, labels, task relationships, and the project
         type: boolean
         default: false
+      review_pr:
+        description: Optional task PR whose current revision has been reviewed
+        type: string
+        default: ''
+      review_sha:
+        description: Exact reviewed PR head SHA; new commits invalidate this confirmation
+        type: string
+        default: ''
+      review_scope:
+        description: Review scope kept in Actions, not PR comments
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -59,4 +71,7 @@ jobs:
           COLLABORATION_ENABLED: 'true'
           VISUAL_REVIEWERS: ${{ vars.VISUAL_REVIEWERS || github.repository_owner }}
           CODE_REVIEWERS: ${{ vars.CODE_REVIEWERS || github.repository_owner }}
+          REVIEW_PR: ${{ inputs.review_pr }}
+          REVIEW_SHA: ${{ inputs.review_sha }}
+          REVIEW_SCOPE: ${{ inputs.review_scope }}
           CLAIM_REMINDER_DAYS: ${{ vars.CLAIM_REMINDER_DAYS || '7' }}
