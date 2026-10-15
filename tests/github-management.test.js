@@ -1,10 +1,109 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { issueMetadata, desiredStatus, apiClient, runManagement, recordWorkflowReview, runReviewOnly, STATUS, acceptanceFingerprint, legacyAcceptanceFingerprint, managementProblems, approvalSurvivesReopening, managementEventRelevant, cacheManagementReads, updateAcceptanceBody, reconcileAcceptanceRecord, prepareAcceptance } from '../scripts/github-management.mjs';
+import { issueMetadata, desiredStatus, apiClient, runManagement, recordWorkflowReview, runReviewOnly, STATUS, acceptanceFingerprint, legacyAcceptanceFingerprint, managementProblems, approvalSurvivesReopening, managementEventRelevant, cacheManagementReads, updateAcceptanceBody, reconcileAcceptanceRecord, reconcileCloseAcceptance, prepareAcceptance } from '../scripts/github-management.mjs';
 import { receiptBody } from '../scripts/github-collaboration.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+function closeFixture() {
+  const sha = 'a'.repeat(40), closedAt = '2026-10-15T02:00:00Z';
+  const issue = { number: 1, title: '[TASK-01] delivery', state: 'closed', state_reason: 'completed', closed_at: closedAt,
+    labels: [{ name: 'status:review' }], body: `**协作流程**：v2\n**视觉验收**：需要用户确认\n## 目标\nFixed goal\n## 验收记录\n**交付版本**：${sha}` };
+  const snapshot = structuredClone(issue), writes = [];
+  const events = [{ id: 20, event: 'closed', created_at: closedAt, actor: { login: 'owner', type: 'User' }, commit_id: null }];
+  const comments = [{ id: 10, user: { login: 'github-actions[bot]', type: 'Bot' }, created_at: '2026-10-15T01:00:00Z',
+    body: `<!-- riverlight:acceptance-preparation:v2 -->\n**交付版本**：${sha}\n**验收范围摘要**：${acceptanceFingerprint(issue)}\n**验收证据**：https://github.com/owner/repo/actions/runs/9` }];
+  const api = Object.assign(async (endpoint, method, body) => {
+    if (endpoint.endsWith('/permission')) return { permission: 'write' };
+    if (method === 'POST') {
+      writes.push({ endpoint, body });
+      const comment = { id: 30, user: { login: 'github-actions[bot]', type: 'Bot' }, created_at: '2026-10-15T02:00:01Z', ...body };
+      comments.push(comment); return comment;
+    }
+    if (method === 'PATCH') { writes.push({ endpoint, body }); return { ...issue, ...body }; }
+    return structuredClone(issue);
+  }, { all: async endpoint => endpoint.endsWith('/comments') ? comments : events });
+  return { issue, snapshot, writes, events, comments, api };
+}
+
+test('direct completed closure binds real event, delivery and scope without a human comment; replay is idempotent', async () => {
+  const f = closeFixture();
+  await reconcileCloseAcceptance(f.api, 'owner/repo', f.issue, ['owner'], f.snapshot);
+  assert.equal(f.comments.some(c => c.user.type === 'User'), false);
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), true);
+  assert.match(f.comments.at(-1).body, /\*\*关闭事件\*\*：20/);
+  f.issue.labels.push({ name: 'acceptance-approved' }, { name: 'visual-approved' });
+  assert.equal(desiredStatus(f.issue), '完成');
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(f.writes.length, 2);
+  f.issue.body = f.issue.body.replace('Fixed goal', 'Changed goal');
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+  assert.equal(desiredStatus(f.issue), '待验收');
+});
+
+test('closure refuses missing readiness, unauthorized actors, PR auto-close and stale event snapshots', async () => {
+  const changes = [
+    f => { f.issue.state_reason = 'not_planned'; },
+    f => { f.issue.labels = []; },
+    f => { f.snapshot.labels = []; },
+    f => { f.events[0].actor.login = 'other'; },
+    f => { f.events[0].actor.type = 'Bot'; },
+    f => { f.events[0].commit_id = 'b'.repeat(40); },
+    f => { f.comments.length = 0; },
+    f => { f.comments[0].user = { login: 'owner', type: 'User' }; },
+    f => { f.comments[0].created_at = '2026-10-15T03:00:00Z'; },
+    f => { f.comments[0].updated_at = '2026-10-15T03:00:00Z'; },
+    f => { f.comments[0].body = f.comments[0].body.replace('https://github.com/', 'invalid:'); },
+    f => { f.issue.body = f.issue.body.replace('a'.repeat(40), 'b'.repeat(40)); },
+    f => { f.issue.body = f.issue.body.replace('Fixed goal', 'Changed goal'); },
+    f => { f.snapshot.body = f.snapshot.body.replace('Fixed goal', 'Other goal'); },
+    f => { f.events.push({ id: 21, event: 'reopened', created_at: f.issue.closed_at }); },
+  ];
+  for (const change of changes) {
+    const f = closeFixture(); change(f);
+    await reconcileCloseAcceptance(f.api, 'owner/repo', f.issue, ['owner'], f.snapshot);
+    assert.equal(f.writes.length, 0, String(change));
+  }
+  const f = closeFixture();
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(f.writes.length, 0, 'compensation cannot invent a missing close snapshot');
+});
+
+test('compensation restores a saved close receipt after interruption without approving a later scope', async () => {
+  const f = closeFixture();
+  const interrupted = Object.assign(async (endpoint, method, body) => {
+    if (!method && endpoint.endsWith('/issues/1')) throw new Error('interrupted after receipt');
+    return f.api(endpoint, method, body);
+  }, { all: f.api.all });
+  await assert.rejects(reconcileCloseAcceptance(interrupted, 'owner/repo', f.issue, ['owner'], f.snapshot), /interrupted/);
+  assert.equal(f.comments.length, 2);
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(f.comments.length, 2);
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), true);
+  f.issue.body = f.issue.body.replace('Fixed goal', 'Later scope');
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+});
+
+test('close receipts cannot survive reopening, another closure, forged authors or lost permission', async () => {
+  const f = closeFixture();
+  await reconcileCloseAcceptance(f.api, 'owner/repo', f.issue, ['owner'], f.snapshot);
+  const record = f.issue.body;
+  f.issue.state = 'open';
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+  f.issue.state = 'closed';
+  f.events.push({ id: 21, event: 'reopened', created_at: f.issue.closed_at }, { ...f.events[0], id: 22 });
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+  f.events.splice(1);
+  f.comments.at(-1).user = { login: 'owner', type: 'User' };
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+  f.comments.at(-1).user = { login: 'github-actions[bot]', type: 'Bot' };
+  const denied = Object.assign(async () => ({ permission: 'read' }), { all: f.api.all });
+  assert.equal(await approvalSurvivesReopening(denied, 'owner/repo', f.issue), false);
+  f.issue.body = record.replace('**交付版本**：' + 'a'.repeat(40), '**交付版本**：' + 'b'.repeat(40));
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+});
 
 test('requirement fingerprints ignore evidence and checklist progress but retain unknown requirement sections', () => {
   const issue = { title: '[TASK-01] scope', body: '**阶段**：R0\n## 目标与范围\nGoal\n## 验收条件\n- [ ] AC01 requirement\n## 自定义约束\nCompatibility\n## 实现与证据\nEvidence A' };
