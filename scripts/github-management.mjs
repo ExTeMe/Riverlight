@@ -67,6 +67,14 @@ export async function approvalSurvivesReopening(api, repository, issue, reviewer
   const commentId = Number(source.slice(prefix.length));
   const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
   const confirmation = comments.find(comment => comment.id === commentId);
+  if (trustedRecord(confirmation, CLOSE_MARKER)) {
+    const closed = await currentClosure(api, repository, issue, reviewers);
+    return !!closed && commentField(confirmation.body, '关闭事件') === String(closed.id)
+      && commentField(confirmation.body, '确认人') === closed.actor.login
+      && commentField(confirmation.body, '交付版本') === acceptanceField(issue, '交付版本')
+      && fingerprintMatches(issue, commentField(confirmation.body, '验收范围摘要'))
+      && commentField(confirmation.body, '验收证据') === acceptanceField(issue, '验收证据');
+  }
   if (!confirmation?.created_at || confirmation.user?.type === 'Bot'
     || !reviewers.some(login => login.toLowerCase() === confirmation.user?.login?.toLowerCase())) return false;
   const approved = await approvalFromComment(confirmation, issue, comments, repository);
@@ -103,7 +111,10 @@ export function updateAcceptanceBody(body, fields) {
   return expression.test(body) ? body.replace(expression, () => record) : body.trimEnd() + '\n\n' + record;
 }
 
-export async function reconcileAcceptanceRecord(api, repository, issue, reviewers) {
+export async function reconcileAcceptanceRecord(api, repository, issue, reviewers, snapshot) {
+  if (await approvalSurvivesReopening(api, repository, issue, reviewers)) return;
+  await reconcileCloseAcceptance(api, repository, issue, reviewers, snapshot);
+  if (await approvalSurvivesReopening(api, repository, issue, reviewers)) return;
   const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
   for (const comment of [...comments].sort((a, b) => b.id - a.id)) {
     if (!comment.created_at || comment.user?.type === 'Bot' || !reviewers.some(login => login.toLowerCase() === comment.user?.login?.toLowerCase())) continue;
@@ -121,6 +132,64 @@ export async function reconcileAcceptanceRecord(api, repository, issue, reviewer
       issue.body = body;
     }
     return;
+  }
+}
+
+const PREPARATION_MARKER = '<!-- riverlight:acceptance-preparation:v2 -->';
+const CLOSE_MARKER = '<!-- riverlight:close-acceptance:v1 -->';
+const trustedRecord = (comment, marker) => comment?.user?.login === 'github-actions[bot]'
+  && comment.user.type === 'Bot' && comment.body?.startsWith(marker);
+
+async function currentClosure(api, repository, issue, reviewers) {
+  if (issue.state !== 'closed' || issue.state_reason !== 'completed' || !issue.closed_at) return null;
+  const events = await api.all(`repos/${repository}/issues/${issue.number}/timeline`);
+  // API timeline order distinguishes close/reopen cycles even within one second.
+  const closed = events.filter(event => ['closed', 'reopened'].includes(event.event)).at(-1);
+  if (closed?.event !== 'closed' || !closed.id || closed.created_at !== issue.closed_at
+    || closed.commit_id || closed.commit_url || closed.actor?.type !== 'User'
+    || !reviewers.some(login => login.toLowerCase() === closed.actor.login?.toLowerCase())) return null;
+  const permission = await api(`repos/${repository}/collaborators/${encodeURIComponent(closed.actor.login)}/permission`);
+  return ['admin', 'maintain', 'write'].includes(permission.permission) ? closed : null;
+}
+
+export async function reconcileCloseAcceptance(api, repository, issue, reviewers, snapshot) {
+  const closed = await currentClosure(api, repository, issue, reviewers);
+  if (!closed || !issue.labels?.some(label => (label.name || label) === 'status:review')) return;
+  // A queued close must never approve a delivery or requirement added afterwards.
+  if (snapshot && (snapshot.closed_at !== issue.closed_at || snapshot.state_reason !== 'completed'
+    || !snapshot.labels?.some(label => (label.name || label) === 'status:review')
+    || acceptanceFingerprint(snapshot) !== acceptanceFingerprint(issue)
+    || acceptanceField(snapshot, '交付版本') !== acceptanceField(issue, '交付版本'))) return;
+  const sha = acceptanceField(issue, '交付版本'), fingerprint = acceptanceFingerprint(issue);
+  if (!/^[a-f0-9]{40}$/.test(sha || '')) return;
+  const comments = await api.all(`repos/${repository}/issues/${issue.number}/comments`);
+  // Only a bot snapshot published before closing can supply the approved scope.
+  const prepared = [...comments].reverse().find(comment => trustedRecord(comment, PREPARATION_MARKER)
+    && comment.created_at && comment.created_at < closed.created_at
+    && (!comment.updated_at || comment.updated_at < closed.created_at)
+    && commentField(comment.body, '交付版本') === sha
+    && commentField(comment.body, '验收范围摘要') === fingerprint
+    && /^https:\/\/github\.com\//.test(commentField(comment.body, '验收证据') || ''));
+  if (!prepared) return;
+  const evidence = commentField(prepared.body, '验收证据');
+  let receipt = comments.find(comment => trustedRecord(comment, CLOSE_MARKER)
+    && commentField(comment.body, '关闭事件') === String(closed.id)
+    && commentField(comment.body, '交付版本') === sha
+    && commentField(comment.body, '验收范围摘要') === fingerprint);
+  // First approval requires the real close webhook's immutable Issue snapshot.
+  // Compensation may restore a persisted receipt, never infer a missing snapshot.
+  if (!receipt && !snapshot) return;
+  if (!receipt) receipt = await api(`repos/${repository}/issues/${issue.number}/comments`, 'POST', {
+    body: `${CLOSE_MARKER}\n## 关闭验收记录\n\n- **确认方式**：Close as completed\n- **确认人**：${closed.actor.login}\n- **关闭事件**：${closed.id}\n- **交付版本**：${sha}\n- **验收范围摘要**：${fingerprint}\n- **验收证据**：${evidence}\n\n授权验收者直接关闭了本次交付，无需另发验收评论。重开、需求或交付变化后须重新验收。`,
+  });
+  const latest = await api(`repos/${repository}/issues/${issue.number}`);
+  if (latest.body !== issue.body || latest.state !== issue.state || latest.closed_at !== issue.closed_at
+    || latest.state_reason !== 'completed') throw new Error('Issue changed during close acceptance; rerun from its current state.');
+  const body = updateAcceptanceBody(issue.body || '', { 交付版本: sha, 验收版本: sha, 验收范围摘要: fingerprint,
+    验收证据: evidence, 确认来源: `https://github.com/${repository}/issues/${issue.number}#issuecomment-${receipt.id}` });
+  if (body !== issue.body) {
+    await api(`repos/${repository}/issues/${issue.number}`, 'PATCH', { body });
+    issue.body = body;
   }
 }
 
@@ -162,6 +231,7 @@ export function desiredStatus(issue, issues = [], problems = new Map(), stack = 
   const names = new Set((issue.labels || []).map(label => typeof label === 'string' ? label : label.name));
   if (problems.has(issue.number)) return '阻塞';
   if (issue.state === 'closed') {
+    if (issue.state_reason && issue.state_reason !== 'completed') return '待验收';
     if (issueField(issue.body || '', '协作流程') === 'v2'
       && (!names.has('acceptance-approved') || !objectiveApprovalValid(issue))) return '待验收';
     if (issueMetadata(issue).visual && (!names.has('visual-approved') || !visualApprovalValid(issue))) return '待验收';
@@ -252,12 +322,12 @@ export async function prepareAcceptance(api, repository, issue, sha, evidence, a
     && comment.body?.startsWith('<!-- riverlight:acceptance-preparation:v2 -->')
     && commentField(comment.body, '交付版本') === sha && commentField(comment.body, '验收范围摘要') === fingerprint && commentField(comment.body, '验收证据') === evidence);
   if (!candidate) candidate = await api(`repos/${repository}/issues/${issue.number}/comments`, 'POST', {
-    body: `<!-- riverlight:acceptance-preparation:v2 -->\n## 验收准备\n\n- **交付版本**：${sha}\n- **验收范围摘要**：${fingerprint}\n- **验收证据**：${evidence}\n\n确认前核对本任务需求、交付画面或客观证据。此记录不代表验收通过。`,
+    body: `<!-- riverlight:acceptance-preparation:v2 -->\n## 验收准备\n\n- **交付版本**：${sha}\n- **验收范围摘要**：${fingerprint}\n- **验收证据**：${evidence}\n\n核对本任务交付后，直接选择 Close as completed 即表示验收通过，无需另发评论或手动修改 Project。此准备记录不代表验收通过。`,
   });
   const latest = await api(`repos/${repository}/issues/${issue.number}`);
   if (latest.body !== issue.body) throw new Error('Issue changed during preparation; rerun from its current scope.');
   const alreadyAccepted = acceptanceField(issue, '交付版本') === sha && await approvalSurvivesReopening(api, repository, issue, reviewers);
-  const body = alreadyAccepted ? issue.body : updateAcceptanceBody(issue.body || '', { 交付版本: sha });
+  const body = alreadyAccepted ? issue.body : updateAcceptanceBody(issue.body || '', { 交付版本: sha, 验收证据: evidence });
   if (body !== issue.body) await api(`repos/${repository}/issues/${issue.number}`, 'PATCH', { body });
   return `## ${issueMetadata(issue).visual ? '视觉验收' : '客观验收'}\n\n- **验收结论**：通过\n- **验收准备**：https://github.com/${repository}/issues/${issue.number}#issuecomment-${candidate.id}\n`;
 }
@@ -676,6 +746,15 @@ export async function runManagement(env = process.env, request = fetch) {
     }
   }
   const reviewers = (env.VISUAL_REVIEWERS || repository.split('/')[0]).split(',').map(s => s.trim()).filter(Boolean);
+  if (env.GITHUB_EVENT_NAME === 'issues' && event.action === 'closed' && !event.issue?.pull_request) {
+    const issue = issues.find(issue => issue.number === event.issue?.number);
+    if (issue && (issueMetadata(issue).visual || issueField(issue.body || '', '协作流程') === 'v2')) {
+      await reconcileCloseAcceptance(api, repository, issue, reviewers, event.issue);
+      if (!await approvalSurvivesReopening(api, repository, issue, reviewers)) {
+        console.warn(`::warning::Issue #${issue.number}: closure did not confirm this delivery. Check authorization, completed reason, pending acceptance and the pre-close preparation; reopen and close again after correcting the delivery.`);
+      }
+    }
+  }
   await syncRepository(api, repository, allIssues, fileURLToPath(new URL('../', import.meta.url)), issues, bootstrap, problems, reviewers);
   if (!env.PROJECT_TOKEN) throw new Error('Repository metadata is prepared; PROJECT_TOKEN is required for personal Projects.');
   const projectApi = apiClient(env.PROJECT_TOKEN, request), owner = repository.split('/')[0];
