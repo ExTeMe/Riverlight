@@ -8,12 +8,16 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "node --test tests/*.test.js",
-    "check:privacy": "node scripts/check-public-paths.mjs"
+    "test:browser": "playwright test",
+    "check:privacy": "node scripts/check-public-paths.mjs",
+    "check:docs": "node scripts/check-docs.mjs",
+    "workflow": "node scripts/workflow-command.mjs"
   },
   "dependencies": {
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "fake-indexeddb": "^6.2.5",
     "vite": "^7.1.0"
   }
