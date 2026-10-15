@@ -31,6 +31,30 @@ test('only dev application pushes and explicit dev runs can publish', () => {
   assert.equal(shouldPublish({ eventName: 'push', ref: 'refs/heads/dev', changedFiles: ['scripts/github-settings.mjs', 'scripts/ci-policy.mjs', 'tests/github-settings.test.js', 'tests/ci.test.js'] }), false);
 });
 
+test('the workflow event filter treats edited comment text as data and preserves removed commands', () => {
+  const workflow = readFileSync(new URL('../.github/workflows/project-management.yml', import.meta.url), 'utf8');
+  const source = workflow.match(/node --input-type=module <<'NODE'\r?\n([^]*?)\r?\n\s+NODE/)[1];
+  const temporary = mkdtempSync(path.join(tmpdir(), 'riverlight-ci-test-'));
+  try {
+    const eventPath = path.join(temporary, 'event.json'), output = path.join(temporary, 'output');
+    const cases = [
+      { comment: { body: '### Discussion\n`process.exit(99)`' }, changes: { body: { from: 'ordinary discussion' } }, relevant: false },
+      { comment: { body: 'ordinary discussion' }, changes: { body: { from: '## 任务认领\nfields' } }, relevant: true },
+      { action: 'deleted', comment: { body: '### 客观验收\nfields' }, relevant: true },
+    ];
+    for (const event of cases) {
+      writeFileSync(eventPath, JSON.stringify(event)); writeFileSync(output, '');
+      execFileSync(process.execPath, ['--input-type=module', '-'], { input: source,
+        cwd: new URL('../', import.meta.url), encoding: 'utf8',
+        env: { ...process.env, GITHUB_EVENT_NAME: 'issue_comment', GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: output } });
+      assert.equal(readFileSync(output, 'utf8'), `relevant=${event.relevant}\n`);
+    }
+  } finally {
+    if (!temporary.startsWith(path.join(tmpdir(), 'riverlight-ci-test-'))) throw new Error('Unsafe test cleanup target.');
+    rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test('static snapshots preserve source checkout, update assets, remove obsolete output, and keep history', () => {
   const temporary = mkdtempSync(path.join(tmpdir(), 'riverlight-ci-test-'));
   try {
@@ -39,6 +63,7 @@ test('static snapshots preserve source checkout, update assets, remove obsolete 
     const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
     git('init', '--bare', remote); git('init', '-b', 'dev');
     git('config', 'user.name', 'CI Test'); git('config', 'user.email', 'ci-test@example.invalid');
+    git('config', 'commit.gpgsign', 'false'); // Fixture commits must not depend on the developer's signing key.
     writeFileSync(path.join(cwd, '.gitignore'), 'dist/\n');
     writeFileSync(path.join(cwd, 'source.txt'), 'source remains private to source branches');
     git('add', '.'); git('commit', '-m', 'test source'); git('remote', 'add', 'origin', remote);

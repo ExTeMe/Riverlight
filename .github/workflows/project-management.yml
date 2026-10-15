@@ -76,12 +76,25 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && github.ref || 'dev' }}
           persist-credentials: false
+      # Use the runner's bundled Node for this read-only filter. Event text stays
+      # in the JSON file; never interpolate comment bodies into shell source.
+      - id: event
+        name: Filter management event
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          import { managementEventRelevant } from './scripts/github-management.mjs';
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const relevant = managementEventRelevant(process.env.GITHUB_EVENT_NAME, event);
+          appendFileSync(process.env.GITHUB_OUTPUT, `relevant=${relevant}\n`);
+          NODE
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        if: steps.event.outputs.relevant == 'true'
         with:
           node-version: '22'
           package-manager-cache: false
-      - run: node --test tests/github-management.test.js tests/github-collaboration.test.js
       - name: Synchronize repository and Project metadata
+        if: steps.event.outputs.relevant == 'true'
         run: node scripts/github-management.mjs
         env:
           GITHUB_TOKEN: ${{ github.token }}
