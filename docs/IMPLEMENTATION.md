@@ -1,6 +1,6 @@
 # 栖城：实现方式与边界
 
-更新：2026-10-14。本文只记录实现与兼容性边界；目标架构见 SYSTEMS，阶段标准见 DEVELOPMENT_PLAN。任务状态与逐次验收证据直接在 GitHub 查询，每次工作按 AGENTS 进入。
+更新：2026-10-16。本文只记录实现与兼容性边界；目标架构见 SYSTEMS，阶段标准见 DEVELOPMENT_PLAN。任务状态与逐次验收证据直接在 GitHub 查询，开发操作见 GIT_WORKFLOW。
 
 当前为集成原型；模型精细度、结构多样性与整体画面均未通过验收。任务和当前阶段以 GitHub 为准。
 
@@ -44,19 +44,9 @@ v1 文件导入通过 SaveSession 的共享解析入口校验，并在切换事�
 
 ## 协作管理与验收版本
 
-管理同步在一轮内复用评论、阶段关系和权限读取，写入使关联缓存失效，不跨运行维护本地状态。普通讨论跳过同步；代码审查确认直接核验相关任务/认领/依赖与 PR 当前 head，记录提交状态后返回，看板在后续同步更新。
+管理实现入口为 `scripts/github-management.mjs`、`scripts/github-collaboration.mjs`、`scripts/workflow-command.mjs` 和 `scripts/github-settings.mjs`；输入、权限、回执、摘要兼容和失败恢复见 [管理工作流规范](../spec/spec-process-cicd-project-management.md)，操作见 [GIT_WORKFLOW](GIT_WORKFLOW.md)。
 
-验收准备生成 bot 评论及确认文本；授权者引用准备记录确认后自动回填“验收记录”，其中的版本优先于其他章节历史版本。新 scope-v2 摘要忽略清单勾选和明确的执行/实现证据记录，需求、标准、兼容约束及未知章节参与；旧摘要按旧算法继续核验。新实现不自动批准或关闭任务。
-
-workflow-command 只生成中文操作评论，自动读取当前任务分支；更新/交接使用已连接工具提供的临时评论快照，继承认领编号/执行者并合并资源变化。服务端继续核验实际作者与原认领，不需要 GitHub CLI 或新凭据。
-
-CI 的 check 始终运行；ci-policy 按比较版本选择文档、管理或完整应用检查，未知影响与手动站点运行执行全套。仅 PR 检查取消过时运行，预览写入继续串行。check-docs 检查仓库相对 Markdown 链接目标；外链、锚点和规则一致性由审查复核。
-
-任务分支由 Git 的分支名校验检查，不限制工具前缀、Issue 编号或固定命名格式；禁止使用 main/dev/gh-pages。所属 Issue 通过认领记录和 PR 引用核对，同一分支不能被多个有效认领占用。
-
-共用账号的维护者版本确认通过管理工作流生成当前 head 的 Actions 状态，核验真实发起者、授权、认领和未解决修改请求；范围保留在运行记录中。PR 正文与评论不填写审查通过说明，认领同步也不读取这些评论作为放行依据。
-
-管理脚本通过 GitHub Issue 的 bot 回执协调负责人、执行者、任务分支和独占资源；认领、更新和释放串行处理并回读，长期未更新只提示，不自动抢占。代码审查与产品验收分别投影到 Project，当前 head 的协作审查生成 `collaboration` 提交状态；共享账号的维护者自动审查明确标记，不算独立人工批准。契约见 GIT_WORKFLOW，实际授权和启用状态须在 GitHub 回读。
+CI 由 `scripts/ci-policy.mjs` 按比较版本选择文档、管理或完整应用检查。`check-docs` 检查相对 Markdown 链接目标，不检查外链和锚点；隐私扫描读取已跟踪文件，压缩二进制元数据和凭据仍需人工核对。管理事件过滤复用 `managementEventRelevant`，同时检查编辑前后正文；事件输入只从 JSON 文件读取，不插入 shell 源码。
 
 Vite 输出完整源码 SHA 的 `riverlight-revision` 元数据；开发模式与 dev 预览显示提交缩写，本地未提交状态单独标记。证据仍需固定场景和完整版本。Playwright 在真实 Chromium 中复用共享存档检查，CI 保存报告与截图，不提交本地报告。该回归验证原件保护和事务行为，不能代替城市画面与性能验收。
 
