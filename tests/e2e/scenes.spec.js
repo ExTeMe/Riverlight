@@ -15,6 +15,16 @@ async function ready(page) {
   await page.waitForFunction(() => !!window.riverlight);
 }
 
+// Saving completes asynchronously before location.assign, including same-URL reloads.
+// Observe the new document before checking readiness; the old one is already ready.
+async function navigate(page, button) {
+  await Promise.all([
+    page.waitForEvent('domcontentloaded'),
+    button.click(),
+  ]);
+  await ready(page);
+}
+
 test('scene exploration preserves the original city and supports weather, views, reset and resume', async ({ page }) => {
   test.setTimeout(240000);
   const errors=[];
@@ -27,7 +37,7 @@ test('scene exploration preserves the original city and supports weather, views,
   });
   await page.getByRole('button',{name:'探索场景',exact:true}).click();
   await expect(page.locator('.scene-card')).toHaveCount(7);
-  await page.locator('[data-scene="T06"]').click();await ready(page);
+  await navigate(page, page.locator('[data-scene="T06"]'));
   await expect(page.locator('.scene-panel h2')).toHaveText('河光小街');
   expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(132);
   await page.screenshot({path:'test-results/t06-street.png'});
@@ -46,11 +56,11 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(evidence.drawCalls).toBeGreaterThan(0);
   expect(evidence.rendererMemory.geometries).toBeGreaterThan(0);
   expect(evidence.frameTime).toBeNull();
-  await page.getByRole('button',{name:'保存并重载',exact:true}).click();await ready(page);
+  await navigate(page, page.getByRole('button',{name:'保存并重载',exact:true}));
   expect((await page.evaluate(()=>window.riverlight.getStats())).environment.weather).toBe('rain');
-  await page.getByRole('button',{name:'重置场景',exact:true}).click();await ready(page);
+  await navigate(page, page.getByRole('button',{name:'重置场景',exact:true}));
   expect((await page.evaluate(()=>window.riverlight.getStats())).environment.weather).toBe('clear');
-  await page.getByRole('button',{name:'返回我的城市',exact:true}).click();await ready(page);
+  await navigate(page, page.getByRole('button',{name:'返回我的城市',exact:true}));
   const restored=await page.evaluate(async()=>{
     const {saves}=await import('/src/storage.js');return (await saves.load('autosave')).data;
   });
@@ -72,8 +82,8 @@ test(`${id} renders its fixed scene`, async ({page})=>{
 test('density switching uses distinct layouts',async({page})=>{
   test.setTimeout(180000);
   await page.goto('/?scene=T07&density=sparse');await ready(page);
-  await page.locator('[data-density="dense"]').click();await ready(page);
+  await navigate(page, page.locator('[data-density="dense"]'));
   expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(1053);
-  await page.locator('[data-density="sparse"]').click();await ready(page);
+  await navigate(page, page.locator('[data-density="sparse"]'));
   expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(78);
 });
