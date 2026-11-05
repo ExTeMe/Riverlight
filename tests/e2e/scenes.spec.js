@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-// Software-rendered CI needs time for input between expensive WebGL frames.
-// Keep the real renderer, assets and high-quality scene; only pace test frames.
-test.use({ viewport: { width: 960, height: 640 } });
+// Software-rendered browsers need time for input between expensive WebGL frames.
+// Keep real assets and high-quality effects at reduced test pixel density.
+// These are interaction checks, not visual-quality or performance measurements.
+test.use({ viewport: { width: 960, height: 640 }, deviceScaleFactor: 0.5 });
 test.beforeEach(async ({page}) => {
   await page.addInitScript(() => {
-    window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 200);
+    window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 1000);
     window.cancelAnimationFrame = id => clearTimeout(id);
   });
 });
