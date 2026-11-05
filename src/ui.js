@@ -1,6 +1,7 @@
 import { CATALOG, CATEGORIES, BY_ID, entityDimensions } from './catalog.js';
 import { PRESETS } from './environment.js';
 import { icon } from './icons.js';
+import { SCENES, SCENE_WEATHER } from './baseline.js';
 const ib=(action,glyph,label,extra='')=>`<button class="icon-button ${extra}" data-action="${action}" data-tip="${label}" aria-label="${label}" title="${label}">${icon(glyph)}</button>`;
 const button=(action,glyph,label,primary=false)=>`<button class="button ${primary?'primary':''}" data-action="${action}">${icon(glyph,16)}${label}</button>`;
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -39,6 +40,20 @@ export class UI {
     document.getElementById('quality').addEventListener('change',event=>this.app.setEnvironment({quality:event.target.value}));
     document.getElementById('import-file').addEventListener('change',async event=>{const file=event.target.files[0];if(file)await this.app.importFile(file);event.target.value='';});
     this.root.querySelector('.modal-backdrop').addEventListener('click',e=>{if(e.target.classList.contains('modal-backdrop'))this.closeModal();});
+    const explore=document.createElement('button');explore.className='pill glass scene-entry';explore.dataset.action='scenes';explore.textContent='探索场景';this.root.querySelector('.top-actions').prepend(explore);
+    if(app.baseline?.cameras){
+      this.root.querySelector('.intro').hidden=true;
+      this.root.querySelector('.environment').hidden=true;
+      this.root.querySelector('[data-action=environment]').classList.remove('active');
+      const panel=document.createElement('aside');panel.className='scene-panel glass';panel.setAttribute('aria-label','场景实验室');
+      panel.innerHTML=`<div class="scene-kicker">RIVERLIGHT / ${app.baseline.id}</div><h2>${escape(app.baseline.name)}</h2><p>${escape(app.baseline.caption)}</p>
+        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景']].map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+        <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>
+        ${app.baseline.id==='T07'?`<div class="scene-buttons">${[['sparse','小街'],['standard','城区'],['dense','密集城区']].map(([id,name])=>`<button data-action="scene-density" data-density="${id}" aria-pressed="${app.baseline.density===id}">${name}</button>`).join('')}</div>`:''}
+        <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>
+        <div class="scene-footer"><button data-action="reset-baseline">重置场景</button><button data-action="resume-scene">保存并重载</button><button data-action="return-city">返回我的城市</button></div>`;
+      this.root.append(panel);
+    }
     this.showCategory('home');this.refresh();
   }
   showCategory(id){this.category=id;this.root.querySelectorAll('[data-category]').forEach(el=>el.classList.toggle('active',el.dataset.category===id));
@@ -52,6 +67,7 @@ export class UI {
     this.root.querySelector('#world-stats').innerHTML=`<b>${buildings}</b> 座建筑 &nbsp; · &nbsp; <b>${city.entities.size}</b> 个物件 &nbsp; · &nbsp; <b>${city.radius*2} × ${city.radius*2}</b> 可扩展世界`;
     this.root.querySelector('[data-action=undo]').disabled=!city.undoStack.length;this.root.querySelector('[data-action=redo]').disabled=!city.redoStack.length;
     for(const kind of ['season','weather'])this.root.querySelectorAll(`[data-${kind}]`).forEach(el=>el.classList.toggle('active',el.dataset[kind]===env[kind]));
+    this.root.querySelectorAll('[data-weather-id]').forEach(el=>{const preset=SCENE_WEATHER.find(p=>p.id===el.dataset.weatherId);el.setAttribute('aria-pressed',String(preset.weather===env.weather&&preset.season===env.season&&Math.abs(preset.hour-env.hour)<.05));});
     this.root.querySelector('#season-note').textContent={spring:'草木初醒',summer:'万物葱茏',autumn:'叶落知秋',winter:'岁月静好'}[env.season];
     this.root.querySelector('#wind-label').textContent=env.wind<.2?'轻拂':env.wind<.65?'微风':'起风了';
     this.root.querySelector('#wind').value=env.wind;this.root.querySelector('#quality').value=env.quality;this.root.querySelector('#time-speed').value=env.speed;
@@ -66,6 +82,9 @@ export class UI {
   modal(title,content){this.app.keys.clear();this.app.cancel();const el=this.root.querySelector('.modal');el.innerHTML=`<div class="modal-heading"><h2>${title}</h2>${ib('close-modal','close','关闭窗口')}</div>${content}`;this.root.querySelector('.modal-backdrop').hidden=false;setTimeout(()=>el.querySelector('input,button')?.focus(),0);}
   closeModal(){this.root.querySelector('.modal-backdrop').hidden=true;}
   get modalOpen(){return !this.root.querySelector('.modal-backdrop').hidden;}
+  scenes(){
+    this.modal('沿河，发现新的风景',`<p>选择一处可编辑的小世界。进入前先保存当前城市；场景使用独立存档，可随时返回。</p><div class="scene-grid">${SCENES.map((s,i)=>`<button class="scene-card" data-action="load-scene" data-scene="${s.id}"><span class="scene-number">0${i+1}</span><b>${s.name}</b><small>${s.caption}</small></button>`).join('')}</div>`);
+  }
   async cities(){
     let list=[],readError=false;try{list=await this.app.listSaves();}catch{readError=true;}
     const protectedOriginal=this.app.saveSession.protected;
@@ -73,7 +92,7 @@ export class UI {
     this.modal('收藏每一座城市',`<p>你的每一个小世界，都值得好好保存。城市保存在这台设备的浏览器中，也可导出随身携带。</p>
       ${protectedOriginal?`<p>原存档读取失败，原记录已保护。当前城市另存到恢复存档。</p>${button('export-original','download','导出原存档记录')}`:''}
       ${readError?'<p>暂时无法读取本地存档。请先导出当前城市，保留浏览器数据后重试。</p>':''}
-      ${this.app.baseline?`<p>BASE-02 / v1 · 隔离测试城市，不使用正常城市存档。</p>${button('reset-baseline','undo','重新载入基线')}`:''}
+      ${this.app.baseline?`<p>${escape(this.app.baseline.id)} / v${this.app.baseline.sceneVersion} · 独立测试城市，不使用正常城市存档。</p>${button('reset-baseline','undo','重新载入基线')}`:''}
       <label for="rename-city">城市名称</label><input id="rename-city" type="text" maxlength="40" value="${escape(this.app.city.name)}"><div class="modal-actions">${button('save-copy','save','保存为新存档',true)}${button('export','download','导出城市')}${button('import','upload','导入')}</div>
       <div class="save-list">${list.sort((a,b)=>b.date-a.date).map(s=>`<div class="save-row"><div><b>${escape(s.name)} ${s.id==='autosave'?'· 自动保存':labels[s.kind]?`· ${labels[s.kind]}`:''}</b><span>${new Date(s.date).toLocaleString('zh-CN')} · ${s.entityCount===null?'物件数量无法读取':`${s.entityCount} 个物件`}</span></div><div><button class="button" data-action="load-city" data-save-id="${escape(s.id)}">打开</button><button class="button" data-action="export-save" data-save-id="${escape(s.id)}">导出原记录</button></div></div>`).join('')||'<p>这里将收藏你的城市。</p>'}</div>
       <div class="modal-actions">${button('new-city','plus','新建空白城市')}${button('demo-city','home','打开示范城市')}</div><p>成功打开其他城市时会保留当前城市备份；保留最近 20 份新的切换备份。历史备份、手动收藏和旧城原件不会自动清理。</p>`);

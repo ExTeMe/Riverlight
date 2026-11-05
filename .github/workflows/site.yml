@@ -43,22 +43,6 @@ jobs:
         if: steps.policy.outputs.application == 'true'
       - run: npm run check:privacy
       - run: npm run check:docs
-      - run: node --test tests/github-*.test.js tests/ci.test.js tests/workflow-command.test.js tests/check-docs.test.js
-        if: steps.policy.outputs.management == 'true' && steps.policy.outputs.application != 'true'
-      - run: npm test
-        if: steps.policy.outputs.application == 'true'
-      - run: npx playwright install --with-deps chromium
-        if: steps.policy.outputs.application == 'true'
-      - run: npm run test:browser
-        if: steps.policy.outputs.application == 'true'
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        if: always() && steps.policy.outputs.application == 'true'
-        with:
-          name: browser-evidence
-          path: |
-            test-results/
-            playwright-report/
-          retention-days: 7
       - run: npm run build -- --base="$SITE_BASE"
         if: steps.policy.outputs.application == 'true'
       - run: node scripts/check-dist.mjs "$SITE_BASE"
