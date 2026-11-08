@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { writeFile } from 'node:fs/promises';
 
 // These recordings document the prototype, not a passing traffic simulation.
 // Keep the real animation loop: the interaction suite deliberately throttles it.
@@ -34,12 +35,11 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
     const downloading = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出资源快照', exact: true }).click();
     await (await downloading).saveAs(info.outputPath('resource-snapshot.json'));
-    await info.attach('observations', {
-      body: JSON.stringify({ scene: id, samples, errors,
+    const observations = JSON.stringify({ scene: id, samples, errors,
         limitations: ['Animation randomness is not seeded', 'Recordings require visual review',
-          'No collision, shelter or traffic correctness assertion'] }, null, 2),
-      contentType: 'application/json',
-    });
+          'No collision, shelter or traffic correctness assertion'] }, null, 2);
+    await writeFile(info.outputPath('observations.json'), observations);
+    await info.attach('observations', { body: observations, contentType: 'application/json' });
     expect(errors).toEqual([]);
   });
 }
