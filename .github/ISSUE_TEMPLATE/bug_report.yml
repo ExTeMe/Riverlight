@@ -1,16 +1,9 @@
 name: 缺陷报告
 description: 提供可复现的问题与影响
 body:
-  - type: dropdown
-    id: collaboration
-    attributes:
-      label: 协作流程
-      options: [v2]
-    validations:
-      required: true
   - type: markdown
     attributes:
-      value: "提交缺陷后由维护者分诊；实施前认领并等待成功回执，在任务分支修复。合并 PR 不自动代替缺陷回归与验收。"
+      value: "提交缺陷后由维护者分诊；在任务分支修复，无需认领回执。合并 PR 不自动代替缺陷回归与验收。"
   - type: input
     id: task
     attributes:

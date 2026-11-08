@@ -45,7 +45,7 @@ v1 文件导入通过 SaveSession 的共享解析入口校验，并在切换事�
 
 ## 协作管理与验收版本
 
-管理实现入口为 `scripts/github-management.mjs`、`scripts/github-collaboration.mjs`、`scripts/workflow-command.mjs` 和 `scripts/github-settings.mjs`；输入、权限、回执、摘要兼容和失败恢复见 [管理工作流规范](../spec/spec-process-cicd-project-management.md)，操作见 [GIT_WORKFLOW](GIT_WORKFLOW.md)。
+单人开发已退役多人管理自动执行入口；以下历史模块保留用于迁移参考，不再作为开发门槛： `scripts/github-management.mjs`、`scripts/github-collaboration.mjs`、`scripts/workflow-command.mjs` 和 `scripts/github-settings.mjs`；输入、权限、回执、摘要兼容和失败恢复见 [管理工作流规范](../spec/spec-process-cicd-project-management.md)，操作见 [GIT_WORKFLOW](GIT_WORKFLOW.md)。
 
 CI 由 `scripts/ci-policy.mjs` 按比较版本选择文档、管理或完整应用检查。`check-docs` 检查相对 Markdown 链接目标，不检查外链和锚点；隐私扫描读取已跟踪文件，压缩二进制元数据和凭据仍需人工核对。管理事件过滤复用 `managementEventRelevant`，同时检查编辑前后正文；事件输入只从 JSON 文件读取，不插入 shell 源码。
 
