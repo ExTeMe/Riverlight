@@ -1,113 +1,13 @@
-name: Manage project
+name: Retired project management
 
 on:
-  issues:
-    types: [opened, edited, labeled, unlabeled, closed, reopened, assigned, unassigned]
-  issue_comment:
-    types: [created, edited, deleted]
-  pull_request_target:
-    types: [opened, edited, synchronize, ready_for_review, converted_to_draft, closed, reopened]
-    branches: [dev, main]
-  pull_request_review:
-    types: [submitted, edited, dismissed]
-  push:
-    branches: [dev]
-    paths: ['.github/workflows/project-management.yml', 'scripts/github-management.mjs', 'scripts/github-collaboration.mjs']
-  schedule:
-    - cron: '17 */6 * * *'
   workflow_dispatch:
-    inputs:
-      bootstrap:
-        description: Prepare milestones, labels, task relationships, and the project
-        type: boolean
-        default: false
-      review_pr:
-        description: Optional task PR whose current revision has been reviewed
-        type: string
-        default: ''
-      review_sha:
-        description: Exact reviewed PR head SHA; new commits invalidate this confirmation
-        type: string
-        default: ''
-      review_scope:
-        description: Review scope kept in Actions, not PR comments
-        type: string
-        default: ''
-      acceptance_issue:
-        description: Optional Issue to prepare for acceptance (does not approve it)
-        type: string
-        default: ''
-      delivery_sha:
-        description: Optional delivered SHA (otherwise recorded delivery or selected ref)
-        type: string
-        default: ''
-      acceptance_evidence:
-        description: GitHub evidence link for acceptance preparation
-        type: string
-        default: ''
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: read
-  statuses: write
-
-concurrency:
-  group: project-management-${{ github.repository }}
-  cancel-in-progress: false
-  queue: max
 
 jobs:
-  synchronize:
-    if: >-
-      github.actor != 'github-actions[bot]' &&
-      (github.event_name != 'issue_comment' ||
-       (!github.event.issue.pull_request &&
-        (startsWith(github.event.comment.body, '## 任务认领') || startsWith(github.event.comment.body, '## 认领更新') ||
-         startsWith(github.event.comment.body, '## 任务交接') || startsWith(github.event.comment.body, '## 视觉验收') ||
-         startsWith(github.event.comment.body, '## 客观验收') || startsWith(github.event.comment.body, '### ') ||
-         startsWith(github.event.comment.body, '/riverlight ') || github.event.action == 'edited')))
+  retired:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      # Default-branch events run the reviewed management implementation from dev.
-      # Issue text is data. Never check out or execute a contributor's PR code.
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && github.ref || 'dev' }}
-          persist-credentials: false
-      # Use the runner's bundled Node for this read-only filter. Event text stays
-      # in the JSON file; never interpolate comment bodies into shell source.
-      - id: event
-        name: Filter management event
-        run: |
-          node --input-type=module <<'NODE'
-          import { readFileSync, appendFileSync } from 'node:fs';
-          import { managementEventRelevant } from './scripts/github-management.mjs';
-          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-          const relevant = managementEventRelevant(process.env.GITHUB_EVENT_NAME, event);
-          appendFileSync(process.env.GITHUB_OUTPUT, `relevant=${relevant}\n`);
-          NODE
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: steps.event.outputs.relevant == 'true'
-        with:
-          node-version: '22'
-          package-manager-cache: false
-      - name: Synchronize repository and Project metadata
-        if: steps.event.outputs.relevant == 'true'
-        run: node scripts/github-management.mjs
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}
-          PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
-          MANAGEMENT_BOOTSTRAP: ${{ github.event_name == 'push' || inputs.bootstrap == true }}
-          COLLABORATION_ENABLED: 'true'
-          VISUAL_REVIEWERS: ${{ vars.VISUAL_REVIEWERS || github.repository_owner }}
-          CODE_REVIEWERS: ${{ vars.CODE_REVIEWERS || github.repository_owner }}
-          REVIEW_PR: ${{ inputs.review_pr }}
-          REVIEW_SHA: ${{ inputs.review_sha }}
-          REVIEW_SCOPE: ${{ inputs.review_scope }}
-          ACCEPTANCE_ISSUE: ${{ inputs.acceptance_issue }}
-          DELIVERY_SHA: ${{ inputs.delivery_sha }}
-          ACCEPTANCE_EVIDENCE: ${{ inputs.acceptance_evidence }}
-          CLAIM_REMINDER_DAYS: ${{ vars.CLAIM_REMINDER_DAYS || '7' }}
+      - run: echo "Single-developer workflow. Use Issues directly; no claims or review registration."
