@@ -19,7 +19,9 @@ T04 连续观察 120 秒，覆盖原型船的名义航行周期；T05 记录初�
 | T02 转弯与连接 | 近景观察 7 辆车及固定路段 5+15 秒。录像显示可见的折线道路和圆角原型，采样未确认具体越线或断开位置。车辆曲线和步行图独立推算，连续 S 弯和可编辑坡道缺失。跨区与拆改/恢复未执行。 | P1。比较路面与车人轨迹在直线、左右弯、连续 S 弯、T 字、断头、跨区和桥头的连续性，再拆除并恢复连接复测。[曲线道路 #24](https://github.com/ExTeMe/Riverlight/issues/24) · [共享几何 #26](https://github.com/ExTeMe/Riverlight/issues/26) · [联合回归 #30](https://github.com/ExTeMe/Riverlight/issues/30) |
 | T03/T05 车人通行 | 近景查看十字路口及街坊。T03 录像可见车辆经过无信号路口，代码确认随机选择相邻道路，且缺少共享路权和跟车规则。行人仅按车辆与过街中点的距离等待。车辆相交、行人踏水/穿楼/跳位仍待定点复现，不能由采样画面的投影重叠判定。 | P1。固定车人初态，分别复测转向、跟车间距、占用冲突、信号过街和编辑后的安全重规划。[车辆路径 #32](https://github.com/ExTeMe/Riverlight/issues/32) · [跟车 #33](https://github.com/ExTeMe/Riverlight/issues/33) · [信号 #34](https://github.com/ExTeMe/Riverlight/issues/34) · [行人过街 #41](https://github.com/ExTeMe/Riverlight/issues/41) · [行人重规划 #42](https://github.com/ExTeMe/Riverlight/issues/42) |
 
-本轮结论归入现有修复任务，未确认独立的新缺陷。下一轮优先对 T02 执行拆除和撤销，对 T03/T05 使用更近镜头检查交会位置，并为 T04 补桥墩和引桥的侧视证据。关联 [BASE-03 #12](https://github.com/ExTeMe/Riverlight/issues/12)。
+T02 补测基于 `0476aab` 加本次采集脚本。执行 `npx playwright test --config playwright.evidence.config.js --grep T02`。切到固定近景后，通过「拆除」点击跨区道路格 `(-16,-6)`，观察 8 秒，再点击「撤销」观察 8 秒。截图和录像显示画面右侧弯道前出现缺口，撤销后路面恢复。物件数为 76→75→76，步行节点为 726→700→726，自动行人为 38→36→38。证据见 `road-removed.png`、`road-restored.png`、`video.webm` 和 `observations.json`。本次检查覆盖路面与步行网络的重建，仍待验证既有车人在断路时是否安全重规划。
+
+本轮结论归入现有修复任务，未确认独立的新缺陷。下一轮对 T03/T05 使用更近镜头检查交会位置，并为 T04 补桥墩和引桥的侧视证据。关联 [BASE-03 #12](https://github.com/ExTeMe/Riverlight/issues/12)。
 
 ## T01～T07 场景实验室
 

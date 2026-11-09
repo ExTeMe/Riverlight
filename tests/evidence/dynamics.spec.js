@@ -47,6 +47,19 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         // Observe long enough to include a complete nominal loop in T04.
         await observe('continuous', id === 'T04' ? 120 : 15);
       }
+      if (id === 'T02') {
+        // Near camera at the configured 1280×800 viewport. The point projects
+        // onto the center of the cross-chunk road cell (-16, -6).
+        const before = samples.at(-1).stats;
+        await page.locator('[data-action="erase"]').click();
+        await page.locator('#scene').click({ position: { x: 1183, y: 396 } });
+        await observe('road-removed', 8);
+        expect(samples.at(-1).stats.entities).toBe(before.entities - 1);
+        expect(samples.at(-1).stats.walkNodes).not.toBe(before.walkNodes);
+        await page.locator('[data-action="undo"]').click();
+        await observe('road-restored', 8);
+        expect(samples.at(-1).stats).toMatchObject({ entities: before.entities, walkNodes: before.walkNodes });
+      }
       record.stage = 'resource-snapshot';
       await persist();
       await page.getByText('观察与记录', { exact: true }).click();
