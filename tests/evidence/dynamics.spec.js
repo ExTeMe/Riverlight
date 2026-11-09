@@ -47,12 +47,13 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         // Observe long enough to include a complete nominal loop in T04.
         await observe('continuous', id === 'T04' ? 120 : 15);
       }
-      if (id === 'T02') {
-        // Near camera at the configured 1280×800 viewport. The point projects
-        // onto the center of the cross-chunk road cell (-16, -6).
+      // Centers of the target road cells in the fixed 1280×800 near camera.
+      // T02 crosses the chunk edge at (-16, -6); T03 targets junction (-24, 0).
+      const roadPosition = { T02: { x: 1183, y: 396 }, T03: { x: 640, y: 399 } }[id];
+      if (roadPosition) {
         const before = samples.at(-1).stats;
         await page.locator('[data-action="erase"]').click();
-        await page.locator('#scene').click({ position: { x: 1183, y: 396 } });
+        await page.locator('#scene').click({ position: roadPosition });
         await observe('road-removed', 8);
         expect(samples.at(-1).stats.entities).toBe(before.entities - 1);
         expect(samples.at(-1).stats.walkNodes).not.toBe(before.walkNodes);
