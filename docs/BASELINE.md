@@ -21,7 +21,11 @@ T04 连续观察 120 秒，覆盖原型船的名义航行周期；T05 记录初�
 
 T02 补测基于 `0476aab` 加本次采集脚本。执行 `npx playwright test --config playwright.evidence.config.js --grep T02`。切到固定近景后，通过「拆除」点击跨区道路格 `(-16,-6)`，观察 8 秒，再点击「撤销」观察 8 秒。截图和录像显示画面右侧弯道前出现缺口，撤销后路面恢复。物件数为 76→75→76，步行节点为 726→700→726，自动行人为 38→36→38。证据见 `road-removed.png`、`road-restored.png`、`video.webm` 和 `observations.json`。本次检查覆盖路面与步行网络的重建，仍待验证既有车人在断路时是否安全重规划。
 
-本轮结论归入现有修复任务，未确认独立的新缺陷。下一轮对 T03/T05 使用更近镜头检查交会位置，并为 T04 补桥墩和引桥的侧视证据。关联 [BASE-03 #12](https://github.com/ExTeMe/Riverlight/issues/12)。
+T03 补测基于 `b33e307` 加本次采集脚本。执行 `npx playwright test --config playwright.evidence.config.js --grep T03`。在固定近景用「拆除」点击路口中心 `(-24,0)`，观察 8 秒，再用「撤销」恢复并观察 8 秒。一次浏览器运行中，四条来路的连接随中心路面移除而断开，撤销后恢复。物件数为 61→60→61，步行节点为 558→546→558，自动行人为 29→28→29。对照 `road-removed.png`、`road-restored.png`、`video.webm` 和 `observations.json`。
+
+现有编辑路径会重建整组车辆和行人，无法保证原有参与者的身份、位置和路线连续。后续以同一车辆和行人的编辑前后轨迹验收安全减速、改道与位置连续性。[车辆重规划 #37](https://github.com/ExTeMe/Riverlight/issues/37) · [行人重规划 #42](https://github.com/ExTeMe/Riverlight/issues/42)
+
+本轮结论归入现有修复任务，未确认独立的新缺陷。T03/T05 的车辆相交与行人异常位置仍待定点复现，T04 仍需补桥墩和引桥的侧视证据。关联 [BASE-03 #12](https://github.com/ExTeMe/Riverlight/issues/12)。
 
 ## T01～T07 场景实验室
 
