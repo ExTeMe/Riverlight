@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { City, createDemo, gridLine, footprint, waterAt } from '../src/core.js';
 import { CATALOG, entityDimensions } from '../src/catalog.js';
+import { SpatialIndex, legacyFootprintBounds, legacyPlacement, legacySnap } from '../src/space.js';
 import { getTemplate, getDistantTemplate, registerArchitectureAsset, animateImportedAssets } from '../src/models.js';
 import { animateArchitecture } from '../src/architecture.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -15,6 +16,40 @@ test('buildings reserve their entire rotated footprint; failed moves preserve th
  const city=new City();const house=city.place('villa',-30,-10);assert.ok(house);assert.equal(footprint(house).length,24);assert.equal(city.place('cottage',-29,-10),false);
  const other=city.place('cottage',-24,-10);assert.ok(other);assert.equal(city.move(house.id,-24,-10,1),false);assert.equal(city.at(-30,-10).id,house.id);
  assert.ok(city.move(house.id,-30,-6,1));assert.equal(city.at(-30,-10),undefined);assert.equal(city.at(-29,-4).id,house.id);
+});
+test('metre footprints query both sides of a partition and survive history and save round trips',()=>{
+ const c=new City(),library=c.place('library',-17,-3.5);
+ assert.ok(library);
+ const left={minX:-72,minZ:-16,maxX:-64,maxZ:-6},right={...left,minX:-64,maxX:-56};
+ const area={...left,maxX:-56};
+ for(const bounds of [left,right,area])assert.deepEqual(c.queryFootprints(bounds).map(e=>e.id),[library.id]);
+ const footprint=legacyFootprintBounds(library);
+ assert.deepEqual(footprint,{minX:-70,minZ:-16,maxX:-58,maxZ:-6});
+ const touching={...footprint,minX:-58,maxX:-56};
+ assert.deepEqual(c.queryFootprints(touching),[]);
+ const small=new SpatialIndex(4);
+ small.insert(library.id,footprint);
+ small.insert(99,{minX:0,minZ:0,maxX:4,maxZ:4});
+ for(const bounds of [left,right,area,touching])assert.deepEqual(small.query(bounds),c.queryFootprints(bounds).map(e=>e.id));
+ assert.ok(c.move(library.id,-22,-6,1));
+ assert.deepEqual(c.queryFootprints(area),[]);
+ assert.ok(c.undo());
+ assert.deepEqual(new City(c.snapshot()).queryFootprints(area),[library]);
+ assert.ok(c.redo());
+ assert.deepEqual(c.queryFootprints(area),[]);
+});
+test('legacy snap, rotation, terrain height and editable edges keep their metre meanings',()=>{
+ const c=new City();
+ assert.equal(legacySnap(-3,.5),-.5);
+ assert.equal(legacySnap(-3,1),-1);
+ assert.deepEqual(c.worldBounds(),{minX:-258,minZ:-258,maxX:254,maxZ:254});
+ assert.deepEqual(c.surfaceAt(0,0),{groundY:null,waterY:-.4});
+ assert.deepEqual(c.surfaceAt(-64,-12),{groundY:0,waterY:null});
+ const e=c.place('cottage',-64,62.5,1);
+ assert.ok(e);
+ assert.equal(legacyFootprintBounds(e).maxZ,254);
+ assert.deepEqual(legacyPlacement(e),{x:-254,z:251,radians:Math.PI/2,scaleX:1,scaleZ:1});
+ assert.equal(c.move(e.id,-64,63,1),false);
 });
 test('undo and redo restore data, occupancy and chunk indexes across a boundary',()=>{
  const city=new City();const e=city.place('cottage',-18,5);city.move(e.id,20,5,1);city.undo();assert.equal(city.at(-18,5).id,e.id);assert.equal(city.at(20,5),undefined);city.redo();assert.equal(city.at(20,5).id,e.id);

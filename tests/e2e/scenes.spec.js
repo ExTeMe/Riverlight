@@ -70,13 +70,28 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',77],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',80],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page})=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.goto(`/?scene=${id}`);await ready(page);
     expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(count);
     await expect(page.locator('.scene-panel')).toBeVisible();
+    if(id==='T01'){
+      await page.getByText('观察与记录',{exact:true}).click();
+      const result=page.waitForEvent('download');
+      await page.getByRole('button',{name:'导出资源快照',exact:true}).click();
+      const download=await result;
+      const evidence=JSON.parse(Buffer.concat(await (await download.createReadStream()).toArray()).toString());
+      expect(evidence.scene).toMatchObject({id:'T01',version:2});
+      const [west,east]=evidence.spatial.samples;
+      expect(west.objects).toHaveLength(1);
+      expect(west.objects[0]).toMatchObject({type:'library',bounds:{minX:-70,maxX:-58,minZ:-16,maxZ:-6}});
+      expect(east.objects.map(e=>e.type)).toEqual(['library','office','mall']);
+      expect(east.objects[0]).toEqual(west.objects[0]);
+      expect(evidence.spatial).toMatchObject({land:{groundY:0,waterY:null},river:{groundY:null,waterY:-.4}});
+      await page.screenshot({path:'test-results/t01-world-space.png'});
+    }
   expect(errors).toEqual([]);
 });
 

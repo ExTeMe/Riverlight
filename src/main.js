@@ -7,7 +7,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CityAOPass } from './ambient-occlusion.js';
 import { City, createDemo, gridLine } from './core.js';
-import { CELL, BY_ID, dimensions, entityDimensions, snapStep } from './catalog.js';
+import { CELL, BY_ID, snapStep } from './catalog.js';
+import { legacyFootprintBounds, legacyPlacement, legacySnap } from './space.js';
 import { World } from './world.js';
 import { Environment } from './environment.js';
 import { getTemplate } from './models.js';
@@ -74,13 +75,19 @@ class App {
     }finally{this.navigating=false;}
   }
   sceneEvidence(){
+    const probe=this.baseline?.spatialProbe;
+    const spatial=probe?{
+      world:this.city.worldBounds(),
+      samples:probe.map(bounds=>({bounds,objects:this.city.queryFootprints(bounds).map(e=>({id:e.id,type:e.type,bounds:legacyFootprintBounds(e)}))})),
+      land:this.city.surfaceAt(-64,-12),river:this.city.surfaceAt(0,0),
+    }:undefined;
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
       capturedAt:new Date().toISOString(),scene:this.baseline?{id:this.baseline.id,version:this.baseline.sceneVersion,seed:this.baseline.seed,density:this.baseline.density}:null,
       browser:navigator.userAgent,viewport:[innerWidth,innerHeight],pixelRatio:this.renderer.getPixelRatio(),camera:this.cameraState(),
       ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,boats:this.world.traffic.boats.length,
       detailedChunks:[...this.world.loaded.values()].filter(chunk=>chunk.detail).length,
       rendererMemory:{...this.renderer.info.memory},method:'最近一帧累计渲染调用（含反射与后处理）；几何/纹理为 WebGL 资源数量，不是字节数',
-      frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[]};
+      frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[],spatial};
   }
   bind(){
     window.addEventListener('resize',()=>{this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();this.renderer.setSize(innerWidth,innerHeight);this.composer.setSize(innerWidth,innerHeight);});
@@ -97,7 +104,7 @@ class App {
     this.controls.addEventListener('start',()=>{this.follow=false;});this.controls.addEventListener('end',()=>this.scheduleSave());
     this.autosaveInterval=setInterval(()=>{if(!document.hidden)this.persist();},45000);
   }
-  updatePointer(event){const r=this.canvas.getBoundingClientRect();this.pointer.set((event.clientX-r.left)/r.width*2-1,-(event.clientY-r.top)/r.height*2+1);this.raycaster.setFromCamera(this.pointer,this.camera);if(this.raycaster.ray.intersectPlane(this.plane,this.point)){const step=snapStep(this.buildType);this.cursor={x:Math.floor((this.point.x/CELL+.5)/step)*step,z:Math.floor((this.point.z/CELL+.5)/step)*step};}else this.cursor=null;}
+  updatePointer(event){const r=this.canvas.getBoundingClientRect();this.pointer.set((event.clientX-r.left)/r.width*2-1,-(event.clientY-r.top)/r.height*2+1);this.raycaster.setFromCamera(this.pointer,this.camera);if(this.raycaster.ray.intersectPlane(this.plane,this.point)){const step=snapStep(this.buildType);this.cursor={x:legacySnap(this.point.x,step),z:legacySnap(this.point.z,step)};}else this.cursor=null;}
   candidate(){return this.cursor&&this.buildType?{id:-1,type:this.buildType,x:this.cursor.x,z:this.cursor.z,rotation:this.rotation,color:this.buildColor,...(this.moving&&this.city.entities.get(this.moving)?.lot?{lot:this.city.entities.get(this.moving).lot}:{})}:null;}
   preview(){const e=this.candidate();if(e)this.world.showPreview(e,!this.city.canPlace(e,this.moving));}
   startBuild(type,color=0){this.cancel();this.buildType=type;this.buildColor=color;this.mode='build';this.ui.refreshActive();this.ui.hint(`${BY_ID[type].name} · ${['road','bridge','path','tree'].includes(type)?'按住左键连续绘制':'点击放置'} · R 旋转 · Esc 取消`);this.preview();}
@@ -163,7 +170,7 @@ class App {
       case 'rotate':if(e){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast('旋转后会与其他物件重叠',true);else this.changed();}break;
       case 'color':if(e&&BY_ID[e.type].floors){this.city.recolor(e.id);this.changed();}break;
       case 'delete':if(e){this.city.remove(e.id);this.selected=null;this.changed();}break;
-      case 'focus':if(e){const[w,d]=entityDimensions(e);this.controls.target.set((e.x+(w-1)/2)*CELL,0,(e.z+(d-1)/2)*CELL);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
+      case 'focus':if(e){const p=legacyPlacement(e);this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
       case 'expand':if(this.city.expand()){this.changed();this.ui.toast(`城市向四周生长了 · 现在是 ${this.city.radius*2} × ${this.city.radius*2} 格`);}else this.ui.toast('已到达当前版本的世界边界');break;
       case 'zoom-in':this.zoom(.82);break;case 'zoom-out':this.zoom(1.22);break;case 'home':this.home();break;
       case 'camera':this.freeCamera=!this.freeCamera;this.controls.maxPolarAngle=this.freeCamera?Math.PI*.493:Math.PI*.43;this.controls.minDistance=this.freeCamera?8:24;document.querySelector('#camera-label').textContent=this.freeCamera?'返回建造视角':'自由观察';document.querySelector('[data-action=camera]').classList.toggle('active',this.freeCamera);this.ui.toast(this.freeCamera?'自由观察 · 右键环绕，方向键移动':'已返回建造视角');break;

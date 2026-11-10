@@ -1,10 +1,9 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
+import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
+export { riverCenter, riverWidth, waterAt };
 export const VERSION = 2;
 export const MAX_ENTITIES = 100000;
 export const key = (x, z) => `${x},${z}`;
-export const riverCenter = (z,terrain='meander') => terrain==='legacy'?Math.sin(z*.016)*11+Math.sin(z*.004)*9:Math.sin(z*.025)*23+Math.sin(z*.009)*10;
-export const riverWidth = (z,terrain='meander') => terrain==='legacy'?11.9:11.3+1.8*Math.sin(z*.033+.6)+5*Math.exp(-(((z-30)/26)**2));
-export const waterAt = (x,z,terrain='meander') => Math.abs(x*CELL-riverCenter(z*CELL,terrain))<riverWidth(z*CELL,terrain)-1.4;
 export const chunkKey = (x, z) => key(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
@@ -26,21 +25,24 @@ export function gridLine(a, b) {
 }
 export class City {
   constructor(data) {
-    this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();
+    this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();this.spatial=new SpatialIndex();
     this.environment = { season: 'summer', weather: 'clear', hour: 16.5, playing: false, speed: 1, wind: 0.4, quality: 'high' };
     this.undoStack = []; this.redoStack = []; this.nextId = 1;
     if (data) this.restore(data);
   }
   at(x, z) { return this.entities.get(this.occupancy.get(key(Math.floor(x/SNAP)*SNAP,Math.floor(z/SNAP)*SNAP))); }
+  worldBounds() { return worldBounds(this.radius); }
+  surfaceAt(x,z) { return terrainSurfaceAt(x,z,this.terrain); }
+  queryFootprints(bounds) { return this.spatial.query(bounds).map(id=>this.entities.get(id)); }
   canPlace(e, ignoreId) {
     if (!BY_ID[e.type]) return '未知建筑';
     if(!Number.isInteger(e.x/SNAP)||!Number.isInteger(e.z/SNAP))return '请对齐建造网格';
     if(['road','bridge','path'].includes(e.type)&&(!Number.isInteger(e.x)||!Number.isInteger(e.z)))return '道路请对齐主路网';
     if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
+    const bounds=legacyFootprintBounds(e),world=this.worldBounds();
+    if(bounds.minX<world.minX||bounds.minZ<world.minZ||bounds.maxX>world.maxX||bounds.maxZ>world.maxZ)return '这里还未扩展，点击「扩展地图」';
+    if(this.spatial.query(bounds).some(id=>id!==ignoreId))return '这里已有建筑';
     for (const [x, z] of footprint(e)) {
-      if (x < -this.radius || x >= this.radius || z < -this.radius || z >= this.radius) return '这里还未扩展，点击「扩展地图」';
-      const occupied = this.at(x, z);
-      if (occupied && occupied.id !== ignoreId) return '这里已有建筑';
       if (waterAt(this.terrain==='legacy'?Math.floor(x):x,this.terrain==='legacy'?Math.floor(z):z,this.terrain) && !['bridge', 'pier'].includes(e.type)) return e.type === 'road' ? '水面请使用桥梁工具' : '请选择陆地区域';
       if (e.type === 'pier' && !footprint(e).some(([px,pz]) => waterAt(px,pz,this.terrain))) return '码头需要接触水面';
     }
@@ -48,11 +50,13 @@ export class City {
   }
   insert(e) {
     this.entities.set(e.id, { ...e });
+    this.spatial.insert(e.id,legacyFootprintBounds(e));
     for (const [x,z] of footprint(e)) this.occupancy.set(key(x,z), e.id);
     const ck = chunkKey(e.x,e.z); if (!this.chunks.has(ck)) this.chunks.set(ck,new Set()); this.chunks.get(ck).add(e.id);
   }
   erase(id) {
     const e = this.entities.get(id); if (!e) return;
+    this.spatial.erase(id);
     for (const [x,z] of footprint(e)) this.occupancy.delete(key(x,z));
     this.entities.delete(id); const ck = chunkKey(e.x,e.z); this.chunks.get(ck)?.delete(id); if (!this.chunks.get(ck)?.size) this.chunks.delete(ck);
   }
@@ -112,7 +116,7 @@ export class City {
       if (!e || !BY_ID[e.type] || !lotValid || !Number.isSafeInteger(e.id) || e.id<1 || ids.has(e.id) || !Number.isInteger(e.x/SNAP) || !Number.isInteger(e.z/SNAP) || !Number.isInteger(e.rotation) || e.rotation<0 || e.rotation>3 || !Number.isInteger(e.color) || e.color<0 || e.color>3 || next.canPlace(e)) throw new Error('存档包含无效或重叠建筑');
       ids.add(e.id); next.insert(e);
     }
-    this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;
+    this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;this.spatial=next.spatial;
     this.nextId=[...ids].reduce((max,id)=>Math.max(max,id),0)+1;
     const env=raw.environment || {};
     for(const [field,options] of Object.entries({season:['spring','summer','autumn','winter'],weather:['clear','cloudy','rain','snow','fog'],quality:['high','balanced']})) if(options.includes(env[field])) this.environment[field]=env[field];

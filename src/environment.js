@@ -1,7 +1,8 @@
 import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { getTemplate, updateMaterials } from './models.js';
-import { CELL, BY_ID, dimensions, entityDimensions } from './catalog.js';
+import { CELL, entityDimensions } from './catalog.js';
+import { WATER_Y, legacyPlacement } from './space.js';
 import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
 
@@ -42,7 +43,7 @@ export class Environment {
     scene.fog=new T.FogExp2('#dce0cc',.0016);
     this.skyUniforms={topColor:{value:new T.Color('#86b6c2')},bottomColor:{value:new T.Color('#e7e6d3')},sunDirection:{value:new T.Vector3()},uTime:{value:0},clouds:{value:.2},night:{value:0}};
     this.sky=new T.Mesh(new T.SphereGeometry(2200,24,16),new T.ShaderMaterial({vertexShader:skyVertex,fragmentShader:skyFragment,uniforms:this.skyUniforms,side:T.BackSide,depthWrite:false}));scene.add(this.sky);
-    this.water=new Water(new T.PlaneGeometry(8000,8000),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=-.4;scene.add(this.water);
+    this.water=new Water(new T.PlaneGeometry(8000,8000),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=WATER_Y;scene.add(this.water);
     this.particles={};
     for(const kind of ['rain','snow']){const count=kind==='rain'?2500:1500;const positions=new Float32Array(count*3);for(let i=0;i<count;i++){positions[i*3]=(Math.random()-.5)*210;positions[i*3+1]=Math.random()*100;positions[i*3+2]=(Math.random()-.5)*210;}const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(positions,3));const m=new T.PointsMaterial({color:kind==='rain'?'#c9dcdd':'#fff9e9',size:kind==='rain'?1.6:.55,map:spriteTexture(kind),transparent:true,opacity:.7,depthWrite:false,sizeAttenuation:true});const mesh=new T.Points(g,m);mesh.frustumCulled=false;mesh.visible=false;scene.add(mesh);this.particles[kind]={mesh,positions};}
     const leafGeo=new T.PlaneGeometry(.28,.15);this.leaves=new T.InstancedMesh(leafGeo,new T.MeshStandardMaterial({color:'#c79145',side:T.DoubleSide,roughness:1}),100);this.leaves.instanceMatrix.setUsage(T.DynamicDrawUsage);this.leaves.frustumCulled=false;scene.add(this.leaves);
@@ -64,12 +65,10 @@ export class Environment {
       if(e.type==='park'){
         const anchor=getTemplate(e.type).userData.anchors?.light;
         if(!anchor)continue;
-        const [w,d]=entityDimensions(e),item=BY_ID[e.type];
-        const local=new T.Vector3(...anchor);
-        if(e.lot){local.x*=e.lot[0]/item.w;local.z*=e.lot[1]/item.d;}
-        local.applyAxisAngle(up,e.rotation*Math.PI/2);
-        local.x+=(e.x+(w-1)/2)*CELL;
-        local.z+=(e.z+(d-1)/2)*CELL;
+        const p=legacyPlacement(e),local=new T.Vector3(...anchor);
+        local.x*=p.scaleX;local.z*=p.scaleZ;
+        local.applyAxisAngle(up,p.radians);
+        local.x+=p.x;local.z+=p.z;
         addLight(local,18,8);
       }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
         const [w,d]=entityDimensions(e);
