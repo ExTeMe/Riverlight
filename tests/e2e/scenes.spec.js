@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
-import { placementOf } from '../../src/parcel.js';
+import { placementAnchor, placementOf } from '../../src/parcel.js';
 
 // Software-rendered browsers need time for input between expensive WebGL frames.
 // Keep real assets and high-quality effects at reduced test pixel density.
@@ -360,6 +360,49 @@ test('T02 and T03 show road markings, allowed vehicle movements and topology cha
   expect(errors).toEqual([]);
 });
 
+test('T05 connects authored rotated entrances to the quay and rebuilds after a path edit',async({page},info)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T05');await ready(page);
+  const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+  await page.getByRole('button',{name:'步行连接',exact:true}).click();
+  const before=await stats();
+  expect(before).toMatchObject({mobilityOverlay:true,laneRoadRevision:before.roadRevision,walkRoadRevision:before.roadRevision});
+  expect(before.laneEdges).toBeGreaterThan(0);
+  await expect.poll(async()=> (await stats()).visiblePedestrians).toBeGreaterThan(0);
+  await page.keyboard.press('h');
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await page.screenshot({path:info.outputPath('t05-connected-shore.png')});
+  await page.keyboard.press('h');
+  await page.getByText('观察与记录',{exact:true}).click();
+  const report=async()=>JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}))).toString());
+  const graph=await report();
+  expect(graph.mobility).toHaveLength(2);
+  const anchors=await page.evaluate(async()=>{
+    const {getTemplate}=await import('/src/models.js');
+    return Object.fromEntries(['bakery','park'].map(type=>[type,getTemplate(type).userData.anchors.entrance]));
+  });
+  const city=new City(createScene('T05').city);
+  for(const portal of graph.mobility){
+    expect(portal.point).toEqual(placementAnchor(city.entities.get(portal.id),anchors[portal.type]));
+    expect(portal.reachable).toEqual(expect.arrayContaining(['quay','path','sidewalk']));
+  }
+  const {position,target}=createScene('T05').cameras.walk,camera=new PerspectiveCamera(39,960/640,.5,4500);
+  camera.position.fromArray(position);camera.lookAt(new Vector3(...target));camera.updateMatrixWorld();
+  const path=new Vector3(-4,.19,28).project(camera);
+  await page.keyboard.press('h');
+  await page.keyboard.press('x');
+  await page.locator('#scene').click({position:{x:Math.round((1+path.x)*480),y:Math.round((1-path.y)*320)}});
+  await page.keyboard.press('h');
+  expect(await stats()).toMatchObject({roadRevision:before.roadRevision+1,walkRoadRevision:before.roadRevision+1,mobilityOverlay:true});
+  const broken=await report();
+  expect(broken.mobility).toHaveLength(2);
+  expect(broken.mobility.every(portal=>!portal.reachable.includes('quay'))).toBe(true);
+  await page.keyboard.press('Control+z');
+  expect((await report()).mobility).toEqual(graph.mobility);
+  expect(errors).toEqual([]);
+});
+
 test('scene exploration preserves the original city and supports weather, views, reset and resume', async ({ page }) => {
   test.setTimeout(240000);
   const errors=[];
@@ -404,7 +447,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',83],['T02',81],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',83],['T02',81],['T03',61],['T04',60],['T05',90],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));

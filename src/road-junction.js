@@ -136,8 +136,12 @@ export function buildJunction(mask,profile,approaches){
   return {...layout,movements};
 }
 
-export function arcAsphalt(corner,profile,point){
+export function arcSurface(corner,profile,point){
   const [sx,sz]=corner,half=profile.carriageway/2;
-  const pairs=Array.from({length:25},(_,i)=>[edge-half,edge+half].map(radius=>point(sx,sz,radius,i*Math.PI/48)));
-  return pairs.slice(1).map((pair,i)=>ccw([...pairs[i],...pair.slice().reverse()]));
+  const ring=(inner,outer,start=0,end=Math.PI/2)=>{
+    const pairs=Array.from({length:25},(_,i)=>[inner,outer].map(radius=>point(sx,sz,radius,start+(end-start)*i/24)));
+    return pairs.slice(1).map(([a,b],i)=>ccw(inner?[...pairs[i],b,a]:[...pairs[i],b]));
+  };
+  return {asphalt:ring(edge-half,edge+half),pavement:[...ring(0,edge-half),...ring(edge+half,profile.width)],
+    paint:Array.from({length:3},(_,i)=>ring(edge-.03,edge+.03,.14+i*.46,.35+i*.46)).flat()};
 }

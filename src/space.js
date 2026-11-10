@@ -3,6 +3,7 @@ import { BY_ID, CELL, entityDimensions } from './catalog.js';
 export const GROUND_Y = 0;
 export const WATER_Y = -.4;
 export const BANK_STEP = CELL/2;
+export const QUAY = Object.freeze({width:3.4,minZ:-110,maxZ:112,y:.025});
 
 export const riverCenter = (z, terrain = 'meander') => terrain === 'legacy'
   ? Math.sin(z*.016)*11 + Math.sin(z*.004)*9
@@ -13,6 +14,10 @@ export const riverWidth = (z, terrain = 'meander') => terrain === 'legacy'
 export function riverBanks(z,terrain) {
   const centre=riverCenter(z,terrain),width=riverWidth(z,terrain);
   return [centre-width,centre+width];
+}
+
+export function quayCenter(z,side,terrain){
+  return [riverBanks(z,terrain)[side<0?0:1]+side*QUAY.width/2,QUAY.y,z];
 }
 
 export function terrainSurfaceAt(x, z, terrain) {

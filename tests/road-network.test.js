@@ -5,10 +5,52 @@ import { City, footprintBounds } from '../src/core.js';
 import { createBaseline, createLegacyBaseline, createScene } from '../src/baseline.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
-import { isRoad, ROAD_PROFILES } from '../src/road-network.js';
+import { isRoad, ROAD_PROFILES, roadCarriageway } from '../src/road-network.js';
+import { outlineContains } from '../src/outline.js';
+import { placementAnchor } from '../src/parcel.js';
 import { createAlignmentMesh } from '../src/roads.js';
-import { vehicle } from '../src/models.js';
+import { getTemplate, vehicle } from '../src/models.js';
 import { VEHICLE_ENVELOPES, ROAD_DIRECTIONS } from '../src/road-junction.js';
+
+test('directed lanes meet across curve, grid and junction seams on the shared carriageway',()=>{
+  for(const id of ['T02','T03']){
+    const city=new City(createScene(id).city),{segments,laneGraph,revision}=city.roadNetwork;
+    assert.equal(laneGraph.revision,revision);
+    for(const edge of laneGraph.edges.values()){
+      const a=laneGraph.nodes.get(edge.from),b=laneGraph.nodes.get(edge.to);
+      assert.ok(a.outgoing.includes(edge.id));
+      for(const [point,node] of [[edge.points[0],a],[edge.points.at(-1),b]]){
+        assert.ok(Math.hypot(...point.map((value,i)=>value-node.point[i]))<1e-8);
+      }
+      const surface=roadCarriageway(segments.get(edge.roadId));
+      assert.ok(edge.points.every(([x,,z])=>surface.some(polygon=>outlineContains(polygon,x,z))),edge.id);
+      assert.ok(edge.distance.every((value,i)=>!i||value>edge.distance[i-1]));
+    }
+    if(id==='T02'){
+      const tee=city.at(-27,-14),curve=segments.get(tee.id).ports.find(port=>port.side===3).neighborId;
+      assert.ok(laneGraph.nodes.get(`${tee.id}>${curve}`).outgoing.some(id=>laneGraph.edges.get(id).roadId===curve));
+      assert.ok(laneGraph.nodes.get(`${curve}>${tee.id}`).outgoing.some(id=>laneGraph.edges.get(id).roadId===tee.id));
+    }
+  }
+});
+
+test('T05 rotated entrances connect to public paths and the quay until the last link is removed',()=>{
+  const city=new City(createScene('T05').city),waterfront=city.at(-1,7);
+  const check=(reachable)=>{
+    const graph=buildWalkNetwork(city);
+    for(const e of city.entities.values())if(e.pose){
+      const n=graph.destinations.find(node=>node.entityId===e.id);
+      const anchor=getTemplate(e.type,e.color).userData.anchors?.entrance??[0,.14,4.35];
+      assert.deepEqual([n.x,n.y,n.z],placementAnchor(e,anchor));
+      const group=graph.components.find(group=>group.includes(n));
+      assert.ok(group.some(node=>node.kind==='path')&&group.some(node=>node.kind==='sidewalk'));
+      assert.equal(group.some(node=>node.kind==='quay'),reachable);
+    }
+  };
+  check(true);
+  assert.ok(city.remove(waterfront.id));check(false);
+  assert.ok(city.undo());check(true);
+});
 
 test('T03 junction turns match the lane ends and gate movements by the actual vehicle models',()=>{
   const city=new City(createScene('T03').city),e=city.at(-24,0),segment=city.roadNetwork.segments.get(e.id);
