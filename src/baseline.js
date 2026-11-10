@@ -43,7 +43,8 @@ export function createLegacyBaseline() {
 }
 
 export const SCENES = [
-  {id:'T01',sceneVersion:3,name:'河畔编辑院',caption:'小屋、庭院与不同尺度的沿街建筑',purpose:'试用划定地块、移动整块和调整建筑。比较相接的小屋与图书馆地块，再看办公楼和商场的尺度。',limitations:['旧格网建筑沿用原有编辑；地块自由编辑的整条验收由 R2 下一项覆盖'],target:[-76,0,-16],position:[-30,62,70],spatialProbe:[
+  {id:'T01',sceneVersion:4,name:'河畔编辑院',caption:'从小屋到商场，沿街比较尺度与留白',purpose:'用「尺度」镜头观察小屋、咖啡馆、图书馆、办公楼和商场。导出快照可对照占地、模型高度与楼间留白。',limitations:['旧格网建筑沿用原有编辑；本场景用于尺度和编辑验收，美术风格另行确认'],target:[-76,0,-16],position:[-30,62,70],
+    scaleView:{target:[-70,0,-12],position:[-70,43,78]},scaleTypes:['cottage','cafe','library','office','mall'],spatialProbe:[
     {minX:-72,minZ:-24,maxX:-64,maxZ:-6},{minX:-64,minZ:-24,maxX:-24,maxZ:-6},
     {minX:-75,minZ:-58,maxX:-64,maxZ:-40},{minX:-64,minZ:-58,maxX:-50,maxZ:-40}
   ]},
@@ -87,7 +88,7 @@ export function createScene(id, density='standard') {
     add('bench',-18,6);add('flowers',-16,6);
   };
   if(id==='T01'){
-    add('library',-17,-3.5);add('office',-14,-4);add('mall',-11.5,-5);
+    add('cafe',-23,-4.5);add('library',-17,-3.5);add('office',-14,-4);add('mall',-11.5,-5);
     const data=city.snapshot(),angle=32,radians=angle*Math.PI/180;
     const houseLot={id:'t01-cottage',x:-75,z:-39,width:14,depth:12,angle};
     const libraryLot={id:'t01-library',x:houseLot.x+16*Math.cos(radians),z:houseLot.z-16*Math.sin(radians),width:18,depth:17,angle};
@@ -132,5 +133,11 @@ export function createScene(id, density='standard') {
   city.undoStack=[];city.redoStack=[];
   const target=[...spec.target],position=[...spec.position];
   const cameras={medium:{position,target},near:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*.48)},far:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*1.75)}};
-  return {...structuredClone(spec),sceneVersion:spec.sceneVersion??1,seed:20261103,density,city:city.snapshot(),camera:cameras.medium,cameras};
+  const scene={...structuredClone(spec),sceneVersion:spec.sceneVersion??1,seed:20261103,density,city:city.snapshot(),camera:cameras.medium,cameras};
+  if(spec.scaleView){
+    cameras.scale=structuredClone(spec.scaleView);
+    const westStreet=[...city.entities.values()].filter(e=>!e.pose&&e.x<0);
+    scene.scaleIds=spec.scaleTypes.map(type=>westStreet.find(e=>e.type===type).id);
+  }
+  return scene;
 }

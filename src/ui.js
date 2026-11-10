@@ -48,7 +48,7 @@ export class UI {
       this.root.querySelector('[data-action=environment]').classList.remove('active');
       const panel=document.createElement('aside');panel.className='scene-panel glass';panel.setAttribute('aria-label','场景实验室');
       panel.innerHTML=`<div class="scene-kicker">RIVERLIGHT / ${app.baseline.id}</div><h2>${escape(app.baseline.name)}</h2><p>${escape(app.baseline.caption)}</p>
-        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景']].map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
         <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>
         ${app.baseline.id==='T07'?`<div class="scene-buttons">${[['sparse','小街'],['standard','城区'],['dense','密集城区']].map(([id,name])=>`<button data-action="scene-density" data-density="${id}" aria-pressed="${app.baseline.density===id}">${name}</button>`).join('')}</div>`:''}
         <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>

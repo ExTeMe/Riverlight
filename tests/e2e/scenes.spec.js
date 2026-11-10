@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test';
-import { createBaseline } from '../../src/baseline.js';
+import { createBaseline, createLegacyBaseline } from '../../src/baseline.js';
+import { City, footprintBounds } from '../../src/core.js';
+import { placementOf } from '../../src/parcel.js';
 
 // Software-rendered browsers need time for input between expensive WebGL frames.
 // Keep real assets and high-quality effects at reduced test pixel density.
@@ -27,20 +29,35 @@ async function navigate(page, button) {
   await ready(page);
 }
 
-test('T01 edits parcel and building transforms independently through the UI', async ({page},testInfo)=>{
+async function importCity(page,input,name='city.json') {
+  const buffer=Buffer.isBuffer(input)?input:Buffer.from(JSON.stringify(input));
+  await page.locator('#import-file').setInputFiles({name,mimeType:'application/json',buffer});
+}
+
+async function downloadFile(page,button) {
+  const result=page.waitForEvent('download');
+  await button.click();
+  const download=await result,stream=await download.createReadStream();
+  return Buffer.concat(await stream.toArray());
+}
+
+test('T01 keeps free-angle edits through failed moves, copy, history and file roundtrips', async ({page},testInfo)=>{
   test.setTimeout(180000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T01');await ready(page);
   const editor=page.getByRole('form',{name:'地块与建筑编辑'});
   const field=name=>editor.getByLabel(name,{exact:true});
   const confirm=editor.getByRole('button',{name:'确认'});
-  const read=()=>page.evaluate(async()=>{
+  const record=()=>page.evaluate(async()=>{
     const {createSaveStore}=await import('/src/storage.js');
-    return (await createSaveStore({name:'riverlight-scenes-T01-standard'}).load('autosave'))?.data;
+    return createSaveStore({name:'riverlight-scenes-T01-standard'}).load('autosave');
   });
+  const read=async()=> (await record())?.data;
   const save=async()=>{
+    const before=(await record())?.date??0;
     await page.getByRole('button',{name:'保存城市 Ctrl+S',exact:true}).click();
     await expect(page.getByRole('status')).toHaveText('这一刻，已经为你保存');
+    await expect.poll(async()=> (await record())?.date??0).toBeGreaterThan(before);
     return read();
   };
   const selected=page.locator('.selection-panel');
@@ -79,8 +96,53 @@ test('T01 edits parcel and building transforms independently through the UI', as
   await expect(editor.locator('.parcel-feedback')).toHaveText('建筑超出地块边界');
   await expect(confirm).toBeDisabled();
   await field('宽度').press('Escape');await expect(editor).toBeHidden();
+
+  await selected.getByRole('button',{name:'移动整块'}).click();
+  await field('中心 X').fill('0');await field('中心 Z').fill('0');
+  await expect(editor.locator('.parcel-feedback')).toHaveText('地块侵入水域');
+  await expect(confirm).toBeDisabled();
+  await editor.getByRole('button',{name:'取消'}).click();
+  expect(await save()).toEqual(moved);
+
+  await selected.getByRole('button',{name:'复制'}).click();
+  await expect(field('地块角度 °')).toHaveValue('23.6');
+  await expect(field('相对角度 °')).toHaveValue('17.5');
+  await expect(field('局部 X（米）')).toHaveValue('0.75');
+  await field('中心 X').fill('-64.25');await field('中心 Z').fill('44.75');
+  await confirm.click();
+  const copied=await save(),copy=copied.entities.at(-1),copyLot=copied.parcels.find(p=>p.id===copy.parcelId);
+  expect(copy).toEqual({...local,id:copy.id,parcelId:copy.parcelId});
+  expect(copy.id).not.toBe(local.id);expect(copy.parcelId).not.toBe(local.parcelId);
+  expect(copyLot).toEqual({...moved.parcels.find(p=>p.id===id),id:copy.parcelId,x:-64.25,z:44.75});
+  const undo=page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}),redo=page.getByRole('button',{name:'重做 Ctrl+Y',exact:true});
+  await undo.click();
+  expect(await save()).toEqual({...moved,nextId:copied.nextId});
+  await undo.click();
+  const beforeMove=await save();
+  expect(beforeMove.parcels.find(p=>p.id===id)).toEqual(initial);
+  expect(beforeMove.entities.find(e=>e.id===local.id)).toEqual(local);
+  await redo.click();await redo.click();
+  expect(await save()).toEqual(copied);
+
   await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
-  expect(await read()).toEqual(moved);
+  expect(await read()).toEqual(copied);
+  expect(await page.evaluate(()=>window.riverlight.getStats().entities)).toBe(copied.entities.length);
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const file=await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}));
+  const exported=JSON.parse(file.toString());
+  expect(exported.city).toEqual(copied);
+  await importCity(page,{city:{...copied,name:'临时空地',entities:[],parcels:[]},camera:exported.camera});
+  await expect(page.locator('#city-name')).toHaveText('临时空地');
+  await importCity(page,file,'自由角度往返.json');
+  await expect(page.locator('#city-name')).toHaveText(copied.name);
+  expect((await record()).camera).toEqual(exported.camera);
+  expect(await read()).toEqual(copied);
+  const restored=new City(await read()),restoredCopy=restored.entities.get(copy.id);
+  const bounds=footprintBounds(restoredCopy);
+  expect(bounds.minX).toBeLessThan(-64);expect(bounds.maxX).toBeGreaterThan(-64);
+  for(const area of [{...bounds,maxX:-64},{...bounds,minX:-64}]){
+    expect(restored.queryFootprints(area).filter(e=>e.id===copy.id)).toHaveLength(1);
+  }
   expect(errors).toEqual([]);
 });
 
@@ -122,27 +184,33 @@ test('T01 parcel import preserves old files and restores an angled building on r
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T01');await ready(page);
-  const importCity=async input=>{
-    await page.locator('#import-file').setInputFiles({name:'city.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(input))});
-  };
-  const legacy=createBaseline();
-  await importCity(legacy);
-  await expect(page.locator('#city-name')).toHaveText(legacy.city.name);
-  const saved=await page.evaluate(async()=>{
-    const {createSaveStore}=await import('/src/storage.js');
-    const store=createSaveStore({name:'riverlight-scenes-T01-standard'});
-    const archived=(await store.list()).find(row=>row.kind==='original');
-    return {original:await store.load(archived.id),current:await store.load('autosave')};
-  });
-  expect(saved.original.input).toEqual(legacy);
-  expect(saved.current.data).toMatchObject({version:3,terrain:legacy.city.terrain});
-  expect(saved.current.data.parcels.length).toBeGreaterThan(0);
+  let migrated;
+  for(const legacy of [createLegacyBaseline(),createBaseline()]){
+    await importCity(page,legacy,`base-v${legacy.city.version}.json`);
+    await expect(page.locator('#city-name')).toHaveText(legacy.city.name);
+    const saved=await page.evaluate(async version=>{
+      const {createSaveStore}=await import('/src/storage.js');
+      const store=createSaveStore({name:'riverlight-scenes-T01-standard'});
+      const records=await Promise.all((await store.list()).filter(row=>row.kind==='original').map(row=>store.load(row.id)));
+      return {original:records.find(record=>record.data.version===version),current:await store.load('autosave')};
+    },legacy.city.version);
+    expect(saved.original.input).toEqual(legacy);
+    expect(saved.original.camera).toEqual(legacy.camera);
+    const old=new City(legacy.city),current=new City(saved.current.data);
+    expect(saved.current.data.version).toBe(3);
+    expect(current.terrain).toBe(old.terrain);
+    for(const [id,entity] of old.entities){
+      expect(current.entities.get(id)).toEqual(entity);
+      expect(placementOf(current.entities.get(id))).toEqual(placementOf(entity));
+    }
+    migrated=saved.current.data;
+  }
 
   const a=18*Math.PI/180,x=-84.25+.75*Math.cos(a)-1.25*Math.sin(a),z=-30.5-.75*Math.sin(a)-1.25*Math.cos(a);
-  const city={...saved.current.data,name:'斜角庭院',nextId:2,
+  const city={...migrated,name:'斜角庭院',nextId:2,
     parcels:[{id:'angled-lot',x:-84.25,z:-30.5,width:16,depth:18,angle:18}],
     entities:[{id:1,type:'cottage',color:2,parcelId:'angled-lot',offsetX:.75,offsetZ:-1.25,angle:17}]};
-  await importCity({city,camera:{position:[x+14,19,z+23],target:[x,0,z]}});
+  await importCity(page,{city,camera:{position:[x+14,19,z+23],target:[x,0,z]}});
   await expect(page.locator('#city-name')).toHaveText(city.name);
   await page.goto('/?scene=T01&resume=1');await ready(page);
   await expect(page.locator('#city-name')).toHaveText(city.name);
@@ -151,13 +219,11 @@ test('T01 parcel import preserves old files and restores an angled building on r
   await expect(page.locator('#selected-name')).toHaveText('河畔小屋');
   await page.screenshot({path:testInfo.outputPath('angled-lot.png')});
 
-  await importCity({city:{...city,entities:[{...city.entities[0],offsetX:100}]}});
+  await importCity(page,{city:{...city,entities:[{...city.entities[0],offsetX:100}]}});
   await expect(page.getByRole('status')).toContainText('无法导入');
   await page.getByRole('button',{name:'我的城市',exact:true}).click();
-  const exported=page.waitForEvent('download');
-  await page.getByRole('button',{name:'导出城市',exact:true}).click();
-  const download=await exported;
-  expect(JSON.parse(Buffer.concat(await (await download.createReadStream()).toArray()).toString()).city).toEqual(city);
+  const exported=await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}));
+  expect(JSON.parse(exported.toString()).city).toEqual(city);
   expect(errors).toEqual([]);
 });
 
@@ -205,20 +271,21 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',82],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
-test(`${id} renders its fixed scene`, async ({page})=>{
+for(const [id,count] of [['T01',83],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
+test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
     await page.goto(`/?scene=${id}`);await ready(page);
     expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(count);
     await expect(page.locator('.scene-panel')).toBeVisible();
     if(id==='T01'){
+      await page.getByRole('button',{name:'尺度',exact:true}).click();
       await page.getByText('观察与记录',{exact:true}).click();
-      const result=page.waitForEvent('download');
-      await page.getByRole('button',{name:'导出资源快照',exact:true}).click();
-      const download=await result;
-      const evidence=JSON.parse(Buffer.concat(await (await download.createReadStream()).toArray()).toString());
-      expect(evidence.scene).toMatchObject({id:'T01',version:3});
+      const snapshot=await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}));
+      await testInfo.attach('T01 尺度快照',{body:snapshot,contentType:'application/json'});
+      const evidence=JSON.parse(snapshot.toString());
+      expect(evidence.scene).toMatchObject({id:'T01',version:4});
+      for(const [i,value] of [-70,0,-12].entries())expect(evidence.camera.target[i]).toBeCloseTo(value,8);
       const [west,east,slantedWest,slantedEast]=evidence.spatial.samples;
       expect(west.objects).toHaveLength(1);
       expect(west.objects[0]).toMatchObject({type:'library',bounds:{minX:-70,maxX:-58,minZ:-16,maxZ:-6}});
@@ -228,7 +295,16 @@ test(`${id} renders its fixed scene`, async ({page})=>{
       expect(angledLibrary).toBeDefined();
       expect(slantedEast.objects).toContainEqual(angledLibrary);
       expect(evidence.spatial).toMatchObject({land:{groundY:0,waterY:null},river:{groundY:null,waterY:-.4}});
-      await page.screenshot({path:'test-results/t01-world-space.png'});
+      const scale=evidence.spatial.scale;
+      expect(scale.map(({type,width,depth,gapX})=>[type,width,depth,gapX])).toEqual([
+        ['cottage',6,8,null],['cafe',8,6,8],['library',12,10,16],['office',10,12,0],['mall',20,16,0],
+      ]);
+      expect(scale.every(sample=>sample.authored&&sample.height>0)).toBe(true);
+      expect(scale[3].height).toBeGreaterThan(2*scale[0].height);
+      await page.getByRole('button',{name:'静静欣赏'}).click();
+      await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+      await page.screenshot({path:testInfo.outputPath('t01-street-scale.png')});
+      await page.keyboard.press('Escape');
 
       const resultOfShrink=await page.evaluate(async()=>{
         const [{createScene},{City}]=await Promise.all([import('/src/baseline.js'),import('/src/core.js')]);

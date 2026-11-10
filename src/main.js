@@ -83,6 +83,16 @@ class App {
       samples:probe.map(bounds=>({bounds,objects:this.city.queryFootprints(bounds).map(e=>({id:e.id,type:e.type,bounds:footprintBounds(e)}))})),
       land:this.city.surfaceAt(-64,-12),river:this.city.surfaceAt(0,0),
     }:undefined;
+    if(spatial&&this.baseline.scaleIds){
+      const samples=this.baseline.scaleIds.map(id=>this.city.entities.get(id))
+        .filter((e,i)=>e?.type===this.baseline.scaleTypes[i])
+        .map(e=>({e,bounds:footprintBounds(e)})).sort((a,b)=>a.bounds.minX-b.bounds.minX);
+      spatial.scale=samples.map(({e,bounds},i)=>{
+        const model=getTemplate(e.type,e.color),height=new T.Box3().setFromObject(model).getSize(new T.Vector3()).y;
+        return {id:e.id,type:e.type,width:bounds.maxX-bounds.minX,depth:bounds.maxZ-bounds.minZ,height,
+          gapX:i?bounds.minX-samples[i-1].bounds.maxX:null,authored:model.userData.source==='Blender MCP'};
+      });
+    }
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
       capturedAt:new Date().toISOString(),scene:this.baseline?{id:this.baseline.id,version:this.baseline.sceneVersion,seed:this.baseline.seed,density:this.baseline.density}:null,
       browser:navigator.userAgent,viewport:[innerWidth,innerHeight],pixelRatio:this.renderer.getPixelRatio(),camera:this.cameraState(),
