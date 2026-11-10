@@ -104,7 +104,7 @@ test('distant buildings reduce vertices while retaining the selected facade colo
  }
 });
 test('R1 samples retain matching entrance and shelter anchors across LODs',()=>{
- for(const [type,expected] of [['cottage',[-.525,0,3.85]],['bakery',[0,0,3.9]],['library',[-.55,.24,14/3]]]){
+ for(const [type,expected] of [['cottage',[-.525,0,3.85]],['bakery',[0,0,3.9]],['library',[-.55,.24,14/3]],['office',[-.08*5/6,.22,5.61]]]){
   const close=getTemplate(type),far=getDistantTemplate(type);
   const {entrance,shelter}=close.userData.anchors;
   assert.deepEqual(far.userData.anchors,close.userData.anchors,type);
@@ -113,7 +113,7 @@ test('R1 samples retain matching entrance and shelter anchors across LODs',()=>{
  }
 });
 test('R1 sample templates stay within the measured static asset budgets',async t=>{
- for(const type of ['cottage','bakery','library']){
+ for(const type of ['cottage','bakery','library','office']){
   for(const lod of [false,true]){
    const model=(lod?getDistantTemplate:getTemplate)(type);
    const file=new URL(`../public/models/${type}${lod?'_lod':''}.glb`,import.meta.url);

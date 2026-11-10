@@ -53,7 +53,7 @@ test('scene exploration preserves the original city and supports weather, views,
   await page.getByRole('button',{name:'导出资源快照',exact:true}).click();
   const download=await evidenceDownload;
   const evidence=JSON.parse(await (await download.createReadStream()).toArray().then(chunks=>Buffer.concat(chunks).toString()));
-  expect(evidence.scene).toMatchObject({id:'T06',version:1});
+  expect(evidence.scene).toMatchObject({id:'T06',version:2});
   expect(evidence.drawCalls).toBeGreaterThan(0);
   expect(evidence.rendererMemory.geometries).toBeGreaterThan(0);
   expect(evidence.frameTime).toBeNull();
