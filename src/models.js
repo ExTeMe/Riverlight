@@ -148,7 +148,7 @@ export function registerArchitectureAsset(type,scene,clips=[],lod=false){
   const item=BY_ID[type],original=LEGACY_LOTS[type];scene.scale.x*=item.w/original[0];scene.scale.z*=item.d/original[1];scene.updateMatrixWorld(true);
   scene.traverse(o=>{
     if(o.userData.riverlight_dynamic||o.name==='Mall_RevolvingDoor')dynamic.push(o);
-    const name=o.name.match(/(?:^|_)(Entrance|Shelter)$/)?.[1];
+    const name=o.name.match(/(?:^|_)(Entrance|Shelter|Light)$/)?.[1];
     if(name&&!o.isMesh)anchors[name.toLowerCase()]=new T.Vector3().setFromMatrixPosition(o.matrixWorld).toArray();
   });
   scene.traverse(o=>{if(!o.isMesh)return;const original=o.material;if(!mapped.has(original)){

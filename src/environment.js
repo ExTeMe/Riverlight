@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
-import { updateMaterials } from './models.js';
+import { getTemplate, updateMaterials } from './models.js';
 import { CELL, BY_ID, dimensions, entityDimensions } from './catalog.js';
 import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
@@ -57,8 +57,26 @@ export class Environment {
     this.leafSources=[...this.city.entities.values()].filter(e=>['tree','cherry','park','grove','cottage','sage-house'].includes(e.type));this.puddles.refresh(this.city);
     const sources=[...this.city.entities.values()].filter(e=>e.type==='lamp'||(e.type==='road'&&(e.x+e.z)%6===0));const m=new T.Matrix4();let count=0;
     for(const e of sources.slice(0,600)){m.compose(new T.Vector3(e.x*CELL,-e.z*CELL,.13),new T.Quaternion(),new T.Vector3(5,5,1));this.glows.setMatrixAt(count++,m);}this.glows.count=count;this.glows.instanceMatrix.needsUpdate=true;
-    this.lightSources=[...this.city.entities.values()].filter(e=>['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)).map(e=>{const [w,d]=entityDimensions(e);return new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL);});
-    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])this.lightSources.push(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
+    this.lightSources=[];
+    const addLight=(position,intensity=34,distance=24)=>this.lightSources.push({position,intensity,distance});
+    const up=new T.Vector3(0,1,0);
+    for(const e of this.city.entities.values()){
+      if(e.type==='park'){
+        const anchor=getTemplate(e.type).userData.anchors?.light;
+        if(!anchor)continue;
+        const [w,d]=entityDimensions(e),item=BY_ID[e.type];
+        const local=new T.Vector3(...anchor);
+        if(e.lot){local.x*=e.lot[0]/item.w;local.z*=e.lot[1]/item.d;}
+        local.applyAxisAngle(up,e.rotation*Math.PI/2);
+        local.x+=(e.x+(w-1)/2)*CELL;
+        local.z+=(e.z+(d-1)/2)*CELL;
+        addLight(local,18,8);
+      }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
+        const [w,d]=entityDimensions(e);
+        addLight(new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL));
+      }
+    }
+    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])addLight(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
   }
   update(dt,camera,focus){
     this.time+=dt;const e=this.city.environment;this.water.position.x=focus.x;this.water.position.z=focus.z;
@@ -83,7 +101,12 @@ export class Environment {
     this.water.material.uniforms.distortionScale.value=.24+e.wind*.7;
     updateMaterials(e.season,this.night,this.wet,this.snow,this.time,e.wind,dt);
     this.puddles.update(this.wet,this.time,e.quality,focus);this.glows.visible=this.night>.02;this.glows.material.opacity=this.night*.3;
-    const nearby=this.lightSources.slice().sort((a,b)=>a.distanceToSquared(focus)-b.distanceToSquared(focus));this.localLights.forEach((light,i)=>{if(nearby[i])light.position.copy(nearby[i]);light.intensity=nearby[i]?this.night*34:0;});
+    const nearby=this.lightSources.slice().sort((a,b)=>a.position.distanceToSquared(focus)-b.position.distanceToSquared(focus));
+    this.localLights.forEach((light,i)=>{
+      const source=nearby[i];
+      if(source){light.position.copy(source.position);light.distance=source.distance;}
+      light.intensity=source?this.night*source.intensity:0;
+    });
     for(const [kind,{mesh,positions}]of Object.entries(this.particles)){
       mesh.userData.amount=T.MathUtils.damp(mesh.userData.amount||0,e.weather===kind?1:0,1.3,dt);mesh.material.opacity=.7*mesh.userData.amount;mesh.visible=mesh.userData.amount>.01;if(!mesh.visible)continue;mesh.position.set(focus.x,0,focus.z);
       for(let i=0;i<positions.length;i+=3){positions[i+1]-=dt*(kind==='rain'?43:3.4);positions[i]+=dt*e.wind*(kind==='rain'?5:2)+Math.sin(this.time+i)*dt*.3;if(positions[i+1]<0){positions[i+1]=100;positions[i]=(Math.random()-.5)*210;positions[i+2]=(Math.random()-.5)*210;}if(positions[i]>105)positions[i]=-105;}mesh.geometry.attributes.position.needsUpdate=true;
