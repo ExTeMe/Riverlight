@@ -41,6 +41,13 @@ test('T06 captures the same three views by day, at dusk and in rain', async ({ p
       const result = page.waitForEvent('download');
       await page.getByRole('button', { name: '拍张照片', exact: true }).click();
       await (await result).saveAs(testInfo.outputPath(`${preset}-${view}.png`));
+      if (preset === 'day' && view === 'medium') {
+        await page.getByText('观察与记录', { exact: true }).click();
+        const snapshot = page.waitForEvent('download');
+        await page.getByRole('button', { name: '导出资源快照', exact: true }).click();
+        await (await snapshot).saveAs(testInfo.outputPath('day-medium-resources.json'));
+        await page.getByText('观察与记录', { exact: true }).click();
+      }
     }
   }
   expect(errors).toEqual([]);

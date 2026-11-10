@@ -64,7 +64,7 @@ Vite 输出完整源码 SHA 的 `riverlight-revision` 元数据；开发模式�
 | `src/catalog.js` | 稳定目录 ID、原尺寸与新占地、细格尺度 |
 | `src/core.js` | 城市数据、占地/分区索引、历史、路网、新旧水系、版本迁移、示范城 |
 | `src/asset-loader.js` | 并发载入 Blender 近远 GLB |
-| `src/models.js` | 共享材质、GLB 静态合批/动态子树、材质季节变化、模板 |
+| `src/models.js` | 保留 GLB 材质与入口/遮蔽锚点、静态合批、动态子树、材质季节变化、模板，参见[资产契约](ASSETS.md#art-02-模型契约) |
 | `src/architecture.js` | 资产加载失败时的备用造型 |
 | `src/roads.js` | 道路、圆弧转角、人行道边缘、斑马线、桥梁几何 |
 | `src/world.js` | 分区、地形、模型实例、选择/预览、车辆/船与行人模块协调 |

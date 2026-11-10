@@ -15,11 +15,12 @@ export function material(color, role='solid', facade=false) {
     m.emissive=new T.Color(role==='windowSoft'?'#d0e0e5':role==='festival'?color:'#ffd5a1');m.emissiveIntensity=0;
     if(role.startsWith('window')){const s=32,data=new Uint8Array(s*s*4);for(let y=0;y<s;y++)for(let x=0;x<s;x++){const i=(y*s+x)*4,edge=x<3||x>28||y<2||y>28,curtain=x<8||x>25,shade=y>23&&x>10&&x<21;const v=edge?0:shade?24:curtain?60:Math.round(105+(1-y/s)*100);data[i]=data[i+1]=data[i+2]=v;data[i+3]=255;}const tex=new T.DataTexture(data,s,s);tex.needsUpdate=true;m.emissiveMap=tex;m.roughness=.4;}
   }
-  if(role==='leaf') {
-    m.onBeforeCompile=s=>{s.uniforms.uTime=uniforms.time;s.uniforms.uWind=uniforms.wind;s.vertexShader='uniform float uTime; uniform float uWind;\n'+s.vertexShader;s.vertexShader=s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.x += sin(uTime * 1.3 + position.y * 0.8 + position.z) * uWind * 0.08 * max(position.y,0.0);');};
-    m.customProgramCacheKey=()=> 'riverlight-leaves';
-  }
+  if(role==='leaf') enableLeafSway(m);
   materials.set(k,m);return m;
+}
+function enableLeafSway(m){
+  m.onBeforeCompile=s=>{s.uniforms.uTime=uniforms.time;s.uniforms.uWind=uniforms.wind;s.vertexShader='uniform float uTime; uniform float uWind;\n'+s.vertexShader;s.vertexShader=s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\ntransformed.x += sin(uTime * 1.3 + position.y * 0.8 + position.z) * uWind * 0.08 * max(position.y,0.0);');};
+  m.customProgramCacheKey=()=> 'riverlight-leaves';
 }
 class Builder {
   constructor(){this.parts=new Map();}
@@ -142,20 +143,38 @@ function applyAssetColor(model,type,color){
   if(!color)return;model.traverse(o=>{if(o.isMesh&&o.material.userData.facade){const key=`tint:${type}:${color}:${o.material.uuid}`;let tint=materials.get(key);if(!tint){tint=o.material.clone();tint.color.offsetHSL([0,-.025,.018,.045][color],-.015,[0,-.07,.055,-.02][color]);tint.userData={...o.material.userData,base:tint.color.clone()};materials.set(key,tint);}o.material=tint;}});
 }
 export function registerArchitectureAsset(type,scene,clips=[],lod=false){
-  const builder=new Builder(),dynamic=[],mapped=new Map();
+  const builders=new Map(),dynamic=[],mapped=new Map(),anchors={};
   // Authored mesh dimensions are retained in the reference catalog; adapt to compact plots.
   const item=BY_ID[type],original=LEGACY_LOTS[type];scene.scale.x*=item.w/original[0];scene.scale.z*=item.d/original[1];scene.updateMatrixWorld(true);
-  scene.traverse(o=>{if(o.userData.riverlight_dynamic||o.name==='Mall_RevolvingDoor')dynamic.push(o);});
+  scene.traverse(o=>{
+    if(o.userData.riverlight_dynamic||o.name==='Mall_RevolvingDoor')dynamic.push(o);
+    const name=o.name.match(/(?:^|_)(Entrance|Shelter)$/)?.[1];
+    if(name&&!o.isMesh)anchors[name.toLowerCase()]=new T.Vector3().setFromMatrixPosition(o.matrixWorld).toArray();
+  });
   scene.traverse(o=>{if(!o.isMesh)return;const original=o.material;if(!mapped.has(original)){
     const name=original.name,role=name.includes('WindowWarm')?'windowWarm':name.includes('WindowSoft')?'windowSoft':name.includes('Glass')?'glass':name.includes('Roof')?'roof':name.includes('Ground')?'ground':name.includes('Leaf')?'leaf':name.includes('Sign')?'sign':name.includes('Festival')?'festival':name.includes('Light')?'light':'solid';
-    const m=material('#'+original.color.getHexString(),role,name.includes('Wall')||(type==='glass-tower'&&role==='glass'));mapped.set(original,m);
+    const m=original.clone();
+    m.userData={...m.userData,base:m.color.clone(),role,facade:name.includes('Wall')||(type==='glass-tower'&&role==='glass')};
+    if(role==='leaf')enableLeafSway(m);
+    if(['windowWarm','windowSoft','sign','festival','light'].includes(role))m.emissiveIntensity=0;
+    materials.set(m.uuid,m);
+    mapped.set(original,m);
   }o.material=mapped.get(original);});
   scene.traverse(o=>{if(!o.isMesh)return;let ancestor=o;while(ancestor){if(dynamic.includes(ancestor))return;ancestor=ancestor.parent;}
-    const g=o.geometry.clone();for(const name of Object.keys(g.attributes))if(!['position','normal','uv'].includes(name))g.deleteAttribute(name);g.applyMatrix4(o.matrixWorld);builder.geo(g,o.material);
+    const g=o.geometry.clone();
+    // Keep secondary UVs, vertex colors and tangents. Merge only compatible layouts.
+    const attributes=Object.entries(g.attributes).map(([name,a])=>`${name}:${a.itemSize}:${a.normalized}:${a.array.constructor.name}`);
+    if(!g.hasAttribute('uv'))attributes.push('uv:2:false:Float32Array');
+    const layout=attributes.sort().join('|');
+    if(!builders.has(layout))builders.set(layout,new Builder());
+    g.applyMatrix4(o.matrixWorld);
+    builders.get(layout).geo(g,o.material);
   });
-  const model=builder.finish();for(const root of dynamic){const clone=root.clone(true);root.matrixWorld.decompose(clone.position,clone.quaternion,clone.scale);const names=new Set();clone.traverse(o=>names.add(o.name));const filtered=clips.map(clip=>new T.AnimationClip(clip.name,clip.duration,clip.tracks.filter(track=>names.has(track.name.split('.')[0])))).filter(clip=>clip.tracks.length);const animationKey=`${type}:${root.name}`;
+  const model=new T.Group();
+  for(const builder of builders.values())for(const mesh of [...builder.finish().children])model.add(mesh);
+  for(const root of dynamic){const clone=root.clone(true);root.matrixWorld.decompose(clone.position,clone.quaternion,clone.scale);const names=new Set();clone.traverse(o=>names.add(o.name));const filtered=clips.map(clip=>new T.AnimationClip(clip.name,clip.duration,clip.tracks.filter(track=>names.has(track.name.split('.')[0])))).filter(clip=>clip.tracks.length);const animationKey=`${type}:${root.name}`;
     clone.userData={...clone.userData,dynamic:true,animation:clips.length?'gltf':root.name==='Mall_RevolvingDoor'?'mall-door':'static',animationKey};if(!lod)assetClips.set(animationKey,filtered);model.add(clone);
-  }model.userData.source='Blender MCP';model.userData.architecture=type;(lod?importedLods:importedAssets).set(type,model);
+  }model.userData={source:'Blender MCP',architecture:type,anchors};(lod?importedLods:importedAssets).set(type,model);
   for(const key of [...templates.keys()])if(key.startsWith(type+':')||key.startsWith('lod:'+type+':'))templates.delete(key);
 }
 
