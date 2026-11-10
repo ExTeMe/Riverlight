@@ -1,4 +1,4 @@
-import { CATALOG, CATEGORIES, BY_ID, entityDimensions } from './catalog.js';
+import { CATALOG, CATEGORIES, BY_ID, CELL, entityDimensions } from './catalog.js';
 import { PRESETS } from './environment.js';
 import { icon } from './icons.js';
 import { SCENES, SCENE_WEATHER } from './baseline.js';
@@ -73,7 +73,13 @@ export class UI {
     this.root.querySelector('#wind').value=env.wind;this.root.querySelector('#quality').value=env.quality;this.root.querySelector('#time-speed').value=env.speed;
     this.clock();this.refreshActive();
     const selected=city.entities.get(this.app.selected),panel=this.root.querySelector('.selection-panel');panel.hidden=!selected;
-    if(selected){const item=BY_ID[selected.type],[w,d]=entityDimensions(selected);this.root.querySelector('#selected-name').textContent=item.name;this.root.querySelector('#selected-meta').textContent=`${w*2} × ${d*2} 小格 · ${w*4} × ${d*4} 米`;this.root.querySelector('[data-action=color]').disabled=!item.floors;}
+    if(selected){
+      const item=BY_ID[selected.type],[w,d]=entityDimensions(selected);
+      this.root.querySelector('#selected-name').textContent=item.name;
+      this.root.querySelector('#selected-meta').textContent=selected.pose?`${w*CELL} × ${d*CELL} 米 · 自定义地块`:`${w*2} × ${d*2} 小格 · ${w*CELL} × ${d*CELL} 米`;
+      for(const action of ['move','rotate','copy'])this.root.querySelector(`[data-action=${action}]`).disabled=!!selected.pose;
+      this.root.querySelector('[data-action=color]').disabled=!item.floors;
+    }
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}
   hint(text){const el=this.root.querySelector('#mode-hint');el.textContent=text;el.hidden=!text;}

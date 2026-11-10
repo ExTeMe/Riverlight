@@ -2,7 +2,8 @@ import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { getTemplate, updateMaterials } from './models.js';
 import { CELL, entityDimensions } from './catalog.js';
-import { WATER_Y, legacyPlacement } from './space.js';
+import { WATER_Y } from './space.js';
+import { placementOf } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
 
@@ -55,7 +56,8 @@ export class Environment {
     this.visualHour=city.environment.hour;this.refreshSources();
   }
   refreshSources(){
-    this.leafSources=[...this.city.entities.values()].filter(e=>['tree','cherry','park','grove','cottage','sage-house'].includes(e.type));this.puddles.refresh(this.city);
+    this.leafSources=[...this.city.entities.values()].filter(e=>['tree','cherry','park','grove','cottage','sage-house'].includes(e.type))
+      .map(e=>e.pose?placementOf(e):{x:e.x*CELL,z:e.z*CELL});this.puddles.refresh(this.city);
     const sources=[...this.city.entities.values()].filter(e=>e.type==='lamp'||(e.type==='road'&&(e.x+e.z)%6===0));const m=new T.Matrix4();let count=0;
     for(const e of sources.slice(0,600)){m.compose(new T.Vector3(e.x*CELL,-e.z*CELL,.13),new T.Quaternion(),new T.Vector3(5,5,1));this.glows.setMatrixAt(count++,m);}this.glows.count=count;this.glows.instanceMatrix.needsUpdate=true;
     this.lightSources=[];
@@ -65,14 +67,17 @@ export class Environment {
       if(e.type==='park'){
         const anchor=getTemplate(e.type).userData.anchors?.light;
         if(!anchor)continue;
-        const p=legacyPlacement(e),local=new T.Vector3(...anchor);
+        const p=placementOf(e),local=new T.Vector3(...anchor);
         local.x*=p.scaleX;local.z*=p.scaleZ;
         local.applyAxisAngle(up,p.radians);
         local.x+=p.x;local.z+=p.z;
         addLight(local,18,8);
       }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
         const [w,d]=entityDimensions(e);
-        addLight(new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL));
+        if(e.pose){
+          const p=placementOf(e),front=(d-1)*CELL/2;
+          addLight(new T.Vector3(p.x+Math.sin(p.radians)*front,3.2,p.z+Math.cos(p.radians)*front));
+        }else addLight(new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL));
       }
     }
     for(let z=-96;z<=96;z+=24)for(const side of [-1,1])addLight(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
@@ -112,7 +117,7 @@ export class Environment {
     }
     const matrix=new T.Matrix4(),q=new T.Quaternion(),pos=new T.Vector3(),scale=new T.Vector3();
     this.leaves.visible=e.season==='autumn'&&this.leafSources.length>0;
-    if(this.leaves.visible)for(let i=0;i<100;i++){const src=this.leafSources[i%this.leafSources.length],phase=(this.time*.22+i*.613)%1;pos.set(src.x*CELL+Math.sin(i+this.time*.7)*1.7+phase*e.wind*3,4.4*(1-phase)+.05,src.z*CELL+Math.cos(i+this.time*.6));q.setFromEuler(new T.Euler(this.time+i,phase*5,i));matrix.compose(pos,q,scale.setScalar(1));this.leaves.setMatrixAt(i,matrix);}this.leaves.instanceMatrix.needsUpdate=true;
+    if(this.leaves.visible)for(let i=0;i<100;i++){const src=this.leafSources[i%this.leafSources.length],phase=(this.time*.22+i*.613)%1;pos.set(src.x+Math.sin(i+this.time*.7)*1.7+phase*e.wind*3,4.4*(1-phase)+.05,src.z+Math.cos(i+this.time*.6));q.setFromEuler(new T.Euler(this.time+i,phase*5,i));matrix.compose(pos,q,scale.setScalar(1));this.leaves.setMatrixAt(i,matrix);}this.leaves.instanceMatrix.needsUpdate=true;
     this.ripples.visible=storm;
     if(storm)for(let i=0;i<85;i++){const phase=(this.time*.9+i*.347)%1;const z=focus.z+Math.sin(i*71.1)*70,x=Math.sin(i*23.7)*(riverWidth(z,this.city.terrain)-2)+riverCenter(z,this.city.terrain);pos.set(x,-.39,z);q.setFromEuler(new T.Euler(-Math.PI/2,0,0));matrix.compose(pos,q,scale.setScalar(phase*.5));this.ripples.setMatrixAt(i,matrix);}this.ripples.instanceMatrix.needsUpdate=true;
     const envKey=`${Math.floor(h/2)}-${e.weather}`;

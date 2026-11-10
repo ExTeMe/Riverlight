@@ -67,21 +67,25 @@ export const storageChecks = [
   {
     name: '旧档首次保存前原件不变，保存后仍有完整原始副本',
     async run(factory) {
-      const original = rawRecord(createLegacyBaseline().city);
-      await isolated(factory, [original], async store => {
-        const session = new SaveSession(store), opened = await session.open();
-        check(opened.city.terrain === 'legacy', '旧水系发生变化');
-        equal(await store.load('autosave'), original, '加载迁移覆盖了原件');
-        await session.persist(opened.city, opened.camera);
-        const archived = (await store.list()).find(item => item.kind === 'original');
-        check(archived, '未保存旧档原件');
-        const raw = await store.load(archived.id);
-        equal(raw.data, original.data, '原始城市被改写');
-        equal(raw.camera, original.camera, '原始镜头被改写');
-        await session.persist(opened.city, opened.camera);
-        check((await store.list()).filter(item => item.kind === 'original').length === 1, '重复归档原件');
-        equal(new City((await store.load('autosave')).data).snapshot(), opened.city.snapshot(), '迁移往返不一致');
-      });
+      for (const fixture of [createLegacyBaseline(), createBaseline()]) {
+        const original = rawRecord(fixture.city);
+        await isolated(factory, [original], async store => {
+          const session = new SaveSession(store), opened = await session.open();
+          check(opened.city.terrain === (fixture.city.terrain ?? 'legacy'), '旧水系发生变化');
+          equal(await store.load('autosave'), original, '加载迁移覆盖了原件');
+          await session.persist(opened.city, opened.camera);
+          const archived = (await store.list()).find(item => item.kind === 'original');
+          check(archived, '未保存旧档原件');
+          const raw = await store.load(archived.id);
+          equal(raw.data, original.data, '原始城市被改写');
+          equal(raw.camera, original.camera, '原始镜头被改写');
+          await session.persist(opened.city, opened.camera);
+          check((await store.list()).filter(item => item.kind === 'original').length === 1, '重复归档原件');
+          const migrated = (await store.load('autosave')).data;
+          check(migrated.version === 3, '首次保存未迁移为地块格式');
+          equal(new City(migrated).snapshot(), opened.city.snapshot(), '迁移往返不一致');
+        });
+      }
     },
   },
   {
@@ -120,7 +124,7 @@ export const storageChecks = [
   {
     name: '切换事务中止时备份与新城市都回滚，随后可重试',
     async run(factory, ObjectStore) {
-      const previous = current(), original = rawRecord(previous.snapshot());
+      const original = rawRecord(createBaseline().city), previous = new City(original.data);
       await isolated(factory, [original], async store => {
         const session = new SaveSession(store); const opened = await session.open();
         check(!session.protected, `有效城市未打开：${opened.error?.message}`);
@@ -147,7 +151,10 @@ export const storageChecks = [
         equal((await store.load('autosave')).data, next.snapshot(), '重试失败');
         const backup = (await store.list()).find(item => item.kind === 'backup');
         equal((await store.load(backup.id)).data, previous.snapshot(), '切换前城市未备份');
-        check((await store.list()).some(item => item.kind === 'original'), '重试导入未保留原件');
+        const originals = await Promise.all((await store.list()).filter(item => item.kind === 'original').map(item => store.load(item.id)));
+        check(originals.length === 2, '重试未保留两个旧档原件');
+        equal(originals.find(item => item.data.version === 2).data, original.data, '迁移原件不完整');
+        equal(originals.find(item => item.data.version === 1).input, parsed.original.input, '导入原件不完整');
       });
     },
   },
@@ -223,7 +230,7 @@ export const storageChecks = [
         equal(resumed.city.snapshot(), saved.snapshot(), '续用没有恢复城市或环境');
         equal(resumed.camera, camera, '续用没有恢复镜头');
         const fresh = await new SaveSession(store).open(createBaseline());
-        equal(fresh.city.snapshot(), createBaseline().city, '固定基线误读了上次修改');
+        equal(fresh.city.snapshot(2), createBaseline().city, '固定基线误读了上次修改');
         equal((await store.load('autosave')).data, saved.snapshot(), '基线初始化改写隔离存档');
       });
     },
@@ -240,7 +247,7 @@ export const storageChecks = [
         equal(await store.load('autosave'), normal, '基线初始化读取后覆盖正常原件');
         first.city.move(first.city.entities.values().next().value.id, -28, 3, 0);
         const reset = await session.open(createBaseline());
-        equal(reset.city.snapshot(), initial.city, '基线重置受上次编辑影响');
+        equal(reset.city.snapshot(2), initial.city, '基线重置受上次编辑影响');
       });
     },
   },

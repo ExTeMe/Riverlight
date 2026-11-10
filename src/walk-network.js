@@ -1,5 +1,5 @@
 import { CELL, BY_ID } from './catalog.js';
-import { legacyPlacement } from './space.js';
+import { placementOf } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
 
 const roadTypes=new Set(['road','bridge']);
@@ -69,7 +69,7 @@ export function buildWalkNetwork(city){
   }
   const walking=[...roadList,...paths,...quays];
   for(const e of city.entities.values())if(BY_ID[e.type].floors||['park','plaza','garden','amusement'].includes(e.type)){
-    const p=legacyPlacement(e),depth=(e.lot?.[1]||BY_ID[e.type].d)*CELL/2+.35;
+    const p=placementOf(e),depth=(e.lot?.[1]||BY_ID[e.type].d)*CELL/2+.35;
     const x=p.x+Math.sin(p.radians)*depth,z=p.z+Math.cos(p.radians)*depth;
     const n=node(x,.14,z,'destination');if(connect(n,walking,7,e.id))destinations.push(n);
   }

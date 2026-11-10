@@ -25,13 +25,13 @@ export function createBaseline() {
     ['tree', -29, 3, 0, 0], ['bench', -18.5, 10, 0, 0],
   ]) add(...entry);
   city.undoStack = []; city.redoStack = [];
-  return { ...structuredClone(BASELINE), city: city.snapshot() };
+  return { ...structuredClone(BASELINE), city: city.snapshot(2) };
 }
 
 export function createLegacyBaseline() {
   const city = new City();
   city.terrain = 'legacy'; city.name = '基线 · 旧城原件';
-  const data = city.snapshot();
+  const data = city.snapshot(2);
   data.version = 1; delete data.terrain;
   data.entities = [
     { id: 1, type: 'cottage', x: -30, z: -10, rotation: 1, color: 2 },

@@ -6,9 +6,10 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { CityAOPass } from './ambient-occlusion.js';
-import { City, createDemo, gridLine } from './core.js';
+import { City, createDemo, footprintBounds, gridLine } from './core.js';
 import { CELL, BY_ID, snapStep } from './catalog.js';
-import { legacyFootprintBounds, legacyPlacement, legacySnap } from './space.js';
+import { legacySnap } from './space.js';
+import { placementOf } from './parcel.js';
 import { World } from './world.js';
 import { Environment } from './environment.js';
 import { getTemplate } from './models.js';
@@ -78,7 +79,7 @@ class App {
     const probe=this.baseline?.spatialProbe;
     const spatial=probe?{
       world:this.city.worldBounds(),
-      samples:probe.map(bounds=>({bounds,objects:this.city.queryFootprints(bounds).map(e=>({id:e.id,type:e.type,bounds:legacyFootprintBounds(e)}))})),
+      samples:probe.map(bounds=>({bounds,objects:this.city.queryFootprints(bounds).map(e=>({id:e.id,type:e.type,bounds:footprintBounds(e)}))})),
       land:this.city.surfaceAt(-64,-12),river:this.city.surfaceAt(0,0),
     }:undefined;
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
@@ -165,12 +166,12 @@ class App {
       case 'erase':this.cancel();this.mode='erase';this.ui.hint('点击拆除 · Ctrl+Z 可撤销 · Esc 返回');this.ui.refreshActive();break;
       case 'undo':this.cancel();if(this.city.undo()){this.selected=null;this.changed();}break;
       case 'redo':this.cancel();if(this.city.redo()){this.selected=null;this.changed();}break;
-      case 'move':if(e){this.startBuild(e.type,e.color);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · 原建筑会保留到移动成功 · Esc 取消');}break;
-      case 'copy':if(e){this.startBuild(e.type,e.color);this.rotation=e.rotation;}break;
-      case 'rotate':if(e){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast('旋转后会与其他物件重叠',true);else this.changed();}break;
+      case 'move':if(e&&!e.pose){this.startBuild(e.type,e.color);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · 原建筑会保留到移动成功 · Esc 取消');}break;
+      case 'copy':if(e&&!e.pose){this.startBuild(e.type,e.color);this.rotation=e.rotation;}break;
+      case 'rotate':if(e&&!e.pose){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast('旋转后会与其他物件重叠',true);else this.changed();}break;
       case 'color':if(e&&BY_ID[e.type].floors){this.city.recolor(e.id);this.changed();}break;
       case 'delete':if(e){this.city.remove(e.id);this.selected=null;this.changed();}break;
-      case 'focus':if(e){const p=legacyPlacement(e);this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
+      case 'focus':if(e){const p=placementOf(e);this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
       case 'expand':if(this.city.expand()){this.changed();this.ui.toast(`城市向四周生长了 · 现在是 ${this.city.radius*2} × ${this.city.radius*2} 格`);}else this.ui.toast('已到达当前版本的世界边界');break;
       case 'zoom-in':this.zoom(.82);break;case 'zoom-out':this.zoom(1.22);break;case 'home':this.home();break;
       case 'camera':this.freeCamera=!this.freeCamera;this.controls.maxPolarAngle=this.freeCamera?Math.PI*.493:Math.PI*.43;this.controls.minDistance=this.freeCamera?8:24;document.querySelector('#camera-label').textContent=this.freeCamera?'返回建造视角':'自由观察';document.querySelector('[data-action=camera]').classList.toggle('active',this.freeCamera);this.ui.toast(this.freeCamera?'自由观察 · 右键环绕，方向键移动':'已返回建造视角');break;

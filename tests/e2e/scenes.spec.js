@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { createBaseline } from '../../src/baseline.js';
 
 // Software-rendered browsers need time for input between expensive WebGL frames.
 // Keep real assets and high-quality effects at reduced test pixel density.
@@ -25,6 +26,50 @@ async function navigate(page, button) {
   ]);
   await ready(page);
 }
+
+test('T01 parcel import preserves old files and restores an angled building on reload', async ({page}, testInfo) => {
+  test.setTimeout(180000);
+  const errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T01');await ready(page);
+  const importCity=async input=>{
+    await page.locator('#import-file').setInputFiles({name:'city.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(input))});
+  };
+  const legacy=createBaseline();
+  await importCity(legacy);
+  await expect(page.locator('#city-name')).toHaveText(legacy.city.name);
+  const saved=await page.evaluate(async()=>{
+    const {createSaveStore}=await import('/src/storage.js');
+    const store=createSaveStore({name:'riverlight-scenes-T01-standard'});
+    const archived=(await store.list()).find(row=>row.kind==='original');
+    return {original:await store.load(archived.id),current:await store.load('autosave')};
+  });
+  expect(saved.original.input).toEqual(legacy);
+  expect(saved.current.data).toMatchObject({version:3,terrain:legacy.city.terrain});
+  expect(saved.current.data.parcels.length).toBeGreaterThan(0);
+
+  const a=18*Math.PI/180,x=-84.25+.75*Math.cos(a)-1.25*Math.sin(a),z=-30.5-.75*Math.sin(a)-1.25*Math.cos(a);
+  const city={...saved.current.data,name:'斜角庭院',nextId:2,
+    parcels:[{id:'angled-lot',x:-84.25,z:-30.5,width:16,depth:18,angle:18}],
+    entities:[{id:1,type:'cottage',color:2,parcelId:'angled-lot',offsetX:.75,offsetZ:-1.25,angle:17}]};
+  await importCity({city,camera:{position:[x+14,19,z+23],target:[x,0,z]}});
+  await expect(page.locator('#city-name')).toHaveText(city.name);
+  await page.goto('/?scene=T01&resume=1');await ready(page);
+  await expect(page.locator('#city-name')).toHaveText(city.name);
+  await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().drawCalls)).toBeGreaterThan(0);
+  await page.locator('#scene').click({position:{x:480,y:320}});
+  await expect(page.locator('#selected-name')).toHaveText('河畔小屋');
+  await page.screenshot({path:testInfo.outputPath('angled-lot.png')});
+
+  await importCity({city:{...city,entities:[{...city.entities[0],offsetX:100}]}});
+  await expect(page.getByRole('status')).toContainText('无法导入');
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const exported=page.waitForEvent('download');
+  await page.getByRole('button',{name:'导出城市',exact:true}).click();
+  const download=await exported;
+  expect(JSON.parse(Buffer.concat(await (await download.createReadStream()).toArray()).toString()).city).toEqual(city);
+  expect(errors).toEqual([]);
+});
 
 test('scene exploration preserves the original city and supports weather, views, reset and resume', async ({ page }) => {
   test.setTimeout(240000);

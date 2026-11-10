@@ -1,4 +1,5 @@
 import { City, createDemo } from './core.js';
+import { CITY_VERSION } from './parcel.js';
 
 export function parseCityFile(text) {
   const input = JSON.parse(text);
@@ -6,7 +7,7 @@ export function parseCityFile(text) {
   const data = input.city || input.data || input;
   const city = new City(data);
   return { city, camera: input.camera,
-    original: data.version === 1 ? { data, camera: input.camera, input } : undefined };
+    original: data.version < CITY_VERSION ? { data, camera: input.camera, input } : undefined };
 }
 
 // Owns save ordering and recovery; rendering and UI do not choose which original record to overwrite.
