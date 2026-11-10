@@ -11,6 +11,7 @@ import { CELL, BY_ID, snapStep } from './catalog.js';
 import { legacySnap } from './space.js';
 import { placementOf, usesParcel } from './parcel.js';
 import { ParcelEditor } from './parcel-editor.js';
+import { RoadEditor } from './road-editor.js';
 import { World } from './world.js';
 import { Environment } from './environment.js';
 import { getTemplate } from './models.js';
@@ -42,7 +43,7 @@ class App {
     this.composer=new EffectComposer(this.renderer);this.composer.addPass(new RenderPass(this.scene,this.camera));this.ao=new CityAOPass(this.scene,this.camera,innerWidth,innerHeight,this.environment);this.ao.blendIntensity=.65;this.ao.updateGtaoMaterial({radius:2.5,distanceExponent:1,thickness:1,scale:1,samples:8});this.composer.addPass(this.ao);this.bloom=new UnrealBloomPass(new T.Vector2(innerWidth,innerHeight),.16,.45,1.15);this.composer.addPass(this.bloom);this.composer.addPass(new OutputPass());
     this.thumbTarget=new T.WebGLRenderTarget(160,128,{format:T.RGBAFormat});this.thumbTarget.texture.colorSpace=T.SRGBColorSpace;
     this.thumbScene=new T.Scene();this.thumbScene.add(new T.HemisphereLight('#fff6e2','#869a78',3));const thumbLight=new T.DirectionalLight('#ffffff',3);thumbLight.position.set(-6,14,12);this.thumbScene.add(thumbLight);
-    this.ui=new UI(this);this.editor=new ParcelEditor(this,this.ui.root);this.bind();this.setQuality();
+    this.ui=new UI(this);this.editor=new ParcelEditor(this,this.ui.root);this.roadEditor=new RoadEditor(this,this.ui.root.querySelector('.road-editor'));this.bind();this.setQuality();
     this.canvas.dataset.assetLibrary=`Blender ${this.assetStatus.loaded.length}/${this.assetStatus.loaded.length+this.assetStatus.failed.filter(id=>!this.assetStatus.loaded.includes(id)).length}`;
     if(this.assetStatus.failed.length)this.ui.toast('部分精细模型未加载，请刷新重试',true);
     if(opened.camera)this.restoreCamera(opened.camera);
@@ -104,11 +105,11 @@ class App {
   bind(){
     window.addEventListener('resize',()=>{this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();this.renderer.setSize(innerWidth,innerHeight);this.composer.setSize(innerWidth,innerHeight);});
     this.canvas.addEventListener('contextmenu',e=>e.preventDefault());
-    this.canvas.addEventListener('pointermove',e=>{this.updatePointer(e);if(this.drawing&&this.cursor){const cell=[this.cursor.x,this.cursor.z];this.dragCells.push(...gridLine(this.lastCell,cell));this.lastCell=cell;}if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else this.preview();});
+    this.canvas.addEventListener('pointermove',e=>{this.updatePointer(e);if(this.drawing&&this.cursor){const cell=[this.cursor.x,this.cursor.z];this.dragCells.push(...gridLine(this.lastCell,cell));this.lastCell=cell;}if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else if(this.roadEditor.active&&this.cursor)this.roadEditor.pointer(...this.roadPointer());else this.preview();});
     this.canvas.addEventListener('pointerdown',e=>{if(e.button!==0||this.ui.modalOpen||this.replacing)return;this.updatePointer(e);this.pointerDown={x:e.clientX,y:e.clientY};if(this.buildType&&['road','bridge','path','tree'].includes(this.buildType)&&!this.moving&&this.cursor){this.drawing=true;this.dragCells=[[this.cursor.x,this.cursor.z]];this.lastCell=this.dragCells[0];this.canvas.setPointerCapture(e.pointerId);}});
     this.canvas.addEventListener('pointerup',e=>{if(e.button!==0)return;if(this.replacing){this.drawing=false;this.dragCells=[];this.pointerDown=null;return;}this.updatePointer(e);if(this.drawing){this.drawing=false;const painted=this.city.paint(this.buildType,this.dragCells);if(painted)this.changed();else this.ui.toast('没有可放置的位置，请检查占地或切换桥梁',true);this.dragCells=[];this.pointerDown=null;return;}if(!this.pointerDown)return;const distance=Math.hypot(e.clientX-this.pointerDown.x,e.clientY-this.pointerDown.y);this.pointerDown=null;if(distance<7)this.click();});
     this.canvas.addEventListener('pointercancel',()=>{this.drawing=false;this.dragCells=[];this.pointerDown=null;});
-    this.canvas.addEventListener('pointerleave',()=>{if(!this.drawing){if(!this.editor.active)this.world.clearPreview();this.cursor=null;}});
+    this.canvas.addEventListener('pointerleave',()=>{if(!this.drawing){if(this.roadEditor.active)this.roadEditor.render();else if(!this.editor.active)this.world.clearPreview();this.cursor=null;}});
     this.canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';this.updatePointer(e);if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else this.preview();});
     this.canvas.addEventListener('drop',e=>{e.preventDefault();if(this.replacing)return;const type=e.dataTransfer.getData('text/plain');if(!BY_ID[type])return;if(this.buildType!==type&&this.editor.type!==type)this.startBuild(type);this.updatePointer(e);this.click();});
     window.addEventListener('keydown',e=>this.keydown(e));window.addEventListener('keyup',e=>this.keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{this.keys.clear();this.drawing=false;});
@@ -117,8 +118,13 @@ class App {
     this.autosaveInterval=setInterval(()=>{if(!document.hidden)this.persist();},45000);
   }
   updatePointer(event){const r=this.canvas.getBoundingClientRect();this.pointer.set((event.clientX-r.left)/r.width*2-1,-(event.clientY-r.top)/r.height*2+1);this.raycaster.setFromCamera(this.pointer,this.camera);if(this.raycaster.ray.intersectPlane(this.plane,this.point)){const step=snapStep(this.buildType);this.cursor={x:legacySnap(this.point.x,step),z:legacySnap(this.point.z,step)};}else this.cursor=null;}
+  roadPointer(){
+    const hit=this.raycaster.intersectObjects(this.world.pickables.filter(o=>o.userData.alignment),true)[0];
+    const p=hit?.point??this.point;
+    return [p.x,p.z];
+  }
   candidate(){return this.cursor&&this.buildType?{id:-1,type:this.buildType,x:this.cursor.x,z:this.cursor.z,rotation:this.rotation,color:this.buildColor,...(this.moving&&this.city.entities.get(this.moving)?.lot?{lot:this.city.entities.get(this.moving).lot}:{})}:null;}
-  preview(){if(this.editor.active){this.editor.render();return;}const e=this.candidate();if(e)this.world.showPreview(e,!this.city.canPlace(e,this.moving));}
+  preview(){if(this.editor.active){this.editor.render();return;}if(this.roadEditor.active){this.roadEditor.render();return;}const e=this.candidate();if(e)this.world.showPreview(e,!this.city.canPlace(e,this.moving));}
   startBuild(type,color=0,legacy=false){
     if(!legacy&&usesParcel(type)){
       const parcel=!this.selected&&this.city.parcels.get(this.selectedParcel);
@@ -133,14 +139,23 @@ class App {
     this.selected=result.entity?.id??null;this.selectedParcel=result.parcel.id;this.cancel();
     if(result.changed){this.changed();this.sound.click();}
   }
+  startRoadEdit(entity){
+    this.cancel();this.mode='alignment';this.world.select(null);this.roadEditor.open(entity);this.ui.refreshActive();this.ui.refreshSelection();
+  }
+  finishRoadEdit(result){
+    this.selected=result.entity.id;this.selectedParcel=null;this.cancel();
+    if(result.changed){this.changed();this.sound.click();}
+  }
   cancel(){
     this.world.clearPreview();this.buildType=null;this.moving=null;this.rotation=0;this.buildColor=0;this.mode='select';this.drawing=false;this.dragCells=[];
     if(this.editor?.active){this.editor.close();this.world.select(this.selected,this.selectedParcel);this.ui.refreshSelection();}
+    if(this.roadEditor?.active){this.roadEditor.close();this.world.select(this.selected,this.selectedParcel);this.ui.refreshSelection();}
     this.ui?.hint('');this.ui?.refreshActive();
   }
   click(){
     if(!this.cursor||this.ui.modalOpen||this.replacing)return;
     if(this.editor.active){this.editor.click(this.point.x,this.point.z);return;}
+    if(this.roadEditor.active){this.roadEditor.click(...this.roadPointer());return;}
     if(this.buildType){const e=this.candidate(),error=this.city.canPlace(e,this.moving);if(error){this.ui.toast(error,true);return;}
       if(this.moving){this.city.move(this.moving,e.x,e.z,e.rotation);this.cancel();}
       else this.city.place(e.type,e.x,e.z,e.rotation,e.color);this.changed();this.sound.click();this.preview();return;
@@ -181,7 +196,7 @@ class App {
   home(){this.follow=false;this.controls.autoRotate=false;this.keys.clear();this.camera.position.set(183,180,230);this.controls.target.set(4,0,15);this.controls.update();}
   zoom(factor){const direction=this.camera.position.clone().sub(this.controls.target);const length=T.MathUtils.clamp(direction.length()*factor,this.controls.minDistance,this.controls.maxDistance);this.camera.position.copy(this.controls.target).add(direction.setLength(length));this.controls.update();}
   keydown(e){
-    if(e.key==='Escape'&&this.editor.active){e.preventDefault();this.cancel();return;}
+    if(e.key==='Escape'&&(this.editor.active||this.roadEditor.active)){e.preventDefault();this.cancel();return;}
     if(e.target.matches('input,textarea,select')||this.ui.modalOpen){if(e.key==='Escape')this.ui.closeModal();return;}
     const key=e.key.toLowerCase();this.keys.add(key);
     if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key))e.preventDefault();
@@ -204,16 +219,18 @@ class App {
       case 'edit-lot':if(parcel)this.startParcelEdit({mode:'lot',parcel,entity:e});break;
       case 'edit-building':if(e?.pose)this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});break;
       case 'road':this.ui.showCategory('road');this.startBuild('road');break;
+      case 'draw-road':this.startRoadEdit();break;
+      case 'edit-road':if(e?.alignment)this.startRoadEdit(e);break;
       case 'trees':this.ui.showCategory('detail');this.startBuild('tree');break;
       case 'erase':this.cancel();this.mode='erase';this.ui.hint('点击拆除 · Ctrl+Z 可撤销 · Esc 返回');this.ui.refreshActive();break;
       case 'undo':this.cancel();if(this.city.undo()){this.selected=null;this.selectedParcel=null;this.changed();}break;
       case 'redo':this.cancel();if(this.city.redo()){this.selected=null;this.selectedParcel=null;this.changed();}break;
-      case 'move':if(e&&!e.pose){this.startBuild(e.type,e.color,true);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · 原建筑会保留到移动成功 · Esc 取消');this.preview();}break;
-      case 'copy':if(e?.pose){this.startParcelEdit({mode:'quick',entity:e,copy:true});}else if(e){this.startBuild(e.type,e.color,true);this.rotation=e.rotation;this.preview();}break;
-      case 'rotate':if(e?.pose){this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});this.editor.rotate();}else if(e){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast('旋转后会与其他物件重叠',true);else this.changed();}break;
+      case 'move':if(e&&!e.pose&&!e.alignment){this.startBuild(e.type,e.color,true);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · 原建筑会保留到移动成功 · Esc 取消');this.preview();}break;
+      case 'copy':if(e?.pose){this.startParcelEdit({mode:'quick',entity:e,copy:true});}else if(e&&!e.alignment){this.startBuild(e.type,e.color,true);this.rotation=e.rotation;this.preview();}break;
+      case 'rotate':if(e?.pose){this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});this.editor.rotate();}else if(e&&!e.alignment){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast('旋转后会与其他物件重叠',true);else this.changed();}break;
       case 'color':if(e&&BY_ID[e.type].floors){this.city.recolor(e.id);this.changed();}break;
-      case 'delete':if(!this.editor.active&&(e?this.city.remove(e.id):parcel&&this.city.removeEmptyParcel(parcel.id))){this.selected=null;this.selectedParcel=null;this.changed();}break;
-      case 'focus':if(e||parcel){const p=e?placementOf(e):parcel;this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
+      case 'delete':if(!this.editor.active&&!this.roadEditor.active&&(e?this.city.remove(e.id):parcel&&this.city.removeEmptyParcel(parcel.id))){this.selected=null;this.selectedParcel=null;this.changed();}break;
+      case 'focus':if(e?.alignment){this.controls.target.fromArray(this.city.roadNetwork.segments.get(e.id).center);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}else if(e||parcel){const p=e?placementOf(e):parcel;this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
       case 'expand':if(this.city.expand()){this.changed();this.ui.toast(`城市向四周生长了 · 现在是 ${this.city.radius*2} × ${this.city.radius*2} 格`);}else this.ui.toast('已到达当前版本的世界边界');break;
       case 'zoom-in':this.zoom(.82);break;case 'zoom-out':this.zoom(1.22);break;case 'home':this.home();break;
       case 'camera':this.freeCamera=!this.freeCamera;this.controls.maxPolarAngle=this.freeCamera?Math.PI*.493:Math.PI*.43;this.controls.minDistance=this.freeCamera?8:24;document.querySelector('#camera-label').textContent=this.freeCamera?'返回建造视角':'自由观察';document.querySelector('[data-action=camera]').classList.toggle('active',this.freeCamera);this.ui.toast(this.freeCamera?'自由观察 · 右键环绕，方向键移动':'已返回建造视角');break;

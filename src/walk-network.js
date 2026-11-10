@@ -24,6 +24,13 @@ export function buildWalkNetwork(city){
     }return true;
   };
   for(const segment of network.segments.values())if(hasTraffic(segment.kind)){
+    if(segment.sidewalks){
+      for(const {points} of segment.sidewalks){
+        let prev;
+        for(const point of points){const n=node(...point);roadNodes.add(n);link(prev,n);prev=n;}
+      }
+      continue;
+    }
     const {center:[x,,z],profile,ports,mask,corner}=segment,y=profile.walkY,offset=profile.sidewalks[1].offset;
     const add=(px,pz,py=y)=>{const n=node(x+px,py,z+pz);roadNodes.add(n);return n;};
     if(corner){
