@@ -5,8 +5,8 @@ import { CATALOG, entityDimensions } from '../src/catalog.js';
 import { getTemplate, getDistantTemplate, registerArchitectureAsset, animateImportedAssets } from '../src/models.js';
 import { animateArchitecture } from '../src/architecture.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { readFile } from 'node:fs/promises';
-import { Scene, Vector3 } from 'three';
+import { readFile, stat } from 'node:fs/promises';
+import { BoxGeometry, BufferAttribute, Group, Mesh, MeshStandardMaterial, Scene, Texture, Vector3 } from 'three';
 import { World } from '../src/world.js';
 import { buildWalkNetwork, walkingRoute } from '../src/walk-network.js';
 import { Pedestrians } from '../src/pedestrians.js';
@@ -100,8 +100,60 @@ test('distant buildings reduce vertices while retaining the selected facade colo
  for(const item of CATALOG.filter(item=>item.floors)){
   const close=getTemplate(item.id,3),far=getDistantTemplate(item.id,3),vertices=model=>{let sum=0;model.traverse(m=>{if(m.isMesh)sum+=m.geometry.attributes.position.count;});return sum;};
   assert.ok(vertices(far)<vertices(close),item.id);
-  const facade=far.children.find(m=>m.material?.userData.facade)?.material;assert.ok(facade,item.id);assert.ok(close.children.some(m=>m.material===facade),item.id);
+  const facade=far.children.find(m=>m.material?.userData.facade)?.material;assert.ok(facade,item.id);assert.ok(close.children.some(m=>m.material?.name===facade.name&&m.material.userData.facade&&m.material.color.equals(facade.color)),item.id);
  }
+});
+test('R1 samples retain matching entrance and shelter anchors across LODs',()=>{
+ for(const [type,expected] of [['cottage',[-.525,0,3.85]],['bakery',[0,0,3.9]],['library',[-.55,.24,14/3]]]){
+  const close=getTemplate(type),far=getDistantTemplate(type);
+  const {entrance,shelter}=close.userData.anchors;
+  assert.deepEqual(far.userData.anchors,close.userData.anchors,type);
+  assert.ok(new Vector3().fromArray(entrance).distanceTo(new Vector3(...expected))<1e-6,type);
+  assert.ok(entrance[2]>shelter[2]&&shelter[2]>0,type);
+ }
+});
+test('R1 sample templates stay within the measured static asset budgets',async t=>{
+ for(const type of ['cottage','bakery','library']){
+  for(const lod of [false,true]){
+   const model=(lod?getDistantTemplate:getTemplate)(type);
+   const file=new URL(`../public/models/${type}${lod?'_lod':''}.glb`,import.meta.url);
+   const {size:bytes}=await stat(file);
+   const batches=model.children.filter(mesh=>mesh.isMesh);
+   const triangles=batches.reduce((sum,mesh)=>sum+mesh.geometry.getAttribute('position').count/3,0);
+   t.diagnostic(`${type} ${lod?'LOD':'near'}: ${triangles} triangles, ${batches.length} batches, ${bytes} bytes`);
+   assert.ok(triangles>0&&triangles<=(lod?2_500:30_000),type);
+   assert.ok(batches.length<=(lod?16:20),type);
+   assert.ok(bytes<=(lod?256*1024:1_100_000),type);
+  }
+ }
+});
+test('GLB registration retains authored PBR maps and compatible vertex attributes',()=>{
+ const texture=new Texture(),normal=new Texture();normal.channel=1;
+ const original=new MeshStandardMaterial({
+  name:'RL_Wall_Test',color:0x987a5c,map:texture,normalMap:normal,
+  roughness:.57,metalness:.23,roughnessMap:texture,metalnessMap:texture,
+ });
+ const scene=new Group(),geometry=new BoxGeometry();
+ geometry.setAttribute('uv1',geometry.getAttribute('uv').clone());
+ const withColors=geometry.clone();
+ withColors.setAttribute('color',new BufferAttribute(new Float32Array(geometry.getAttribute('position').count*3).fill(1),3));
+ scene.add(new Mesh(geometry,original),new Mesh(withColors,original));
+ registerArchitectureAsset('clinic',scene);
+ const model=getTemplate('clinic'),tinted=getTemplate('clinic',1);
+ assert.equal(model.children.length,2);
+ assert.equal(model.children.filter(mesh=>mesh.geometry.hasAttribute('color')).length,1);
+ for(const mesh of model.children){
+  assert.equal(mesh.material.map,texture);
+  assert.equal(mesh.material.normalMap,normal);
+  assert.equal(mesh.material.roughnessMap,texture);
+  assert.equal(mesh.material.metalnessMap,texture);
+  assert.equal(mesh.material.roughness,.57);
+  assert.equal(mesh.material.metalness,.23);
+  assert.ok(mesh.geometry.hasAttribute('uv1'));
+  assert.ok(mesh.material.color.equals(original.color));
+ }
+ assert.equal(tinted.children[0].material.map,texture);
+ assert.ok(!tinted.children[0].material.color.equals(original.color));
 });
 test('streaming a large city releases render chunks without deleting city data',()=>{
  const c=new City();c.radius=512;
