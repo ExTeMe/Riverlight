@@ -1,6 +1,7 @@
 import { CELL, BY_ID } from './catalog.js';
-import { placementOf } from './parcel.js';
+import { placementAnchor } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
+import { getTemplate } from './models.js';
 
 const roadTypes=new Set(['road','bridge']);
 const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
@@ -13,7 +14,7 @@ export function buildWalkNetwork(city){
     return nodes.get(id);
   };
   const link=(a,b,kind='walk')=>{if(!a||!b||a===b)return;a.edges.set(b.id,kind);b.edges.set(a.id,kind);};
-  const entityAt=(x,z)=>city.at(Math.floor((x/CELL+.5)*2)/2,Math.floor((z/CELL+.5)*2)/2);
+  const entityAt=(x,z)=>city.at(Math.floor((x/CELL+.5)*2)/2,Math.floor((z/CELL+.5)*2)/2)??city.nativeAt(x,z);
   const clear=(a,b,ignore)=>{
     const n=Math.ceil(length(a,b)/.5);
     for(let i=0;i<=n;i++){
@@ -69,8 +70,9 @@ export function buildWalkNetwork(city){
   }
   const walking=[...roadList,...paths,...quays];
   for(const e of city.entities.values())if(BY_ID[e.type].floors||['park','plaza','garden','amusement'].includes(e.type)){
-    const p=placementOf(e),depth=(e.lot?.[1]||BY_ID[e.type].d)*CELL/2+.35;
-    const x=p.x+Math.sin(p.radians)*depth,z=p.z+Math.cos(p.radians)*depth;
+    const anchor=e.pose&&getTemplate(e.type,e.color).userData.anchors?.entrance;
+    const fallback=[0,.14,BY_ID[e.type].d*CELL/2+.35*(e.lot?BY_ID[e.type].d/e.lot[1]:1)];
+    const [x,,z]=placementAnchor(e,anchor||fallback);
     const n=node(x,.14,z,'destination');if(connect(n,walking,7,e.id))destinations.push(n);
   }
   // Disconnected points never produce people. Component membership bounds route choices.

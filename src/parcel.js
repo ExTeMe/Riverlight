@@ -24,6 +24,10 @@ export function parcelOutline(parcel) {
   return transformOutline(rectangle(parcel.width,parcel.depth),parcel.x,parcel.z,parcel.angle*Math.PI/180);
 }
 
+export function parcelLocal(parcel,x,z) {
+  return transformOutline([[x-parcel.x,z-parcel.z]],0,0,-parcel.angle*Math.PI/180)[0];
+}
+
 export function placementOf(entity) {
   if(!entity.pose)return legacyPlacement(entity);
   const {parcel,offsetX,offsetZ,angle}=entity.pose,r=parcel.angle*Math.PI/180;
@@ -36,6 +40,12 @@ export function footprintOutline(entity) {
   if(!entity.pose)return boxOutline(legacyFootprintBounds(entity));
   const {x,z,radians}=placementOf(entity);
   return transformOutline(buildingOutline(entity.type),x,z,radians);
+}
+
+export function placementAnchor(entity,[x,y,z]) {
+  const p=placementOf(entity);
+  const [[worldX,worldZ]]=transformOutline([[x*p.scaleX,z*p.scaleZ]],p.x,p.z,p.radians);
+  return [worldX,y,worldZ];
 }
 
 export function fitsParcel(entity) {
