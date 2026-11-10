@@ -17,3 +17,8 @@
 .parcel-actions button{padding:8px;border-radius:8px;background:#e5ebdf;font-size:11px}.parcel-actions button.primary{background:#456b54;color:#fff}.parcel-actions button:disabled{opacity:.45}
 .selection-panel{z-index:5}#app:has(.scene-panel)>.selection-panel{left:auto;right:24px;top:100px}
 @media(max-height:700px){.parcel-editor{top:78px;max-height:calc(100vh - 252px)}}@media(max-width:760px){.parcel-editor{right:12px}}
+@media(max-height:740px){
+  .toolbar{top:86px;max-height:calc(100vh - 375px);overflow-y:auto;scrollbar-width:thin;padding:5px;gap:3px}
+  .toolbar .icon-button{width:31px;height:31px;flex-shrink:0;border-radius:9px}
+  .toolbar .sep{margin:2px 4px;flex-shrink:0}
+}
