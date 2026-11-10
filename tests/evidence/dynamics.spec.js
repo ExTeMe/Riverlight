@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 
+const observationViews = {
+  T04: { position: [9, 4, 27], target: [0, 0, 0] },
+  T05: { position: [-60, 9, 15], target: [-70, 0, 0] },
+};
+
 // These recordings document the prototype, not a passing traffic simulation.
 // Keep the real animation loop: the interaction suite deliberately throttles it.
 for (const id of ['T02', 'T03', 'T04', 'T05']) {
@@ -23,6 +28,17 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         browser: navigator.userAgent, viewport: [innerWidth, innerHeight], pixelRatio: devicePixelRatio,
       }));
       await page.locator('[data-view="near"]').click();
+      const view = observationViews[id];
+      if (view) {
+        record.stage = 'observation-view';
+        await persist();
+        await page.locator('[data-action="camera"]').click();
+        // The isolated browser can seed a bookmark and use the normal UI to recall it.
+        await page.evaluate(camera => localStorage.setItem('riverlight-camera', JSON.stringify(camera)), view);
+        await page.locator('[data-action="help"]').click();
+        await page.locator('[data-action="recall"]').click();
+        record.view = view;
+      }
       const samples = record.samples;
       async function observe(label, seconds) {
         record.stage = label;
