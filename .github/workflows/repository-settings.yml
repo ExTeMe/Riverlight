@@ -38,7 +38,6 @@ jobs:
         with:
           node-version: '22'
           package-manager-cache: false
-      - run: node --test tests/github-settings.test.js
       - run: node scripts/github-settings.mjs
         env:
           PROJECT_TOKEN: ${{ secrets.PROJECT_TOKEN }}

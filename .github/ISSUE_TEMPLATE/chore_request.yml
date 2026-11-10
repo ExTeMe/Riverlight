@@ -1,16 +1,9 @@
 name: 开发任务或阶段
 description: 基础设施、验证工作或阶段交付
 body:
-  - type: dropdown
-    id: collaboration
-    attributes:
-      label: 协作流程
-      options: [v2]
-    validations:
-      required: true
   - type: markdown
     attributes:
-      value: "实施前在本任务认领并等待成功回执；代码、资产、配置和文档均使用任务分支，经 PR 集成到 dev。产品验收与发布另行确认。"
+      value: "单人开发无需认领；代码、资产、配置和文档均使用任务分支，经 PR 集成到 dev。产品验收与发布另行确认。"
   - type: input
     id: task
     attributes:

@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="700" viewBox="0 0 1140 700" role="img" aria-labelledby="title desc">
+  <title id="title">栖城 · 河光小街材质参考板</title>
+  <desc id="desc">原绘参考色板，对比木、石、墙面、沥青、玻璃和金属在白天、黄昏、雨夜的识别特征。</desc>
+  <defs>
+    <pattern id="wood-grain" width="96" height="24" patternUnits="userSpaceOnUse">
+      <rect width="96" height="24" fill="#92694F"/>
+      <path d="M0 0h96M0 22h96" stroke="#573B2C" stroke-opacity=".48"/>
+      <path d="M0 6c23-6 35 6 58 0s23-4 38 0M0 14c18-3 37 3 57 0s23-2 39 1M0 18c17-4 29 2 41 0" fill="none" stroke="#D7AB86" stroke-opacity=".35"/>
+    </pattern>
+    <pattern id="stone-joints" width="100" height="60" patternUnits="userSpaceOnUse">
+      <rect width="100" height="60" fill="#B4AC99"/>
+      <path d="M0 0h100v30H0v30m48-60v30m26 0v30M22 30v30" fill="none" stroke="#827D71" stroke-width="2"/>
+      <path d="M2 3h43m6 0h46M3 33h17m5 0h46m6 0h20" stroke="#DAD2BD" stroke-width="2"/>
+      <path d="m11 17 19-3m29 10 18-6m-39 33 13-4m29 7 12-4" stroke="#8B8270" stroke-opacity=".35"/>
+    </pattern>
+    <pattern id="pale-grain" width="20" height="17" patternUnits="userSpaceOnUse">
+      <path d="M3 5h1m10-2h1m-5 10h1m7 2h1" stroke="#F1DEC0" stroke-opacity=".25" stroke-linecap="round"/>
+      <path d="M7 8h1m8 1h1m-13 6h1" stroke="#262C31" stroke-opacity=".35" stroke-linecap="round"/>
+    </pattern>
+    <linearGradient id="glass-tone" x1="0" x2="1" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#ABC3C4"/><stop offset=".55" stop-color="#6F9096"/><stop offset="1" stop-color="#304C55"/>
+    </linearGradient>
+    <linearGradient id="metal-tone" x1="0" x2="0" y1="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop stop-color="#3E504D"/><stop offset=".22" stop-color="#667F79"/><stop offset=".3" stop-color="#93A29A"/><stop offset=".37" stop-color="#586E68"/><stop offset=".72" stop-color="#586E68"/><stop offset="1" stop-color="#344442"/>
+    </linearGradient>
+    <linearGradient id="dusk-tone">
+      <stop stop-color="#F1A35B" stop-opacity=".37"/><stop offset="1" stop-color="#703D57" stop-opacity=".24"/>
+    </linearGradient>
+    <linearGradient id="wet-streak">
+      <stop stop-color="#D99353" stop-opacity="0"/><stop offset=".46" stop-color="#E7AB69" stop-opacity=".62"/><stop offset="1" stop-color="#D99353" stop-opacity="0"/>
+    </linearGradient>
+    <g id="swatches">
+      <rect width="164" height="92" fill="url(#wood-grain)"/>
+      <rect x="176" width="164" height="92" fill="url(#stone-joints)"/>
+      <rect x="352" width="164" height="92" fill="#E3D1B7"/>
+      <rect x="352" width="164" height="92" fill="url(#pale-grain)" opacity=".45"/>
+      <rect x="352" y="75" width="164" height="17" fill="#B8A48E"/>
+      <rect x="528" width="164" height="92" fill="#55585C"/>
+      <rect x="528" width="164" height="92" fill="url(#pale-grain)"/>
+      <path d="M536 74h41m24 0h41m24 0h19" stroke="#D4C4A5" stroke-width="3" opacity=".72"/>
+      <rect x="704" width="164" height="92" fill="url(#glass-tone)"/>
+      <path d="m712 53 59-53h35l-94 86m96 6 53-54v16l-36 38" fill="#D3DFDA" opacity=".26"/>
+      <path d="M704 0h164v92H704zM785 0v92" fill="none" stroke="#405451" stroke-width="5"/>
+      <rect x="880" width="164" height="92" fill="url(#metal-tone)"/>
+      <path d="M892 15h140m-140 52h140" stroke="#CCD3CC" stroke-opacity=".22"/>
+      <path d="M896 76h132" stroke="#243632" stroke-opacity=".7"/>
+    </g>
+  </defs>
+  <rect width="1140" height="700" fill="#F6F0E5"/>
+  <g fill="#283A32" font-family="'Microsoft YaHei', 'Noto Sans SC', sans-serif">
+    <text x="48" y="48" font-size="13" letter-spacing="2">RIVERLIGHT / ART–01</text>
+    <text x="46" y="98" font-size="40" font-weight="700">河光小街 · 材质参考</text>
+    <text x="48" y="128" font-size="15">手绘材质示意 · 色值为基础色参考，三行表现相同材质在不同照明下的视觉特征</text>
+    <g font-size="16" font-weight="700">
+      <text x="48" y="174">木 · 板纹</text><text x="224" y="174">石 · 砌缝</text>
+      <text x="400" y="174">墙面 · 抹灰</text><text x="576" y="174">沥青 · 骨料</text>
+      <text x="752" y="174">玻璃 · 反射</text><text x="928" y="174">金属 · 倒角</text>
+    </g>
+    <g font-size="13">
+      <text x="48" y="207">白天 / 13:00 · 以散射光读出纹理和细部</text>
+      <text x="48" y="337">黄昏 / 17:30 · 暖边光照亮檐口、窗框与石缝，背光面偏冷</text>
+      <text x="48" y="467">雨夜 / 20:00 · 湿路有局部拉长反光，窗灯从室内透出</text>
+    </g>
+    <use href="#swatches" x="48" y="216"/>
+    <use href="#swatches" x="48" y="346"/>
+    <g transform="translate(48 346)">
+      <path d="M0 0h164v92H0zM176 0h164v92H176zM352 0h164v92H352zM528 0h164v92H528zM704 0h164v92H704zM880 0h164v92H880z" fill="url(#dusk-tone)"/>
+      <path d="M789 65h72v20h-72z" fill="#E9AE77" opacity=".26"/>
+    </g>
+    <use href="#swatches" x="48" y="476"/>
+    <g transform="translate(48 476)">
+      <path d="M0 0h164v92H0zM176 0h164v92H176zM352 0h164v92H352zM528 0h164v92H528zM704 0h164v92H704zM880 0h164v92H880z" fill="#101D35" opacity=".64"/>
+      <path d="M549 52h132v16H549zM570 71h69v7h-69z" fill="url(#wet-streak)"/>
+      <path d="M795 9h61v73h-61z" fill="#CB8D58"/>
+      <path d="M795 55h61v27h-61z" fill="#EAB974"/>
+      <path d="M807 82V31m10 51V32m25 50V32" stroke="#8D6247" stroke-width="3" opacity=".65"/>
+      <path d="M904 28h118" stroke="#AEC5D1" stroke-opacity=".5"/>
+    </g>
+    <path d="M48 593h1044" stroke="#C9C4B7"/>
+    <g font-size="13">
+      <circle cx="59" cy="629" r="10" fill="#92694F"/><text x="76" y="634">木棕 #92694F</text>
+      <circle cx="235" cy="629" r="10" fill="#B4AC99"/><text x="252" y="634">河石 #B4AC99</text>
+      <circle cx="411" cy="629" r="10" fill="#E3D1B7"/><text x="428" y="634">灰泥 #E3D1B7</text>
+      <circle cx="587" cy="629" r="10" fill="#55585C"/><text x="604" y="634">路灰 #55585C</text>
+      <circle cx="763" cy="629" r="10" fill="#6F9096"/><text x="780" y="634">窗蓝 #6F9096</text>
+      <circle cx="939" cy="629" r="10" fill="#586E68"/><text x="956" y="634">铁绿 #586E68</text>
+      <circle cx="59" cy="665" r="10" fill="#9C5C49"/><text x="76" y="670">陶瓦 #9C5C49</text>
+      <circle cx="235" cy="665" r="10" fill="#72835C"/><text x="252" y="670">树冠 #72835C</text>
+      <circle cx="411" cy="665" r="10" fill="#536348"/><text x="428" y="670">阴叶 #536348</text>
+      <circle cx="587" cy="665" r="10" fill="#EAB974"/><text x="604" y="670">窗灯 #EAB974</text>
+    </g>
+  </g>
+</svg>

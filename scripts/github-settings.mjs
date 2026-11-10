@@ -34,8 +34,6 @@ export function devRuleset(existing) {
     throw new Error('Refusing to alter a ruleset that does not exclusively target dev.');
   }
   const main = mainRuleset({ ...(existing || { name: 'dev integration', rules: [] }), target: 'branch', conditions: { ref_name: { include: ['refs/heads/main'], exclude: [] } } });
-  const checks = main.rules.find(r => r.type === 'required_status_checks');
-  checks.parameters.required_status_checks.push({ context: 'collaboration', integration_id: 15368 });
   return { ...main, conditions: { ref_name: { include: ['refs/heads/dev'], exclude: [] } } };
 }
 
@@ -63,7 +61,7 @@ export async function configureDev({ repository, rulesetId, expectedUpdatedAt, t
     || confirmed.conditions.ref_name.include.join() !== 'refs/heads/dev'
     || !['deletion', 'non_fast_forward', 'pull_request', 'required_status_checks'].every(type => confirmed.rules.some(r => r.type === type))
     || !confirmed.rules.find(r => r.type === 'required_status_checks').parameters.strict_required_status_checks_policy
-    || !['check', 'collaboration'].every(context => confirmed.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.some(c => c.context === context && c.integration_id === 15368))) throw new Error('Dev protection could not be verified.');
+    || !['check'].every(context => confirmed.rules.find(r => r.type === 'required_status_checks').parameters.required_status_checks.some(c => c.context === context && c.integration_id === 15368))) throw new Error('Dev protection could not be verified.');
   return { protected: branch.protected, url: confirmed._links?.html?.href };
 }
 

@@ -39,6 +39,7 @@ test('static snapshots preserve source checkout, update assets, remove obsolete 
     const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim();
     git('init', '--bare', remote); git('init', '-b', 'dev');
     git('config', 'user.name', 'CI Test'); git('config', 'user.email', 'ci-test@example.invalid');
+    git('config', 'commit.gpgsign', 'false'); // Fixture commits must not depend on the developer's signing key.
     writeFileSync(path.join(cwd, '.gitignore'), 'dist/\n');
     writeFileSync(path.join(cwd, 'source.txt'), 'source remains private to source branches');
     git('add', '.'); git('commit', '-m', 'test source'); git('remote', 'add', 'origin', remote);
