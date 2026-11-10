@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
 
 test.use({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 0.75, video: 'off', trace: 'off' });
 
@@ -14,6 +15,12 @@ async function photograph(page, testInfo, name) {
   const result = page.waitForEvent('download');
   await page.getByRole('button', { name: '拍张照片', exact: true }).click();
   await (await result).saveAs(testInfo.outputPath(`${name}.png`));
+}
+
+async function recallView(page, view) {
+  await page.evaluate(camera => localStorage.setItem('riverlight-camera', JSON.stringify(camera)), view);
+  await page.locator('[data-action="help"]').click();
+  await page.locator('[data-action="recall"]').click();
 }
 
 test('T06 captures the same three views by day, at dusk and in rain', async ({ page }, testInfo) => {
@@ -60,12 +67,65 @@ test('T06 captures the same three views by day, at dusk and in rain', async ({ p
     if (preset !== 'dusk') {
       await page.locator('[data-action="camera"]').click();
       for (const [name, view] of Object.entries(landscapeViews)) {
-        await page.evaluate(camera => localStorage.setItem('riverlight-camera', JSON.stringify(camera)), view);
-        await page.locator('[data-action="help"]').click();
-        await page.locator('[data-action="recall"]').click();
+        await recallView(page, view);
         await photograph(page, testInfo, `${preset}-${name}`);
       }
     }
   }
+  expect(errors).toEqual([]);
+});
+
+test('ART-04 records both sides of the LOD threshold and park lighting', async ({ page }, testInfo) => {
+  test.setTimeout(480_000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto('/?scene=T06');
+  await expect(page.locator('#loading')).toHaveCount(0, { timeout: 90_000 });
+  await expect(page.locator('canvas[data-asset-library]')).toHaveAttribute('data-asset-library', 'Blender 34/34');
+
+  async function selectWeather(preset) {
+    await page.locator(`[data-weather-id="${preset}"]`).click();
+    await Promise.all([
+      page.waitForEvent('domcontentloaded'),
+      page.getByRole('button', { name: '保存并重载', exact: true }).click(),
+    ]);
+    await expect(page.locator('#loading')).toHaveCount(0, { timeout: 90_000 });
+    await page.locator('[data-action="camera"]').click();
+  }
+
+  await selectWeather('day');
+  await page.getByText('观察与记录', { exact: true }).click();
+  const target = [-65, 0, 0];
+  const direction = [55, 55, 85];
+  const length = Math.hypot(...direction);
+  for (const [name, distance] of [['lod-near', 419], ['lod-far', 421], ['lod-return', 419]]) {
+    const position = target.map((value, index) => value + distance * direction[index] / length);
+    await recallView(page, { position, target });
+    await photograph(page, testInfo, name);
+    const snapshot = page.waitForEvent('download');
+    await page.getByRole('button', { name: '导出资源快照', exact: true }).click();
+    const download = await snapshot;
+    const path = testInfo.outputPath(`${name}.json`);
+    await download.saveAs(path);
+    const data = JSON.parse(await readFile(path, 'utf8'));
+    expect(data.scene).toMatchObject({ id: 'T06', version: 3 });
+    expect(Math.hypot(...data.camera.position.map((value, index) => value - data.camera.target[index]))).toBeCloseTo(distance, 4);
+    if (name === 'lod-far') expect(data.detailedChunks).toBe(0);
+    else expect(data.detailedChunks).toBeGreaterThan(0);
+  }
+  await page.getByText('观察与记录', { exact: true }).click();
+  await recallView(page, { position: [-63, 8, 53], target: [-76, 1.5, 40] });
+  await photograph(page, testInfo, 'fountain-a');
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 24; frame++) await new Promise(requestAnimationFrame);
+  });
+  await photograph(page, testInfo, 'fountain-b');
+
+  await selectWeather('rain');
+  await recallView(page, landscapeViews.park);
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 32; frame++) await new Promise(requestAnimationFrame);
+  });
+  await photograph(page, testInfo, 'park-rain-light');
   expect(errors).toEqual([]);
 });

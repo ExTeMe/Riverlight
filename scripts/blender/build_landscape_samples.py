@@ -59,6 +59,7 @@ def pocket_park(a):
     a.box('Bollard_Light', .86, .68, 3.54, .12, .065, .12, lamp, 0)
     a.empty('Entrance', (2, .126, 3.93))
     a.empty('Shelter', (-1.48, .126, -1.08))
+    a.empty('Light', (-1.48, 2.12, -.72))
 
 
 def bridge_landing(a):

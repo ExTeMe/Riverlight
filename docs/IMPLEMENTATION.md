@@ -70,7 +70,7 @@ Vite 输出完整源码 SHA 的 `riverlight-revision` 元数据；开发模式�
 | `src/world.js` | 分区、地形、模型实例、选择/预览、车辆/船与行人模块协调 |
 | `src/walk-network.js` | 从现有道路、路径和水岸推算步行图，连接入口，随机邻边路线原型 |
 | `src/pedestrians.js` | 自动人物实例、步行更新、步态、粗略车辆等待与资源释放 |
-| `src/environment.js` | 天空、水、光、昼夜、四季、天气、落叶 |
+| `src/environment.js` | 天空、水、光、昼夜、四季、天气、落叶。公园檐灯按模型灯位使用现有局部光源池 |
 | `src/puddles.js` / `src/ambient-occlusion.js` | 局部积水平面反射 / 环境遮蔽 |
 | `src/main.js` | 输入、相机、渲染、编辑协调、保存 |
 | `src/ui.js` / `src/style.css` | 中文界面、缩略图、面板和响应式布局 |

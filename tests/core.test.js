@@ -6,7 +6,7 @@ import { getTemplate, getDistantTemplate, registerArchitectureAsset, animateImpo
 import { animateArchitecture } from '../src/architecture.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { readFile, stat } from 'node:fs/promises';
-import { BoxGeometry, BufferAttribute, Group, Mesh, MeshStandardMaterial, Scene, Texture, Vector3 } from 'three';
+import { Box3, BoxGeometry, BufferAttribute, Group, Mesh, MeshStandardMaterial, Scene, Texture, Vector3 } from 'three';
 import { World } from '../src/world.js';
 import { buildWalkNetwork, walkingRoute } from '../src/walk-network.js';
 import { Pedestrians } from '../src/pedestrians.js';
@@ -63,6 +63,10 @@ test('every non-road catalog asset loads its authored Blender model and distant 
   const model=getTemplate(type).clone(true),node=model.getObjectByName(name);assert.ok(node,name);
   animateImportedAssets(model,0);const before=node.quaternion.clone();animateImportedAssets(model,2);assert.ok(before.angleTo(node.quaternion)>.1,name);
  }
+ const plaza=getTemplate('plaza').clone(true),jets=plaza.getObjectByName('plaza_Fountain_Jets');
+ assert.ok(jets);
+ animateImportedAssets(plaza,0);const initialScale=jets.scale.clone();
+ animateImportedAssets(plaza,2);assert.ok(initialScale.distanceTo(jets.scale)>.1);
 });
 test('world boundaries contain the advertised number of cells and expansion stops safely',()=>{
  const c=new City();assert.ok(c.place('tree',-64,-64));assert.ok(c.place('tree',63,63));assert.equal(c.place('tree',64,63),false);
@@ -111,9 +115,16 @@ test('R1 samples retain matching entrance and shelter anchors across LODs',()=>{
   assert.ok(new Vector3().fromArray(entrance).distanceTo(new Vector3(...expected))<1e-6,type);
   assert.ok(entrance[2]>shelter[2],type);
  }
+ const {light}=getTemplate('park').userData.anchors;
+ assert.deepEqual(light,getDistantTemplate('park').userData.anchors.light);
+ assert.ok(new Vector3().fromArray(light).distanceTo(new Vector3(-1.48,2.12,-.72))<1e-6);
 });
 test('R1 sample templates stay within the measured static asset budgets',async t=>{
  for(const type of ['cottage','bakery','library','office','park','pier']){
+  const closeBounds=new Box3().setFromObject(getTemplate(type));
+  const farBounds=new Box3().setFromObject(getDistantTemplate(type));
+  const delta=Math.max(closeBounds.min.distanceTo(farBounds.min),closeBounds.max.distanceTo(farBounds.max));
+  assert.ok(delta<=.05,`${type} changed bounds by ${delta.toFixed(3)} m`);
   for(const lod of [false,true]){
    const model=(lod?getDistantTemplate:getTemplate)(type);
    const file=new URL(`../public/models/${type}${lod?'_lod':''}.glb`,import.meta.url);
