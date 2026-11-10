@@ -1,8 +1,8 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
-import { GROUND_Y } from './space.js';
-import { placementOf } from './parcel.js';
-import { footprintBounds, riverCenter, riverWidth, key, waterAt } from './core.js';
+import { BANK_STEP, GROUND_Y, riverBanks } from './space.js';
+import { footprintOutline, placementOf } from './parcel.js';
+import { riverCenter, riverWidth, key, waterAt } from './core.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
@@ -11,9 +11,9 @@ function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function landGeometry(cx,cz,terrain) {
   const grass=[],bank=[],edge=[],quay=[];const x0=(cx*CHUNK-.5)*CELL,x1=x0+CHUNK*CELL,z0=(cz*CHUNK-.5)*CELL;
   for(let i=0;i<CHUNK*2;i++){
-    const za=z0+i*CELL/2,zb=za+CELL/2,ra=riverCenter(za,terrain),rb=riverCenter(zb,terrain);
+    const za=z0+i*BANK_STEP,zb=za+BANK_STEP,a=riverBanks(za,terrain),b=riverBanks(zb,terrain);
     for(const side of [-1,1]){
-      const aa=ra+side*riverWidth(za,terrain),ab=rb+side*riverWidth(zb,terrain);
+      const sideIndex=side<0?0:1,aa=a[sideIndex],ab=b[sideIndex];
       const clamp=x=>Math.max(x0,Math.min(x1,x));
       const la=side<0?x0:clamp(aa),lb=side<0?x0:clamp(ab),ha=side<0?clamp(aa):x1,hb=side<0?clamp(ab):x1;
       if(ha>la || hb>lb)quad(grass,[la,GROUND_Y,za],[ha,GROUND_Y,za],[hb,GROUND_Y,zb],[lb,GROUND_Y,zb]);
@@ -42,12 +42,12 @@ export class World {
     this.scene=scene;this.city=city;this.loaded=new Map();this.pickables=[];this.lastRegion='';this.activeCenter=new T.Vector3();
     this.horizon=new T.Mesh(horizonGeometry(this.activeCenter,city.terrain),material('#839e79','ground'));this.horizonCenter=new T.Vector3();scene.add(this.horizon);
     this.grid=new T.GridHelper(128,64,'#839785','#839785');this.grid.position.y=.055;this.grid.material.transparent=true;this.grid.material.opacity=.18;this.grid.visible=false;scene.add(this.grid);
-    const g=new T.BoxGeometry(1,1,1);this.selection=new T.BoxHelper(new T.Mesh(g),0xf2d38c);g.dispose();this.selection.visible=false;scene.add(this.selection);
+    this.selection=new T.LineSegments(new T.BufferGeometry(),new T.LineBasicMaterial({color:0xf2d38c}));this.selection.visible=false;scene.add(this.selection);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.sync(true);
   }
-  setCity(city){this.city=city;this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
+  setCity(city){this.city=city;this.select(null);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});c.buildings.traverse(o=>{if(o.isInstancedMesh)o.dispose();});this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -99,10 +99,19 @@ export class World {
   }
   select(id){
     const e=this.city.entities.get(id);if(!e){this.selection.visible=false;return;}
-    const {minX,minZ,maxX,maxZ}=footprintBounds(e),h=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y;
-    const box=new T.Box3(new T.Vector3(minX,.12,minZ),new T.Vector3(maxX,h+.3,maxZ));
-    const p=this.selection.geometry.attributes.position;const a=box.min,b=box.max;
-    p.copyArray(new Float32Array([b.x,b.y,b.z,a.x,b.y,b.z,a.x,a.y,b.z,b.x,a.y,b.z,b.x,b.y,a.z,a.x,b.y,a.z,a.x,a.y,a.z,b.x,a.y,a.z]));p.needsUpdate=true;this.selection.geometry.computeBoundingSphere();this.selection.visible=true;
+    const outline=footprintOutline(e),height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3;
+    const lines=[];
+    for(let i=0;i<outline.length;i++){
+      const [x,z]=outline[i],[u,v]=outline[(i+1)%outline.length];
+      lines.push(x,.12,z,u,.12,v,x,height,z,u,height,v,x,.12,z,x,height,z);
+    }
+    const geometry=this.selection.geometry,position=geometry.attributes.position;
+    if(position?.array.length===lines.length){position.array.set(lines);position.needsUpdate=true;}
+    else {
+      if(position)geometry.dispose();
+      geometry.setAttribute('position',new T.Float32BufferAttribute(lines,3));
+    }
+    geometry.computeBoundingSphere();this.selection.visible=true;
   }
   showPreview(e,valid){
     const [w,d]=entityDimensions(e);

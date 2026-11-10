@@ -1,5 +1,6 @@
 import { BY_ID, CELL } from './catalog.js';
-import { legacyPlacement, riverCenter, riverWidth } from './space.js';
+import { BANK_STEP, legacyFootprintBounds, legacyPlacement, riverBanks } from './space.js';
+import { EDGE_EPSILON, boundsContain, boxOutline, outlineBounds, outlinesOverlap, transformOutline } from './outline.js';
 
 export const CITY_VERSION = 3;
 export const supportedCityVersion = version => [1,2,CITY_VERSION].includes(version);
@@ -10,18 +11,17 @@ export function normalAngle(degrees) {
   return (angle < 0 ? angle + 360 : angle) % 360 || 0;
 }
 
-function rectangleExtents(width,depth,radians) {
-  const c=Math.abs(Math.cos(radians)),s=Math.abs(Math.sin(radians));
-  return [(width*c+depth*s)/2,(width*s+depth*c)/2];
+function rectangle(width,depth) {
+  return boxOutline({minX:-width/2,minZ:-depth/2,maxX:width/2,maxZ:depth/2});
 }
 
-function rectangleBounds(x,z,width,depth,radians) {
-  const [halfX,halfZ]=rectangleExtents(width,depth,radians);
-  return {minX:x-halfX,minZ:z-halfZ,maxX:x+halfX,maxZ:z+halfZ};
+function buildingOutline(type) {
+  const item=BY_ID[type];
+  return item.outline??rectangle(item.w*CELL,item.d*CELL);
 }
 
-export function parcelBounds(parcel) {
-  return rectangleBounds(parcel.x,parcel.z,parcel.width,parcel.depth,parcel.angle*Math.PI/180);
+export function parcelOutline(parcel) {
+  return transformOutline(rectangle(parcel.width,parcel.depth),parcel.x,parcel.z,parcel.angle*Math.PI/180);
 }
 
 export function placementOf(entity) {
@@ -32,15 +32,16 @@ export function placementOf(entity) {
     radians:normalAngle(parcel.angle+angle)*Math.PI/180,scaleX:1,scaleZ:1};
 }
 
-export function parcelBuildingBounds(entity) {
-  const {x,z,radians}=placementOf(entity),item=BY_ID[entity.type];
-  return rectangleBounds(x,z,item.w*CELL,item.d*CELL,radians);
+export function footprintOutline(entity) {
+  if(!entity.pose)return boxOutline(legacyFootprintBounds(entity));
+  const {x,z,radians}=placementOf(entity);
+  return transformOutline(buildingOutline(entity.type),x,z,radians);
 }
 
 export function fitsParcel(entity) {
-  const {parcel,offsetX,offsetZ,angle}=entity.pose,item=BY_ID[entity.type];
-  const [halfX,halfZ]=rectangleExtents(item.w*CELL,item.d*CELL,angle*Math.PI/180);
-  return Math.abs(offsetX)+halfX<=parcel.width/2+1e-8 && Math.abs(offsetZ)+halfZ<=parcel.depth/2+1e-8;
+  const {parcel,offsetX,offsetZ,angle}=entity.pose;
+  const local=transformOutline(buildingOutline(entity.type),offsetX,offsetZ,angle*Math.PI/180);
+  return boundsContain({minX:-parcel.width/2,minZ:-parcel.depth/2,maxX:parcel.width/2,maxZ:parcel.depth/2},outlineBounds(local),EDGE_EPSILON);
 }
 
 export function normalizeParcel(raw) {
@@ -71,15 +72,15 @@ export function readParcelEntity(raw,parcel) {
   return {id,type,x:parcel.x/CELL-(w-1)/2,z:parcel.z/CELL-(d-1)/2,rotation,color,...(raw.lot?{lot:[...raw.lot]}:{})};
 }
 
-// Use the same two-metre bank samples as the rendered terrain. Reserve the
-// entire AABB until EDIT-02 supplies polygon and terrain intersection.
-export function parcelOnLand(bounds,terrain) {
-  let west=true,east=true;
-  for(let z=Math.floor(bounds.minZ/2)*2;z<=Math.ceil(bounds.maxZ/2)*2;z+=2){
-    const centre=riverCenter(z,terrain),width=riverWidth(z,terrain);
-    west&&=bounds.maxX<=centre-width;
-    east&&=bounds.minX>=centre+width;
-    if(!west&&!east)return false;
+// Water between two sampled cross sections is a convex trapezoid.
+export function parcelOnLand(outline,bounds,terrain) {
+  let z=Math.floor(bounds.minZ/BANK_STEP)*BANK_STEP;
+  let [west,east]=riverBanks(z,terrain);
+  for(;z<bounds.maxZ;z+=BANK_STEP){
+    const end=z+BANK_STEP,[nextWest,nextEast]=riverBanks(end,terrain);
+    if(bounds.maxX>Math.min(west,nextWest)&&bounds.minX<Math.max(east,nextEast)
+      &&outlinesOverlap(outline,[[west,z],[east,z],[nextEast,end],[nextWest,end]]))return false;
+    west=nextWest;east=nextEast;
   }
   return true;
 }

@@ -1,18 +1,19 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { CITY_VERSION, supportedCityVersion, usesParcel, parcelBounds, parcelBuildingBounds, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, readParcelEntity } from './parcel.js';
+import { CITY_VERSION, supportedCityVersion, usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, readParcelEntity } from './parcel.js';
+import { EDGE_EPSILON, boundsContain, outlineBounds, outlinesOverlap } from './outline.js';
 export { riverCenter, riverWidth, waterAt };
 export const VERSION = CITY_VERSION;
 export const MAX_ENTITIES = 100000;
 export const key = (x, z) => `${x},${z}`;
 export const chunkKey = (x, z) => key(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
-export const footprintBounds = e => e.pose ? parcelBuildingBounds(e) : legacyFootprintBounds(e);
+export const footprintBounds = e => e.pose ? outlineBounds(footprintOutline(e)) : legacyFootprintBounds(e);
 const entityChunk = e => {
   if(!e.pose)return chunkKey(e.x,e.z);
   const b=footprintBounds(e);
   return chunkKey(b.minX/CELL+.5,b.minZ/CELL+.5);
 };
-const within = (b,world) => b.minX>=world.minX&&b.minZ>=world.minZ&&b.maxX<=world.maxX&&b.maxZ<=world.maxZ;
+const reservesLand = e => BY_ID[e.type].category!=='detail'||e.type==='pier';
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
   const cells = [];
@@ -45,19 +46,28 @@ export class City {
   worldBounds() { return worldBounds(this.radius); }
   surfaceAt(x,z) { return terrainSurfaceAt(x,z,this.terrain); }
   queryFootprints(bounds) { return this.spatial.query(bounds).map(id=>this.entities.get(id)); }
+  parcelPlacementError(parcel,outline,bounds,ownerId) {
+    if(bounds.maxX<=bounds.minX||bounds.maxZ<=bounds.minZ)return '地块尺寸无效';
+    if(!boundsContain(this.worldBounds(),bounds,EDGE_EPSILON))return '地块超出可建边界';
+    if(!parcelOnLand(outline,bounds,this.terrain))return '地块侵入水域';
+    if(this.parcelSpatial.query(bounds).some(id=>id!==parcel.id&&outlinesOverlap(outline,parcelOutline(this.parcels.get(id)))))return '地块与其他地块重叠';
+    if(this.queryFootprints(bounds).some(e=>e.id!==ownerId&&reservesLand(e)&&outlinesOverlap(outline,footprintOutline(e))))return '地块与道路或建筑重叠';
+    return null;
+  }
   canPlace(e, ignoreId) {
     if (!BY_ID[e.type]) return '未知建筑';
+    if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
     if(e.pose){
       if(!fitsParcel(e))return '建筑超出地块边界';
-      return this.spatial.query(footprintBounds(e)).some(id=>id!==ignoreId)?'这里已有建筑':null;
+      const outline=footprintOutline(e);
+      return this.queryFootprints(outlineBounds(outline)).some(other=>other.id!==ignoreId&&outlinesOverlap(outline,footprintOutline(other)))?'这里已有建筑或摆件':null;
     }
     if(!Number.isInteger(e.x/SNAP)||!Number.isInteger(e.z/SNAP))return '请对齐建造网格';
     if(['road','bridge','path'].includes(e.type)&&(!Number.isInteger(e.x)||!Number.isInteger(e.z)))return '道路请对齐主路网';
-    if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
     const bounds=legacyFootprintBounds(e),world=this.worldBounds();
-    if(!within(bounds,world))return '这里还未扩展，点击「扩展地图」';
-    if(this.parcelSpatial.query(bounds).length)return '这里已有地块';
-    if(this.spatial.query(bounds).some(id=>id!==ignoreId))return '这里已有建筑';
+    if(!boundsContain(world,bounds))return '这里还未扩展，点击「扩展地图」';
+    if(reservesLand(e)&&this.parcelSpatial.query(bounds).some(id=>outlinesOverlap(footprintOutline(e),parcelOutline(this.parcels.get(id)))))return '这里已有地块';
+    if(this.queryFootprints(bounds).some(other=>other.id!==ignoreId&&(!other.pose||outlinesOverlap(footprintOutline(e),footprintOutline(other)))))return '这里已有建筑';
     for (const [x, z] of footprint(e)) {
       if (waterAt(this.terrain==='legacy'?Math.floor(x):x,this.terrain==='legacy'?Math.floor(z):z,this.terrain) && !['bridge', 'pier'].includes(e.type)) return e.type === 'road' ? '水面请使用桥梁工具' : '请选择陆地区域';
       if (e.type === 'pier' && !footprint(e).some(([px,pz]) => waterAt(px,pz,this.terrain))) return '码头需要接触水面';
@@ -76,10 +86,23 @@ export class City {
     if(!e.pose)for (const [x,z] of footprint(e)) this.occupancy.delete(key(x,z));
     this.entities.delete(id); const ck = entityChunk(e); this.chunks.get(ck)?.delete(id); if (!this.chunks.get(ck)?.size) this.chunks.delete(ck);
   }
+  applyChanges(changes,from,to) {
+    for(const c of changes)if(c[from]){
+      if(c.parcel){this.parcels.delete(c[from].id);this.parcelSpatial.erase(c[from].id);}
+      else this.erase(c[from].id);
+    }
+    for(const c of changes)if(c[to]){
+      if(c.parcel)this.insertParcel(c[to]);
+      else this.insert(c[to]);
+    }
+  }
+  insertParcel(parcel,bounds=outlineBounds(parcelOutline(parcel))) {
+    this.parcels.set(parcel.id,parcel);
+    this.parcelSpatial.insert(parcel.id,bounds);
+  }
   commit(changes) {
     if (!changes.length) return false;
-    for (const c of changes) if (c.before) this.erase(c.before.id);
-    for (const c of changes) if (c.after) this.insert(c.after);
+    this.applyChanges(changes,'before','after');
     this.undoStack.push(changes); if (this.undoStack.length > 80) this.undoStack.shift(); this.redoStack = []; return true;
   }
   place(type,x,z,rotation=0,color=0) {
@@ -106,18 +129,30 @@ export class City {
     const e = {...old,x,z,rotation}; if (this.canPlace(e,id)) return false;
     return this.commit([{before:{...old},after:e}]);
   }
+  resizeParcel(id,width,depth) {
+    const before=this.parcels.get(id);
+    if(!before||![width,depth].every(n=>Number.isFinite(n)&&n>0)||(width===before.width&&depth===before.depth))return false;
+    const after={...before,width,depth},outline=parcelOutline(after);
+    const owner=this.queryFootprints(outlineBounds(parcelOutline(before))).find(e=>e.pose?.parcel.id===id);
+    if(this.parcelPlacementError(after,outline,outlineBounds(outline),owner?.id))return false;
+    const changes=[{parcel:true,before,after}];
+    if(owner){
+      const updated={...owner,pose:{...owner.pose,parcel:after}};
+      if(!fitsParcel(updated))return false;
+      changes.push({before:owner,after:updated});
+    }
+    return this.commit(changes);
+  }
   remove(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:null}]); }
   recolor(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:{...e,color:(e.color+1)%4}}]); }
   undo() {
     const changes=this.undoStack.pop(); if (!changes) return false;
-    for (const c of changes) if(c.after) this.erase(c.after.id);
-    for (const c of changes) if(c.before) this.insert(c.before);
+    this.applyChanges(changes,'after','before');
     this.redoStack.push(changes); return true;
   }
   redo() {
     const changes=this.redoStack.pop(); if(!changes) return false;
-    for(const c of changes) if(c.before) this.erase(c.before.id);
-    for(const c of changes) if(c.after) this.insert(c.after);
+    this.applyChanges(changes,'before','after');
     this.undoStack.push(changes); return true;
   }
   expand() { if(this.radius>=4096)return false;this.radius=Math.min(4096,this.radius+CHUNK);return true; }
@@ -143,12 +178,14 @@ export class City {
     if(raw.version===VERSION){
       if(!Array.isArray(raw.parcels)||raw.parcels.length>MAX_ENTITIES+raw.entities.length)throw new Error('存档缺少有效地块列表');
       for(const value of raw.parcels){
-        const p=normalizeParcel(value),bounds=parcelBounds(p);
+        const p=normalizeParcel(value);
         if(parcels.has(p.id))throw new Error('存档含有重复地块');
         parcels.set(p.id,p);
         if(p.grid)continue;
-        if(next.parcels.size>=MAX_ENTITIES||bounds.minX>=bounds.maxX||bounds.minZ>=bounds.maxZ||!within(bounds,next.worldBounds())||!parcelOnLand(bounds,next.terrain)||next.parcelSpatial.query(bounds).length)throw new Error('地块无效、重叠、超界或占用水域');
-        next.parcels.set(p.id,p);next.parcelSpatial.insert(p.id,bounds);
+        if(next.parcels.size>=MAX_ENTITIES)throw new Error('地块超过存档容量上限');
+        const outline=parcelOutline(p),bounds=outlineBounds(outline),error=next.parcelPlacementError(p,outline,bounds);
+        if(error)throw new Error(error);
+        next.insertParcel(p,bounds);
       }
     }
     for (const original of raw.entities) {
@@ -165,7 +202,9 @@ export class City {
         const {id,type,x,z,rotation,color,lot}=e;
         e={id,type,x,z,rotation,color,...(lot?{lot:[...lot]}:{})};
       }
-      if((!e.pose&&(!Number.isInteger(e.rotation)||e.rotation<0||e.rotation>3))||next.canPlace(e))throw new Error('存档包含无效或重叠建筑');
+      if(!e.pose&&(!Number.isInteger(e.rotation)||e.rotation<0||e.rotation>3))throw new Error('存档包含无效建筑朝向');
+      const error=next.canPlace(e);
+      if(error)throw new Error(error);
       ids.add(e.id); next.insert(e);
     }
     for(const p of parcels.values())if(p.grid&&!used.has(p.id))throw new Error('兼容地块缺少原建筑');

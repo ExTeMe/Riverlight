@@ -2,12 +2,18 @@ import { BY_ID, CELL, entityDimensions } from './catalog.js';
 
 export const GROUND_Y = 0;
 export const WATER_Y = -.4;
+export const BANK_STEP = CELL/2;
 
 export const riverCenter = (z, terrain = 'meander') => terrain === 'legacy'
   ? Math.sin(z*.016)*11 + Math.sin(z*.004)*9
   : Math.sin(z*.025)*23 + Math.sin(z*.009)*10;
 export const riverWidth = (z, terrain = 'meander') => terrain === 'legacy'
   ? 11.9 : 11.3 + 1.8*Math.sin(z*.033+.6) + 5*Math.exp(-(((z-30)/26)**2));
+
+export function riverBanks(z,terrain) {
+  const centre=riverCenter(z,terrain),width=riverWidth(z,terrain);
+  return [centre-width,centre+width];
+}
 
 export function terrainSurfaceAt(x, z, terrain) {
   const water = Math.abs(x-riverCenter(z,terrain)) < riverWidth(z,terrain);
