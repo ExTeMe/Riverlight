@@ -1,7 +1,7 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { CITY_VERSION, supportedCityVersion, usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, readParcelEntity } from './parcel.js';
-import { EDGE_EPSILON, boundsContain, outlineBounds, outlinesOverlap } from './outline.js';
+import { CITY_VERSION, supportedCityVersion, usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity } from './parcel.js';
+import { EDGE_EPSILON, boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
 export { riverCenter, riverWidth, waterAt };
 export const VERSION = CITY_VERSION;
 export const MAX_ENTITIES = 100000;
@@ -14,6 +14,8 @@ const entityChunk = e => {
   return chunkKey(b.minX/CELL+.5,b.minZ/CELL+.5);
 };
 const reservesLand = e => BY_ID[e.type].category!=='detail'||e.type==='pier';
+const aroundPoint = (x,z) => ({minX:x-EDGE_EPSILON,minZ:z-EDGE_EPSILON,maxX:x+EDGE_EPSILON,maxZ:z+EDGE_EPSILON});
+const colorOrPoseChanged = (before,after) => before.color!==after.color||['offsetX','offsetZ','angle'].some(key=>before.pose[key]!==after.pose[key]);
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
   const cells = [];
@@ -46,6 +48,16 @@ export class City {
   worldBounds() { return worldBounds(this.radius); }
   surfaceAt(x,z) { return terrainSurfaceAt(x,z,this.terrain); }
   queryFootprints(bounds) { return this.spatial.query(bounds).map(id=>this.entities.get(id)); }
+  parcelAt(x,z) {
+    return this.parcelSpatial.query(aroundPoint(x,z)).map(id=>this.parcels.get(id)).find(p=>outlineContains(parcelOutline(p),x,z));
+  }
+  nativeAt(x,z) {
+    if(!this.parcels.size)return undefined;
+    return this.queryFootprints(aroundPoint(x,z)).find(e=>e.pose&&outlineContains(footprintOutline(e),x,z));
+  }
+  parcelOwner(parcel) {
+    return this.queryFootprints(outlineBounds(parcelOutline(parcel))).find(e=>e.pose?.parcel.id===parcel.id);
+  }
   parcelPlacementError(parcel,outline,bounds,ownerId) {
     if(bounds.maxX<=bounds.minX||bounds.maxZ<=bounds.minZ)return '地块尺寸无效';
     if(!boundsContain(this.worldBounds(),bounds,EDGE_EPSILON))return '地块超出可建边界';
@@ -130,18 +142,46 @@ export class City {
     return this.commit([{before:{...old},after:e}]);
   }
   resizeParcel(id,width,depth) {
-    const before=this.parcels.get(id);
-    if(!before||![width,depth].every(n=>Number.isFinite(n)&&n>0)||(width===before.width&&depth===before.depth))return false;
-    const after={...before,width,depth},outline=parcelOutline(after);
-    const owner=this.queryFootprints(outlineBounds(parcelOutline(before))).find(e=>e.pose?.parcel.id===id);
-    if(this.parcelPlacementError(after,outline,outlineBounds(outline),owner?.id))return false;
-    const changes=[{parcel:true,before,after}];
-    if(owner){
-      const updated={...owner,pose:{...owner.pose,parcel:after}};
-      if(!fitsParcel(updated))return false;
-      changes.push({before:owner,after:updated});
+    const parcel=this.parcels.get(id);
+    return !!parcel&&this.editParcel({...parcel,width,depth}).changed;
+  }
+  planParcelEdit(raw,building) {
+    let parcel;
+    try{parcel=normalizeParcel(raw);}catch(error){return {error:error.message};}
+    if(parcel.grid)return {error:'请选择自定义地块'};
+    const before=this.parcels.get(parcel.id),owner=before&&this.parcelOwner(before);
+    if(!before&&this.parcels.size>=MAX_ENTITIES)return {error:'地块超过存档容量上限'};
+    const parcelChanged=!before||['x','z','width','depth','angle'].some(key=>parcel[key]!==before[key]);
+    if(!parcelChanged)parcel=before;
+    const values=building??(owner&&{...owner,...owner.pose});
+    let entity;
+    if(values){
+      const {type,color,offsetX,offsetZ,angle}=values;
+      if(!usesParcel(type)||(owner&&owner.type!==type)||![offsetX,offsetZ,angle].every(Number.isFinite)
+        ||!Number.isInteger(color)||color<0||color>3)return {parcel,error:'建筑参数无效'};
+      if(!owner&&this.nextId>=Number.MAX_SAFE_INTEGER)return {parcel,error:'当前城市物件编号已达到上限'};
+      entity={id:owner?.id??this.nextId,type,color,pose:{parcel,offsetX,offsetZ,angle:normalAngle(angle)}};
     }
-    return this.commit(changes);
+    if(parcelChanged){
+      const outline=parcelOutline(parcel),error=this.parcelPlacementError(parcel,outline,outlineBounds(outline),owner?.id);
+      if(error)return {parcel,entity,error};
+    }
+    const error=entity&&this.canPlace(entity,owner?.id);
+    if(error)return {parcel,entity,error};
+    const changes=[];
+    if(parcelChanged)changes.push({parcel:true,before,after:parcel});
+    if(entity&&(parcelChanged||!owner||colorOrPoseChanged(owner,entity)))changes.push({before:owner,after:entity});
+    return {parcel,entity,changes,allocatesId:!!entity&&!owner};
+  }
+  editParcel(parcel,building) {
+    const plan=this.planParcelEdit(parcel,building);
+    if(plan.error)return {error:plan.error,changed:false};
+    if(plan.allocatesId)this.nextId++;
+    return {parcel:plan.parcel,entity:plan.entity,changed:this.commit(plan.changes)};
+  }
+  removeEmptyParcel(id) {
+    const parcel=this.parcels.get(id);
+    return !!parcel&&!this.parcelOwner(parcel)&&this.commit([{parcel:true,before:parcel}]);
   }
   remove(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:null}]); }
   recolor(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:{...e,color:(e.color+1)%4}}]); }

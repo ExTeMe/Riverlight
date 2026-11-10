@@ -10,7 +10,7 @@ export class UI {
     this.app=app;this.category='home';this.thumbnails=new Map();this.root=document.querySelector('#app');
     this.root.innerHTML=`
       <header class="topbar"><div class="brand glass"><div class="brand-logo">栖</div><div><h1>栖 城</h1><small>R I V E R L I G H T</small></div></div><div class="top-actions"><div class="city-label"><b id="city-name">河光之城</b><span id="save-state">你的城市，随心生长</span></div>${ib('save','save','保存城市 Ctrl+S')}${ib('cities','folder','我的城市')}${ib('audio','mute','声音与音乐')}${ib('screenshot','camera','拍张照片')}${ib('environment','settings','环境与氛围','active')}</div></header>
-      <nav class="toolbar glass" aria-label="建造工具">${ib('select','select','选择 / V','active')}${ib('road','road','铺设道路 / B')}${ib('trees','tree','种植树木 / T')}${ib('erase','erase','拆除 / X')}<div class="sep"></div>${ib('undo','undo','撤销 Ctrl+Z')}${ib('redo','redo','重做 Ctrl+Y')}<div class="sep"></div>${ib('help','info','操作指南')}</nav>
+      <nav class="toolbar glass" aria-label="建造工具">${ib('select','select','选择 / V')}${ib('draw-parcel','expand','划定地块')}${ib('road','road','铺设道路 / B')}${ib('trees','tree','种植树木 / T')}${ib('erase','erase','拆除 / X')}<div class="sep"></div>${ib('undo','undo','撤销 Ctrl+Z')}${ib('redo','redo','重做 Ctrl+Y')}<div class="sep"></div>${ib('help','info','操作指南')}</nav>
       <div class="intro"><div class="eyebrow">A LITTLE CITY. YOUR OWN RHYTHM.</div><h2>在这里，慢慢生活。</h2><p>沿着河流，建造你喜欢的每一天。</p></div>
       <aside class="environment glass" aria-label="环境与氛围"><div class="panel-heading"><div><h2>此刻的风景</h2><small>MAKE A LITTLE ATMOSPHERE</small></div>${icon('leaf',19)}</div>
       <div class="field-label"><strong id="clock-label">16:30</strong><div class="time-controls"><select id="time-speed" aria-label="时间流速"><option value="1">1×</option><option value="4">4×</option><option value="8">8×</option></select><button data-action="play" aria-label="暂停或继续时间">${icon('play',13)}</button></div></div>
@@ -20,11 +20,12 @@ export class UI {
       <div class="section-label">风的轻重 <span id="wind-label">微风</span></div><input class="range" id="wind" aria-label="风力" type="range" min="0" max="1" step=".05" value=".4">
       <div class="section-label">一键好时光 ${icon('sun',14)}</div><div class="presets">${PRESETS.map(p=>`<button class="preset" data-preset="${p.id}"><span>${p.name}</span><small>${p.caption}</small></button>`).join('')}</div>
       <div class="env-footer"><span>让风景多停留一会儿</span><select id="quality" aria-label="画质"><option value="high">精致画质</option><option value="balanced">流畅优先</option></select></div></aside>
-      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
+      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
+      <form class="parcel-editor glass" aria-label="地块与建筑编辑" hidden></form>
       <div class="world-controls"><div class="zoom glass">${ib('zoom-in','plus','放大')}${ib('zoom-out','minus','缩小')}${ib('home','compass','回到全景 Home')}</div><button class="pill glass" data-action="expand">${icon('expand',16)}<span>扩展地图</span></button></div>
       <div class="view-controls"><button class="pill glass" data-action="camera">${icon('camera',16)}<span id="camera-label">自由观察</span><kbd class="key">C</kbd></button><button class="pill glass" data-action="quiet">${icon('eye',16)}<span>静静欣赏</span></button></div>
       <div class="mode-hint" id="mode-hint" hidden></div>
-      <section class="catalog glass" aria-label="建筑目录"><div class="catalog-head"><nav class="categories">${CATEGORIES.map(c=>`<button class="category" data-category="${c.id}">${icon(c.icon,16)}${c.label}</button>`).join('')}</nav><span class="catalog-label">${icon('leaf',12)} 2 米细网格 · 自由建造</span></div><div class="cards" id="cards"></div><div class="catalog-foot"><span id="world-stats"></span><span><kbd class="key">R</kbd>旋转 &nbsp; <kbd class="key">Esc</kbd>取消 &nbsp; 拖入或点击建筑开始</span></div></section>
+      <section class="catalog glass" aria-label="建筑目录"><div class="catalog-head"><nav class="categories">${CATEGORIES.map(c=>`<button class="category" data-category="${c.id}">${icon(c.icon,16)}${c.label}</button>`).join('')}</nav><span class="catalog-label">${icon('leaf',12)} 米制地块 · 自由建造</span></div><div class="cards" id="cards"></div><div class="catalog-foot"><span id="world-stats"></span><span><kbd class="key">R</kbd>旋转 &nbsp; <kbd class="key">Esc</kbd>取消 &nbsp; 拖入或点击建筑开始</span></div></section>
       <div class="toast" role="status" aria-live="polite"></div><div class="quiet-hint">按 H 或 Esc 返回建造 · 此刻，只需欣赏</div><div class="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true"></section></div><input type="file" id="import-file" accept=".json,application/json" hidden>`;
     this.root.addEventListener('click',event=>{
       const el=event.target.closest('button');if(!el)return;
@@ -57,9 +58,9 @@ export class UI {
     this.showCategory('home');this.refresh();
   }
   showCategory(id){this.category=id;this.root.querySelectorAll('[data-category]').forEach(el=>el.classList.toggle('active',el.dataset.category===id));
-    this.root.querySelector('#cards').innerHTML=CATALOG.filter(a=>a.category===id).map(a=>`<button class="asset-card" data-asset="${a.id}" draggable="true" aria-label="建造${a.name}"><span class="asset-size">${a.w*2}×${a.d*2}</span><img src="${this.app.thumbnail(a.id)}" alt="${a.name}" draggable="false"><b>${a.name}</b><small>${a.kind==='bridge'?'连接河流两岸':a.kind==='road'?'按住拖动铺设':'点击或拖入城市'}</small></button>`).join('');this.refreshActive();
+    this.root.querySelector('#cards').innerHTML=CATALOG.filter(a=>a.category===id).map(a=>`<button class="asset-card" data-asset="${a.id}" draggable="true" aria-label="建造${a.name}"><span class="asset-size">${a.w*CELL}×${a.d*CELL} m</span><img src="${this.app.thumbnail(a.id)}" alt="${a.name}" draggable="false"><b>${a.name}</b><small>${a.kind==='bridge'?'连接河流两岸':a.kind==='road'?'按住拖动铺设':'点击或拖入城市'}</small></button>`).join('');this.refreshActive();
   }
-  refreshActive(){this.root.querySelectorAll('[data-asset]').forEach(el=>el.classList.toggle('active',this.app.buildType===el.dataset.asset));this.root.querySelectorAll('.toolbar [data-action]').forEach(el=>el.classList.toggle('active',({select:'select',erase:'erase',road:'road',trees:'tree'}[el.dataset.action])===(this.app.buildType||this.app.mode)));}
+  refreshActive(){this.root.querySelectorAll('[data-asset]').forEach(el=>el.classList.toggle('active',(this.app.buildType??this.app.editor?.type)===el.dataset.asset));this.root.querySelectorAll('.toolbar [data-action]').forEach(el=>el.classList.toggle('active',({select:'select',erase:'erase',road:'road',trees:'tree','draw-parcel':'parcel'}[el.dataset.action])===(this.app.buildType||this.app.mode)));}
   refresh(){
     const city=this.app.city,env=city.environment;
     this.root.querySelector('#city-name').textContent=city.name;
@@ -72,14 +73,18 @@ export class UI {
     this.root.querySelector('#wind-label').textContent=env.wind<.2?'轻拂':env.wind<.65?'微风':'起风了';
     this.root.querySelector('#wind').value=env.wind;this.root.querySelector('#quality').value=env.quality;this.root.querySelector('#time-speed').value=env.speed;
     this.clock();this.refreshActive();
-    const selected=city.entities.get(this.app.selected),panel=this.root.querySelector('.selection-panel');panel.hidden=!selected;
-    if(selected){
-      const item=BY_ID[selected.type],[w,d]=entityDimensions(selected);
-      this.root.querySelector('#selected-name').textContent=item.name;
-      this.root.querySelector('#selected-meta').textContent=selected.pose?`${w*CELL} × ${d*CELL} 米 · 自定义地块`:`${w*2} × ${d*2} 小格 · ${w*CELL} × ${d*CELL} 米`;
-      for(const action of ['move','rotate','copy'])this.root.querySelector(`[data-action=${action}]`).disabled=!!selected.pose;
-      this.root.querySelector('[data-action=color]').disabled=!item.floors;
-    }
+    this.refreshSelection();
+  }
+  refreshSelection(){
+    const selected=this.app.city.entities.get(this.app.selected),parcel=this.app.city.parcels.get(this.app.selectedParcel);
+    const panel=this.root.querySelector('.selection-panel');panel.hidden=(!selected&&!parcel)||!!this.app.editor?.active;
+    if(panel.hidden)return;
+    const item=BY_ID[selected?.type],size=selected?entityDimensions(selected).map(n=>n*CELL).join(' × '):'';
+    const metres=n=>Number(n.toFixed(2));
+    panel.querySelector('#selected-name').textContent=item?.name??'空地块';
+    panel.querySelector('#selected-meta').textContent=parcel?`${metres(parcel.width)} × ${metres(parcel.depth)} 米地块 · ${metres(parcel.angle)}°${item?` · 建筑 ${size} 米`:' · 从目录选择建筑'}`:`${size} 米 · 格网物件`;
+    const shown={'edit-lot':!!parcel,'edit-building':!!selected?.pose,move:!!selected&&!parcel,rotate:!!selected&&!parcel,copy:!!selected,color:!!item?.floors,focus:true,delete:true};
+    for(const button of panel.querySelectorAll('[data-action]'))button.hidden=!shown[button.dataset.action];
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}
   hint(text){const el=this.root.querySelector('#mode-hint');el.textContent=text;el.hidden=!text;}
@@ -103,6 +108,6 @@ export class UI {
       <div class="save-list">${list.sort((a,b)=>b.date-a.date).map(s=>`<div class="save-row"><div><b>${escape(s.name)} ${s.id==='autosave'?'· 自动保存':labels[s.kind]?`· ${labels[s.kind]}`:''}</b><span>${new Date(s.date).toLocaleString('zh-CN')} · ${s.entityCount===null?'物件数量无法读取':`${s.entityCount} 个物件`}</span></div><div><button class="button" data-action="load-city" data-save-id="${escape(s.id)}">打开</button><button class="button" data-action="export-save" data-save-id="${escape(s.id)}">导出原记录</button></div></div>`).join('')||'<p>这里将收藏你的城市。</p>'}</div>
       <div class="modal-actions">${button('new-city','plus','新建空白城市')}${button('demo-city','home','打开示范城市')}</div><p>成功打开其他城市时会保留当前城市备份；保留最近 20 份新的切换备份。历史备份、手动收藏和旧城原件不会自动清理。</p>`);
   }
-  help(){this.modal('慢慢来，城市由你决定',`<p>从下方挑一座建筑，点击或拖入城市。道路可以按住左键连续绘制，水面请切换桥梁。</p><div class="help-grid">${[['左键','选择 / 放置'],['右键拖动','旋转视角'],['中键 / 方向键','平移城市'],['滚轮','拉近 / 拉远'],['R','旋转待放置建筑'],['Esc','取消当前操作'],['C','切换自由视角'],['H','隐藏 / 显示界面'],['Ctrl + Z / Y','撤销 / 重做'],['Home','回到城市全景']].map(([k,v])=>`<div><kbd class="key">${k}</kbd> ${v}</div>`).join('')}</div><div class="modal-divider"></div><p>自由观察时可以降到街道附近。收藏镜头，或跟随一辆小车看风景。</p><div class="modal-actions">${button('orbit','compass','环绕城市')}${button('follow','road','跟随车辆')}${button('bookmark','camera','收藏当前镜头')}${button('recall','eye','返回收藏镜头')}</div>`);}
+  help(){this.modal('慢慢来，城市由你决定',`<p>从目录挑一座建筑就能快速放置。也可先用「划定地块」点两个对角，确认后再从目录添加建筑。选中已放置的建筑，可以移动整块或只调整建筑在地块内的位置。道路可以按住左键连续绘制，水面请切换桥梁。</p><div class="help-grid">${[['左键','选择 / 放置'],['右键拖动','旋转视角'],['中键 / 方向键','平移城市'],['滚轮','拉近 / 拉远'],['R','地块编辑时旋转 15°'],['Esc','取消当前操作'],['C','切换自由视角'],['H','隐藏 / 显示界面'],['Ctrl + Z / Y','撤销 / 重做'],['Home','回到城市全景']].map(([k,v])=>`<div><kbd class="key">${k}</kbd> ${v}</div>`).join('')}</div><div class="modal-divider"></div><p>自由观察时可以降到街道附近。收藏镜头，或跟随一辆小车看风景。</p><div class="modal-actions">${button('orbit','compass','环绕城市')}${button('follow','road','跟随车辆')}${button('bookmark','camera','收藏当前镜头')}${button('recall','eye','返回收藏镜头')}</div>`);}
   audio(){this.modal('听见城市的呼吸',`<p>柔和的原创合成音景，陪你造一会儿城。声音仅在你开启后播放。</p>${button('toggle-audio',this.app.sound.enabled?'mute':'sound',this.app.sound.enabled?'关闭声音':'开启声音',true)}<div class="audio-controls"><div><label>轻音乐</label><input class="range" id="music-volume" type="range" min="0" max="1" step=".05" value="${this.app.sound.musicVolume}" aria-label="音乐音量"></div><div><label>风与雨</label><input class="range" id="ambience-volume" type="range" min="0" max="1" step=".05" value="${this.app.sound.ambienceVolume}" aria-label="环境音量"></div></div>`);document.querySelector('#music-volume').oninput=e=>this.app.sound.musicVolume=+e.target.value;document.querySelector('#ambience-volume').oninput=e=>this.app.sound.ambienceVolume=+e.target.value;}
 }

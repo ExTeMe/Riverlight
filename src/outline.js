@@ -44,3 +44,15 @@ export function outlinesOverlap(a,b) {
   }
   return true;
 }
+
+export function outlineContains(points,x,z) {
+  let positive=false,negative=false;
+  for(let i=0;i<points.length;i++){
+    const [a,b]=points[i],[c,d]=points[(i+1)%points.length];
+    const cross=(c-a)*(z-b)-(d-b)*(x-a);
+    positive ||= cross>EDGE_EPSILON;
+    negative ||= cross< -EDGE_EPSILON;
+    if(positive&&negative)return false;
+  }
+  return true;
+}

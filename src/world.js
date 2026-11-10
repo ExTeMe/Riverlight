@@ -1,13 +1,26 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
 import { BANK_STEP, GROUND_Y, riverBanks } from './space.js';
-import { footprintOutline, placementOf } from './parcel.js';
+import { footprintOutline, parcelOutline, placementOf } from './parcel.js';
 import { riverCenter, riverWidth, key, waterAt } from './core.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
+function outlineLines(outline,y){
+  return outline.flatMap(([x,z],i)=>{const [u,v]=outline[(i+1)%outline.length];return [x,y,z,u,y,v];});
+}
+function updateLines(mesh,lines){
+  const g=mesh.geometry,p=g.attributes.position;
+  if(p?.array.length===lines.length){p.array.set(lines);p.needsUpdate=true;}
+  else {if(p)g.dispose();g.setAttribute('position',new T.Float32BufferAttribute(lines,3));}
+  g.computeBoundingSphere();
+}
+function lineLayer(scene,color,opacity=1){
+  const layer=new T.LineSegments(new T.BufferGeometry(),new T.LineBasicMaterial({color,transparent:opacity<1,opacity}));
+  layer.visible=false;scene.add(layer);return layer;
+}
 function landGeometry(cx,cz,terrain) {
   const grass=[],bank=[],edge=[],quay=[];const x0=(cx*CHUNK-.5)*CELL,x1=x0+CHUNK*CELL,z0=(cz*CHUNK-.5)*CELL;
   for(let i=0;i<CHUNK*2;i++){
@@ -42,7 +55,9 @@ export class World {
     this.scene=scene;this.city=city;this.loaded=new Map();this.pickables=[];this.lastRegion='';this.activeCenter=new T.Vector3();
     this.horizon=new T.Mesh(horizonGeometry(this.activeCenter,city.terrain),material('#839e79','ground'));this.horizonCenter=new T.Vector3();scene.add(this.horizon);
     this.grid=new T.GridHelper(128,64,'#839785','#839785');this.grid.position.y=.055;this.grid.material.transparent=true;this.grid.material.opacity=.18;this.grid.visible=false;scene.add(this.grid);
-    this.selection=new T.LineSegments(new T.BufferGeometry(),new T.LineBasicMaterial({color:0xf2d38c}));this.selection.visible=false;scene.add(this.selection);
+    this.selection=lineLayer(scene,0xf2d38c);this.parcelSelection=lineLayer(scene,0x94e2d1);
+    this.previewParcel=lineLayer(scene,0x94e2d1);this.previewFootprint=lineLayer(scene,0xffdc94);
+    this.emptyParcels=lineLayer(scene,0xb7ded2,.65);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.sync(true);
@@ -68,6 +83,13 @@ export class World {
     }
     for(const ck of [...this.loaded.keys()])if(!wanted.has(ck))this.unload(ck);
     this.pickables=[];for(const c of this.loaded.values())this.pickables.push(...c.buildings.children);
+    const span=CELL*CHUNK,bounds={minX:(cx-r)*span,minZ:(cz-r)*span,maxX:(cx+r+1)*span,maxZ:(cz+r+1)*span};
+    const lines=this.city.parcelSpatial.query(bounds).flatMap(id=>{
+      const parcel=this.city.parcels.get(id);
+      return this.city.parcelOwner(parcel)?[]:outlineLines(parcelOutline(parcel),.09);
+    });
+    this.emptyParcels.visible=!!lines.length;
+    if(lines.length)updateLines(this.emptyParcels,lines);
     if(force)this.traffic.rebuild();
   }
   buildChunk(ck,detail){
@@ -97,21 +119,30 @@ export class World {
       const inst=new T.InstancedMesh(mesh.geometry,mesh.material,matrices.length);matrices.forEach((m,i)=>inst.setMatrixAt(i,m));inst.userData.entityIds=ids;inst.castShadow=detail&&mesh.castShadow;inst.receiveShadow=true;inst.computeBoundingSphere();c.buildings.add(inst);
     }
   }
-  select(id){
-    const e=this.city.entities.get(id);if(!e){this.selection.visible=false;return;}
+  select(id,parcelId){
+    const e=this.city.entities.get(id),parcel=e?.pose?.parcel??this.city.parcels.get(parcelId);
+    this.parcelSelection.visible=!!parcel;
+    if(parcel)updateLines(this.parcelSelection,outlineLines(parcelOutline(parcel),.13));
+    if(!e){this.selection.visible=false;return;}
     const outline=footprintOutline(e),height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3;
     const lines=[];
     for(let i=0;i<outline.length;i++){
       const [x,z]=outline[i],[u,v]=outline[(i+1)%outline.length];
       lines.push(x,.12,z,u,.12,v,x,height,z,u,height,v,x,.12,z,x,height,z);
     }
-    const geometry=this.selection.geometry,position=geometry.attributes.position;
-    if(position?.array.length===lines.length){position.array.set(lines);position.needsUpdate=true;}
-    else {
-      if(position)geometry.dispose();
-      geometry.setAttribute('position',new T.Float32BufferAttribute(lines,3));
+    updateLines(this.selection,lines);this.selection.visible=true;
+  }
+  showParcelPreview({parcel,entity,error}){
+    if(!parcel){this.clearPreview();return;}
+    if(entity)this.showPreview(entity,!error);
+    else this.clearPreview();
+    updateLines(this.previewParcel,outlineLines(parcelOutline(parcel),.14));
+    this.previewParcel.material.color.set(error?'#df8970':'#94e2d1');this.previewParcel.visible=true;
+    this.previewFootprint.visible=!!entity;
+    if(entity){
+      updateLines(this.previewFootprint,outlineLines(footprintOutline(entity),.17));
+      this.previewFootprint.material.color.set(error?'#df8970':'#ffdc94');
     }
-    geometry.computeBoundingSphere();this.selection.visible=true;
   }
   showPreview(e,valid){
     const [w,d]=entityDimensions(e);
@@ -119,10 +150,11 @@ export class World {
     if(this.previewKey!==k){this.clearPreview();this.preview=getTemplate(e.type,e.color).clone();this.preview.traverse(o=>{if(o.isMesh){const base=o.material.userData.base.clone();o.material=o.material.clone();o.material.userData.base=base;o.material.transparent=true;o.material.opacity=.55;o.material.depthWrite=false;o.castShadow=false;}});this.scene.add(this.preview);this.previewKey=k;}
     const p=placementOf(e);this.preview.position.set(p.x,.08,p.z);this.preview.scale.set(p.scaleX,1,p.scaleZ);this.preview.rotation.y=p.radians;this.preview.visible=true;
     this.preview.traverse(o=>{if(o.isMesh)o.material.color.copy(o.material.userData.base).lerp(new T.Color(valid?'#9fc0a4':'#d57762'),.3);});
+    if(e.pose){this.hover.visible=false;this.grid.visible=false;return;}
     this.hover.scale.set(w*CELL,d*CELL,1);this.hover.position.set(this.preview.position.x,.06,this.preview.position.z);this.hover.material.color.set(valid?'#6d9975':'#c06a57');this.hover.visible=true;
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;
   }
-  clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh)o.material.dispose();});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;}
+  clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh)o.material.dispose();});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;}
   update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {

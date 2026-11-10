@@ -2,9 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { City, footprintBounds } from '../src/core.js';
 import { createBaseline, createLegacyBaseline, createScene } from '../src/baseline.js';
-import { footprintOutline, parcelOutline, placementOf, usesParcel } from '../src/parcel.js';
+import { footprintOutline, parcelOutline, placementAnchor, placementOf, usesParcel } from '../src/parcel.js';
 import { outlineBounds, outlinesOverlap, transformOutline } from '../src/outline.js';
 import { legacyPlacement, riverBanks } from '../src/space.js';
+import { Matrix4, Scene, Vector3 } from 'three';
+import { World } from '../src/world.js';
+import { getTemplate } from '../src/models.js';
+import { buildWalkNetwork } from '../src/walk-network.js';
 
 test('v1 and v2 baselines retain original grid occupancy, model transforms and river after migration', () => {
   for (const fixture of [createLegacyBaseline(), createBaseline()]) {
@@ -158,4 +162,53 @@ test('parcel resize is atomic and successful resizing supports undo and redo', (
   assert.ok(city.redo());
   assert.equal(city.parcels.get(id).width,width-1);
   assert.deepEqual(new City(city.snapshot()).snapshot(),city.snapshot());
+});
+
+test('empty lots, attachment and moving an occupied lot share one reversible validation path', () => {
+  const city=new City(),parcel={id:'yard',x:-100,z:48,width:16,depth:16,angle:20};
+  assert.ok(city.editParcel(parcel).changed);
+  assert.equal(city.parcelAt(-100,48).id,parcel.id);
+  const building={type:'cottage',color:1,offsetX:.75,offsetZ:-.5,angle:17.5};
+  const attached=city.editParcel(parcel,building);
+  assert.ok(attached.changed);
+  const before=city.snapshot(),oldId=attached.entity.id;
+  assert.equal(city.editParcel(parcel,{...building,offsetX:12}).error,'建筑超出地块边界');
+  assert.equal(city.editParcel({...parcel,x:0},building).error,'地块侵入水域');
+  assert.deepEqual(city.snapshot(),before);
+  const moved=city.editParcel({...parcel,x:-104,z:45,angle:32.6});
+  assert.ok(moved.changed);
+  assert.equal(moved.entity.id,oldId);
+  assert.equal(moved.entity.pose.angle,17.5);
+  assert.equal(moved.entity.pose.offsetX,.75);
+  assert.ok(city.undo());
+  assert.deepEqual(city.snapshot(),before);
+  assert.ok(city.undo());
+  assert.equal(city.parcelOwner(city.parcels.get(parcel.id)),undefined);
+  assert.ok(city.redo());
+  assert.equal(city.parcelOwner(city.parcels.get(parcel.id)).id,oldId);
+});
+
+test('the same building pose drives preview, mesh, selection and connected entrance', () => {
+  const city=new City(),world=new World(new Scene(),city);
+  const parcel={id:'yard',x:-100,z:48,width:12,depth:12,angle:20};
+  const building={type:'cottage',color:1,offsetX:.75,offsetZ:-.5,angle:17.5};
+  const plan=city.planParcelEdit(parcel,building);
+  assert.equal(plan.error,undefined);
+  world.showParcelPreview(plan);
+  const {x,z,radians}=placementOf(plan.entity);
+  assert.deepEqual([world.preview.position.x,world.preview.position.z,world.preview.rotation.y],[x,z,radians]);
+  const preview=world.previewFootprint.geometry.attributes.position.array;
+  const {entity}=city.editParcel(parcel,building);
+  assert.ok(city.place('path',-24,14));assert.ok(city.place('path',-24,15));
+  world.sync(true);world.select(entity.id,parcel.id);
+  const picked=world.pickables.find(mesh=>mesh.userData.entityIds?.includes(entity.id));
+  assert.ok(picked);
+  const matrix=new Matrix4();picked.getMatrixAt(picked.userData.entityIds.indexOf(entity.id),matrix);
+  const location=new Vector3().setFromMatrixPosition(matrix);
+  assert.ok(Math.hypot(location.x-x,location.z-z)<1e-5);
+  const selection=world.selection.geometry.attributes.position.array;
+  assert.deepEqual([selection[0],selection[2],selection[3],selection[5]],[preview[0],preview[2],preview[3],preview[5]]);
+  const anchor=getTemplate(entity.type,entity.color).userData.anchors?.entrance??[0,.14,4.35];
+  const [entryX,,entryZ]=placementAnchor(entity,anchor);
+  assert.ok(buildWalkNetwork(city).destinations.some(n=>Math.hypot(n.x-entryX,n.z-entryZ)<1e-8));
 });

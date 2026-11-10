@@ -3,7 +3,7 @@ import { Water } from 'three/addons/objects/Water.js';
 import { getTemplate, updateMaterials } from './models.js';
 import { CELL, entityDimensions } from './catalog.js';
 import { WATER_Y } from './space.js';
-import { placementOf } from './parcel.js';
+import { placementAnchor, placementOf } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
 
@@ -62,16 +62,11 @@ export class Environment {
     for(const e of sources.slice(0,600)){m.compose(new T.Vector3(e.x*CELL,-e.z*CELL,.13),new T.Quaternion(),new T.Vector3(5,5,1));this.glows.setMatrixAt(count++,m);}this.glows.count=count;this.glows.instanceMatrix.needsUpdate=true;
     this.lightSources=[];
     const addLight=(position,intensity=34,distance=24)=>this.lightSources.push({position,intensity,distance});
-    const up=new T.Vector3(0,1,0);
     for(const e of this.city.entities.values()){
       if(e.type==='park'){
         const anchor=getTemplate(e.type).userData.anchors?.light;
         if(!anchor)continue;
-        const p=placementOf(e),local=new T.Vector3(...anchor);
-        local.x*=p.scaleX;local.z*=p.scaleZ;
-        local.applyAxisAngle(up,p.radians);
-        local.x+=p.x;local.z+=p.z;
-        addLight(local,18,8);
+        addLight(new T.Vector3(...placementAnchor(e,anchor)),18,8);
       }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
         const [w,d]=entityDimensions(e);
         if(e.pose){

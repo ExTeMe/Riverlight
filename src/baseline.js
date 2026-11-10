@@ -43,7 +43,7 @@ export function createLegacyBaseline() {
 }
 
 export const SCENES = [
-  {id:'T01',sceneVersion:3,name:'河畔编辑院',caption:'小屋、庭院与不同尺度的沿街建筑',purpose:'比较斜边相接的小屋与图书馆地块，再看办公楼和商场的尺度。导出资源快照可检查图书馆跨分区占地。',limitations:['样板包含任意角度和地块内偏移，自由放置与缩地的操作面板仍待接入'],target:[-76,0,-16],position:[-30,62,70],spatialProbe:[
+  {id:'T01',sceneVersion:3,name:'河畔编辑院',caption:'小屋、庭院与不同尺度的沿街建筑',purpose:'试用划定地块、移动整块和调整建筑。比较相接的小屋与图书馆地块，再看办公楼和商场的尺度。',limitations:['旧格网建筑沿用原有编辑；地块自由编辑的整条验收由 R2 下一项覆盖'],target:[-76,0,-16],position:[-30,62,70],spatialProbe:[
     {minX:-72,minZ:-24,maxX:-64,maxZ:-6},{minX:-64,minZ:-24,maxX:-24,maxZ:-6},
     {minX:-75,minZ:-58,maxX:-64,maxZ:-40},{minX:-64,minZ:-58,maxX:-50,maxZ:-40}
   ]},

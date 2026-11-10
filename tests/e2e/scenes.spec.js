@@ -27,6 +27,96 @@ async function navigate(page, button) {
   await ready(page);
 }
 
+test('T01 edits parcel and building transforms independently through the UI', async ({page},testInfo)=>{
+  test.setTimeout(180000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T01');await ready(page);
+  const editor=page.getByRole('form',{name:'地块与建筑编辑'});
+  const field=name=>editor.getByLabel(name,{exact:true});
+  const confirm=editor.getByRole('button',{name:'确认'});
+  const read=()=>page.evaluate(async()=>{
+    const {createSaveStore}=await import('/src/storage.js');
+    return (await createSaveStore({name:'riverlight-scenes-T01-standard'}).load('autosave'))?.data;
+  });
+  const save=async()=>{
+    await page.getByRole('button',{name:'保存城市 Ctrl+S',exact:true}).click();
+    await expect(page.getByRole('status')).toHaveText('这一刻，已经为你保存');
+    return read();
+  };
+  const selected=page.locator('.selection-panel');
+  await page.getByRole('button',{name:'建造河畔小屋',exact:true}).click();
+  await expect(field('15° 角度吸附')).toBeChecked();
+  await field('中心 X').fill('-120.24');await field('中心 Z').fill('48.24');
+  await field('宽度').fill('14');await field('进深').fill('14');await field('地块角度 °').fill('19');
+  await expect(confirm).toBeEnabled();
+  await page.screenshot({path:testInfo.outputPath('parcel-placement.png')});
+  await confirm.click();
+  await expect(selected.locator('#selected-name')).toHaveText('河畔小屋');
+  const placed=await save(),building=placed.entities.at(-1),id=building.parcelId;
+  const initial=placed.parcels.find(p=>p.id===id);
+  expect(initial).toMatchObject({x:-120,z:48,width:14,depth:14,angle:15});
+
+  await selected.getByRole('button',{name:'调整建筑'}).click();
+  await expect(field('中心 X')).toBeHidden();
+  await field('位置吸附').selectOption('0.25');await field('15° 角度吸附').uncheck();
+  await field('局部 X（米）').fill('0.63');await field('局部 Z（米）').fill('-0.38');await field('相对角度 °').fill('17.5');
+  await confirm.click();
+  const shifted=await save(),local=shifted.entities.find(e=>e.id===building.id);
+  expect(shifted.parcels.find(p=>p.id===id)).toEqual(initial);
+  expect(local).toMatchObject({offsetX:.75,offsetZ:-.5,angle:17.5});
+
+  await selected.getByRole('button',{name:'移动整块'}).click();
+  await expect(field('局部 X（米）')).toBeHidden();
+  await field('位置吸附').selectOption('0');
+  await field('中心 X').fill('-120.31');await field('中心 Z').fill('50.13');await field('地块角度 °').fill('23.6');
+  await confirm.click();
+  const moved=await save();
+  expect(moved.parcels.find(p=>p.id===id)).toMatchObject({x:-120.31,z:50.13,angle:23.6});
+  expect(moved.entities.find(e=>e.id===building.id)).toEqual(local);
+
+  await selected.getByRole('button',{name:'移动整块'}).click();
+  await field('宽度').fill('3');
+  await expect(editor.locator('.parcel-feedback')).toHaveText('建筑超出地块边界');
+  await expect(confirm).toBeDisabled();
+  await field('宽度').press('Escape');await expect(editor).toBeHidden();
+  await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
+  expect(await read()).toEqual(moved);
+  expect(errors).toEqual([]);
+});
+
+test('T01 draws a lot on the map and places a building in it',async({page})=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T01');await ready(page);
+  const city={version:3,terrain:'meander',name:'划地测试',radius:64,nextId:1,entities:[],parcels:[]};
+  const camera={position:[-78,40,-18],target:[-100,0,-50]};
+  await page.locator('#import-file').setInputFiles({name:'empty.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify({city,camera}))});
+  await expect(page.locator('#city-name')).toHaveText(city.name);
+  const editor=page.getByRole('form',{name:'地块与建筑编辑'}),confirm=editor.getByRole('button',{name:'确认'});
+  await page.getByRole('button',{name:'划定地块',exact:true}).click();
+  const width=editor.getByLabel('宽度',{exact:true});
+  const previousWidth=await width.inputValue();
+  const canvas=page.locator('#scene');
+  await canvas.click({position:{x:480,y:320}});
+  await canvas.click({position:{x:570,y:355}});
+  await expect(width).not.toHaveValue(previousWidth);
+  await width.fill('16');await editor.getByLabel('进深',{exact:true}).fill('16');
+  await confirm.click();
+  await expect(page.locator('#selected-name')).toHaveText('空地块');
+  await page.getByRole('button',{name:'建造河畔小屋',exact:true}).click();
+  await expect(editor.getByRole('heading')).toHaveText('在地块内放置河畔小屋');
+  await confirm.click();
+  await expect(page.locator('#selected-name')).toHaveText('河畔小屋');
+  await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
+  const saved=await page.evaluate(async()=>{
+    const {createSaveStore}=await import('/src/storage.js');
+    return (await createSaveStore({name:'riverlight-scenes-T01-standard'}).load('autosave')).data;
+  });
+  expect(saved.parcels).toHaveLength(1);expect(saved.entities).toHaveLength(1);
+  expect(saved.entities[0].parcelId).toBe(saved.parcels[0].id);
+  expect(errors).toEqual([]);
+});
+
 test('T01 parcel import preserves old files and restores an angled building on reload', async ({page}, testInfo) => {
   test.setTimeout(180000);
   const errors=[];
