@@ -1,7 +1,9 @@
 import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
-import { updateMaterials } from './models.js';
-import { CELL, BY_ID, dimensions, entityDimensions } from './catalog.js';
+import { getTemplate, updateMaterials } from './models.js';
+import { CELL, entityDimensions } from './catalog.js';
+import { WATER_Y } from './space.js';
+import { placementAnchor, placementOf } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
 
@@ -42,7 +44,7 @@ export class Environment {
     scene.fog=new T.FogExp2('#dce0cc',.0016);
     this.skyUniforms={topColor:{value:new T.Color('#86b6c2')},bottomColor:{value:new T.Color('#e7e6d3')},sunDirection:{value:new T.Vector3()},uTime:{value:0},clouds:{value:.2},night:{value:0}};
     this.sky=new T.Mesh(new T.SphereGeometry(2200,24,16),new T.ShaderMaterial({vertexShader:skyVertex,fragmentShader:skyFragment,uniforms:this.skyUniforms,side:T.BackSide,depthWrite:false}));scene.add(this.sky);
-    this.water=new Water(new T.PlaneGeometry(8000,8000),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=-.4;scene.add(this.water);
+    this.water=new Water(new T.PlaneGeometry(8000,8000),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=WATER_Y;scene.add(this.water);
     this.particles={};
     for(const kind of ['rain','snow']){const count=kind==='rain'?2500:1500;const positions=new Float32Array(count*3);for(let i=0;i<count;i++){positions[i*3]=(Math.random()-.5)*210;positions[i*3+1]=Math.random()*100;positions[i*3+2]=(Math.random()-.5)*210;}const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(positions,3));const m=new T.PointsMaterial({color:kind==='rain'?'#c9dcdd':'#fff9e9',size:kind==='rain'?1.6:.55,map:spriteTexture(kind),transparent:true,opacity:.7,depthWrite:false,sizeAttenuation:true});const mesh=new T.Points(g,m);mesh.frustumCulled=false;mesh.visible=false;scene.add(mesh);this.particles[kind]={mesh,positions};}
     const leafGeo=new T.PlaneGeometry(.28,.15);this.leaves=new T.InstancedMesh(leafGeo,new T.MeshStandardMaterial({color:'#c79145',side:T.DoubleSide,roughness:1}),100);this.leaves.instanceMatrix.setUsage(T.DynamicDrawUsage);this.leaves.frustumCulled=false;scene.add(this.leaves);
@@ -54,11 +56,26 @@ export class Environment {
     this.visualHour=city.environment.hour;this.refreshSources();
   }
   refreshSources(){
-    this.leafSources=[...this.city.entities.values()].filter(e=>['tree','cherry','park','grove','cottage','sage-house'].includes(e.type));this.puddles.refresh(this.city);
+    this.leafSources=[...this.city.entities.values()].filter(e=>['tree','cherry','park','grove','cottage','sage-house'].includes(e.type))
+      .map(e=>e.pose?placementOf(e):{x:e.x*CELL,z:e.z*CELL});this.puddles.refresh(this.city);
     const sources=[...this.city.entities.values()].filter(e=>e.type==='lamp'||(e.type==='road'&&(e.x+e.z)%6===0));const m=new T.Matrix4();let count=0;
     for(const e of sources.slice(0,600)){m.compose(new T.Vector3(e.x*CELL,-e.z*CELL,.13),new T.Quaternion(),new T.Vector3(5,5,1));this.glows.setMatrixAt(count++,m);}this.glows.count=count;this.glows.instanceMatrix.needsUpdate=true;
-    this.lightSources=[...this.city.entities.values()].filter(e=>['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)).map(e=>{const [w,d]=entityDimensions(e);return new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL);});
-    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])this.lightSources.push(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
+    this.lightSources=[];
+    const addLight=(position,intensity=34,distance=24)=>this.lightSources.push({position,intensity,distance});
+    for(const e of this.city.entities.values()){
+      if(e.type==='park'){
+        const anchor=getTemplate(e.type).userData.anchors?.light;
+        if(!anchor)continue;
+        addLight(new T.Vector3(...placementAnchor(e,anchor)),18,8);
+      }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
+        const [w,d]=entityDimensions(e);
+        if(e.pose){
+          const p=placementOf(e),front=(d-1)*CELL/2;
+          addLight(new T.Vector3(p.x+Math.sin(p.radians)*front,3.2,p.z+Math.cos(p.radians)*front));
+        }else addLight(new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL));
+      }
+    }
+    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])addLight(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
   }
   update(dt,camera,focus){
     this.time+=dt;const e=this.city.environment;this.water.position.x=focus.x;this.water.position.z=focus.z;
@@ -83,14 +100,19 @@ export class Environment {
     this.water.material.uniforms.distortionScale.value=.24+e.wind*.7;
     updateMaterials(e.season,this.night,this.wet,this.snow,this.time,e.wind,dt);
     this.puddles.update(this.wet,this.time,e.quality,focus);this.glows.visible=this.night>.02;this.glows.material.opacity=this.night*.3;
-    const nearby=this.lightSources.slice().sort((a,b)=>a.distanceToSquared(focus)-b.distanceToSquared(focus));this.localLights.forEach((light,i)=>{if(nearby[i])light.position.copy(nearby[i]);light.intensity=nearby[i]?this.night*34:0;});
+    const nearby=this.lightSources.slice().sort((a,b)=>a.position.distanceToSquared(focus)-b.position.distanceToSquared(focus));
+    this.localLights.forEach((light,i)=>{
+      const source=nearby[i];
+      if(source){light.position.copy(source.position);light.distance=source.distance;}
+      light.intensity=source?this.night*source.intensity:0;
+    });
     for(const [kind,{mesh,positions}]of Object.entries(this.particles)){
       mesh.userData.amount=T.MathUtils.damp(mesh.userData.amount||0,e.weather===kind?1:0,1.3,dt);mesh.material.opacity=.7*mesh.userData.amount;mesh.visible=mesh.userData.amount>.01;if(!mesh.visible)continue;mesh.position.set(focus.x,0,focus.z);
       for(let i=0;i<positions.length;i+=3){positions[i+1]-=dt*(kind==='rain'?43:3.4);positions[i]+=dt*e.wind*(kind==='rain'?5:2)+Math.sin(this.time+i)*dt*.3;if(positions[i+1]<0){positions[i+1]=100;positions[i]=(Math.random()-.5)*210;positions[i+2]=(Math.random()-.5)*210;}if(positions[i]>105)positions[i]=-105;}mesh.geometry.attributes.position.needsUpdate=true;
     }
     const matrix=new T.Matrix4(),q=new T.Quaternion(),pos=new T.Vector3(),scale=new T.Vector3();
     this.leaves.visible=e.season==='autumn'&&this.leafSources.length>0;
-    if(this.leaves.visible)for(let i=0;i<100;i++){const src=this.leafSources[i%this.leafSources.length],phase=(this.time*.22+i*.613)%1;pos.set(src.x*CELL+Math.sin(i+this.time*.7)*1.7+phase*e.wind*3,4.4*(1-phase)+.05,src.z*CELL+Math.cos(i+this.time*.6));q.setFromEuler(new T.Euler(this.time+i,phase*5,i));matrix.compose(pos,q,scale.setScalar(1));this.leaves.setMatrixAt(i,matrix);}this.leaves.instanceMatrix.needsUpdate=true;
+    if(this.leaves.visible)for(let i=0;i<100;i++){const src=this.leafSources[i%this.leafSources.length],phase=(this.time*.22+i*.613)%1;pos.set(src.x+Math.sin(i+this.time*.7)*1.7+phase*e.wind*3,4.4*(1-phase)+.05,src.z+Math.cos(i+this.time*.6));q.setFromEuler(new T.Euler(this.time+i,phase*5,i));matrix.compose(pos,q,scale.setScalar(1));this.leaves.setMatrixAt(i,matrix);}this.leaves.instanceMatrix.needsUpdate=true;
     this.ripples.visible=storm;
     if(storm)for(let i=0;i<85;i++){const phase=(this.time*.9+i*.347)%1;const z=focus.z+Math.sin(i*71.1)*70,x=Math.sin(i*23.7)*(riverWidth(z,this.city.terrain)-2)+riverCenter(z,this.city.terrain);pos.set(x,-.39,z);q.setFromEuler(new T.Euler(-Math.PI/2,0,0));matrix.compose(pos,q,scale.setScalar(phase*.5));this.ripples.setMatrixAt(i,matrix);}this.ripples.instanceMatrix.needsUpdate=true;
     const envKey=`${Math.floor(h/2)}-${e.weather}`;

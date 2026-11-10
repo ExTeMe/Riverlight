@@ -1,3 +1,5 @@
+import { CITY_VERSION, supportedCityVersion } from './city-format.js';
+
 const RECORDS = 'cities';
 const METADATA = 'save-metadata';
 export const BACKUP_LIMIT = 20;
@@ -83,10 +85,10 @@ export function createSaveStore({ indexedDB = globalThis.indexedDB,
       existing.onsuccess = () => {
         try {
           const original = existing.result;
-          if (original && ![1, 2].includes(original.data?.version)) {
+          if (original && !supportedCityVersion(original.data?.version)) {
             throw new Error('原存档格式未知，已阻止覆盖');
           }
-          if (original?.data?.version === 1) {
+          if (original?.data?.version < CITY_VERSION) {
             put({ ...original, id: makeId('original'), kind: 'original' });
           }
           if (backup) put(backup);

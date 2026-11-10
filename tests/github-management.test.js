@@ -86,6 +86,27 @@ test('compensation restores a saved close receipt after interruption without app
   assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
 });
 
+test('a fresh explicit confirmation recovers premature closure without inventing a past close approval', async () => {
+  const f = closeFixture();
+  f.comments[0].created_at = '2026-10-15T03:00:00Z'; // Preparation was published after the close.
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner'], f.snapshot);
+  assert.equal(f.writes.length, 0);
+  const confirmation = { id: 31, user: { login: 'other', type: 'User' }, created_at: '2026-10-15T04:00:00Z',
+    body: '## 视觉验收\n\n- **验收结论**：通过\n- **验收准备**：https://github.com/owner/repo/issues/1#issuecomment-10' };
+  f.comments.push(confirmation);
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(f.writes.length, 0, 'unauthorized recovery is rejected');
+  confirmation.user.login = 'owner';
+  await reconcileAcceptanceRecord(f.api, 'owner/repo', f.issue, ['owner']);
+  assert.equal(f.issue.state, 'closed');
+  assert.equal(f.events.length, 1, 'no reopen or replacement close is needed');
+  assert.equal(f.writes.some(write => write.endpoint.endsWith('/comments')), false, 'no historical close receipt is fabricated');
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), true);
+  assert.match(f.issue.body, /\*\*确认来源\*\*：https:\/\/github.com\/owner\/repo\/issues\/1#issuecomment-31/);
+  f.events.push({ id: 21, event: 'reopened', created_at: '2026-10-15T05:00:00Z' });
+  assert.equal(await approvalSurvivesReopening(f.api, 'owner/repo', f.issue), false);
+});
+
 test('close receipts cannot survive reopening, another closure, forged authors or lost permission', async () => {
   const f = closeFixture();
   await reconcileCloseAcceptance(f.api, 'owner/repo', f.issue, ['owner'], f.snapshot);
@@ -126,6 +147,38 @@ test('management skips discussions and reuses safe reads without hiding receipt 
   assert.equal(reads, 1);
   await api('repos/owner/repo/issues/1/comments', 'POST', {}); await api.all('repos/owner/repo/issues/1/comments');
   assert.equal(reads, 2);
+});
+
+test('comment filtering retains edits and deletions of commands while discussions make no API calls', async () => {
+  const headings = ['任务认领', '认领更新', '任务交接', '视觉验收', '客观验收'];
+  for (const heading of headings) for (const level of ['##', '###']) {
+    const body = `${level} ${heading}\r\n\r\nfields`;
+    for (const action of ['created', 'deleted']) {
+      assert.equal(managementEventRelevant('issue_comment', { action, comment: { body } }), true);
+    }
+    assert.equal(managementEventRelevant('issue_comment', {
+      action: 'edited', comment: { body: 'removed command' }, changes: { body: { from: body } },
+    }), true);
+  }
+  for (const action of ['claim', 'touch', 'release', 'approve-visual', 'approve-objective']) {
+    assert.equal(managementEventRelevant('issue_comment', { comment: { body: `/riverlight ${action} {}` } }), true);
+  }
+  assert.equal(managementEventRelevant('issue_comment', { issue: { pull_request: {} }, comment: { body: '## 任务认领\nfields' } }), false);
+  assert.equal(managementEventRelevant('issues', { action: 'closed' }), true);
+  const temporary = mkdtempSync(path.join(tmpdir(), 'riverlight-management-test-'));
+  try {
+    const eventPath = path.join(temporary, 'event.json');
+    for (const body of ['### 普通讨论\ntext', '/riverlight unknown {}', '## 任务认领补充\ntext']) {
+      writeFileSync(eventPath, JSON.stringify({ action: 'edited', comment: { body }, changes: { body: { from: 'ordinary discussion' } } }));
+      let calls = 0;
+      await runManagement({ GITHUB_ACTIONS: 'true', GITHUB_REPOSITORY: 'owner/repo',
+        GITHUB_EVENT_NAME: 'issue_comment', GITHUB_EVENT_PATH: eventPath }, async () => { calls++; throw new Error('Unexpected API call'); });
+      assert.equal(calls, 0);
+    }
+  } finally {
+    if (!temporary.startsWith(path.join(tmpdir(), 'riverlight-management-test-'))) throw new Error('Unsafe test cleanup target.');
+    rmSync(temporary, { recursive: true, force: true });
+  }
 });
 
 test('prepared acceptance binds an authorized human confirmation and refills canonical fields', async () => {

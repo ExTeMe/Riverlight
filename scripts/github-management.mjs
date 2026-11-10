@@ -770,5 +770,5 @@ export async function runManagement(env = process.env, request = fetch) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runManagement().catch(error => { console.error(error.message); process.exitCode = 1; });
+  console.log('Legacy project management retired: no claims, review registration or Project synchronization.');
 }

@@ -62,11 +62,12 @@ macOS 使用 Cmd 替代 Ctrl。完整操作说明可在游戏中的「操作指�
 项目使用 Three.js、Vite 和 Blender，生产构建为静态文件。
 
 ```sh
-npm test
 npm run check:privacy
 npm run build
 npm run preview
 ```
+
+GitHub Actions 只运行隐私、文档及构建/产物检查。需要排错时可在本地运行 `npm test` 或 `npm run test:browser`，不作为每次提交的固定步骤。
 
 开发任务和缺陷直接在 [GitHub Issues](https://github.com/ExTeMe/Riverlight/issues) 与 [Projects](https://github.com/ExTeMe/Riverlight/projects) 查看。开始参与前阅读 [贡献指南](CONTRIBUTING.md) 与 [开发流程](docs/GIT_WORKFLOW.md)；模型来源和制作方式见 [素材说明](docs/ASSETS.md)。开发预览显示源码版本，反馈时可一并提供。
 
