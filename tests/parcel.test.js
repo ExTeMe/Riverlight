@@ -9,12 +9,13 @@ import { Matrix4, Scene, Vector3 } from 'three';
 import { World } from '../src/world.js';
 import { getTemplate } from '../src/models.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
+import { CITY_VERSION } from '../src/city-format.js';
 
 test('v1 and v2 baselines retain original grid occupancy, model transforms and river after migration', () => {
   for (const fixture of [createLegacyBaseline(), createBaseline()]) {
     const before = new City(fixture.city), snapshot = before.snapshot();
     const after = new City(JSON.parse(JSON.stringify(snapshot)));
-    assert.equal(snapshot.version, 3);
+    assert.equal(snapshot.version, CITY_VERSION);
     assert.equal(after.terrain, before.terrain);
     assert.deepEqual(after.occupancy, before.occupancy);
     assert.deepEqual(after.chunks, before.chunks);
@@ -116,7 +117,7 @@ test('roads can clear a rotated corner and yard props collide with the actual bu
   assert.ok(city.place('flowers',-18,-8));
   assert.equal(city.place('flowers',-20,-8),false);
   assert.deepEqual(new City(city.snapshot()).snapshot(),city.snapshot());
-  raw.entities.unshift({id:3,type:'road',color:0,x:-19,z:-7,rotation:0});
+  raw.entities.unshift({id:3,type:'road',color:0,center:[-76,.04,-28],rotation:0});
   assert.throws(()=>new City(raw),/这里已有地块/);
 });
 

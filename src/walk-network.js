@@ -2,11 +2,11 @@ import { CELL, BY_ID } from './catalog.js';
 import { placementAnchor } from './parcel.js';
 import { riverCenter, riverWidth } from './core.js';
 import { getTemplate } from './models.js';
+import { ROAD_DIRECTIONS, cornerHeight, cornerPoint, hasTraffic } from './road-network.js';
 
-const roadTypes=new Set(['road','bridge']);
-const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
 const length=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 export function buildWalkNetwork(city){
+  const network=city.roadNetwork;
   const nodes=new Map(),connectors=[],roadNodes=new Set(),destinations=[];
   const node=(x,y,z,kind='sidewalk')=>{
     const id=`${x.toFixed(3)},${y.toFixed(3)},${z.toFixed(3)}`;
@@ -23,47 +23,52 @@ export function buildWalkNetwork(city){
       if(Math.abs(x-riverCenter(z,city.terrain))<riverWidth(z,city.terrain)-.15&&e?.type!=='bridge'&&e?.type!=='pier')return false;
     }return true;
   };
-  for(const e of city.entities.values())if(roadTypes.has(e.type)){
-    const x=e.x*CELL,z=e.z*CELL,y=e.type==='bridge'?.57:.12;
-    const adjacent=dirs.map(([dx,dz])=>city.at(e.x+dx,e.z+dz));
-    const exits=dirs.filter((_,i)=>roadTypes.has(adjacent[i]?.type));
-    const corner=e.type!=='bridge'&&exits.length===2&&exits[0][0]!==-exits[1][0]&&exits[0][1]!==-exits[1][1];
+  for(const segment of network.segments.values())if(hasTraffic(segment.kind)){
+    const {center:[x,,z],profile,ports,mask,corner}=segment,y=profile.walkY,offset=profile.sidewalks[1].offset;
     const add=(px,pz,py=y)=>{const n=node(x+px,py,z+pz);roadNodes.add(n);return n;};
     if(corner){
-      const sx=exits.find(d=>d[0])[0],sz=exits.find(d=>d[1])[1];
-      for(const radius of [.3,3.7]){let prev;for(let i=0;i<=12;i++){
-        const a=i*Math.PI/24,n=add(sx*(2-radius*Math.sin(a)),sz*(2-radius*Math.cos(a)));link(prev,n);prev=n;
+      const [sx,sz]=corner,half=profile.width/2;
+      const start=ports.find(port=>ROAD_DIRECTIONS[port.side][0]===sx).walkY;
+      const end=ports.find(port=>ROAD_DIRECTIONS[port.side][1]===sz).walkY;
+      for(const radius of [half-offset,half+offset]){let prev;for(let i=0;i<=12;i++){
+        const [dx,dz]=cornerPoint(sx,sz,radius,i*Math.PI/24);
+        const n=add(dx,dz,cornerHeight(y,start,end,i/12));link(prev,n);prev=n;
       }}
     }else{
-      const corners=[add(-1.7,-1.7),add(1.7,-1.7),add(1.7,1.7),add(-1.7,1.7)];
+      const corners=[add(-offset,-offset),add(offset,-offset),add(offset,offset),add(-offset,offset)];
       // Each edge is pavement unless a road exits through it. Cross only at marked junctions.
       const edgeDirs=[3,0,2,1];
       for(let i=0;i<4;i++){
-        const crosses=roadTypes.has(adjacent[edgeDirs[i]]?.type);
-        if(!crosses||exits.length!==2)link(corners[i],corners[(i+1)%4],crosses?'crossing':'walk');
+        const crosses=mask&(1<<edgeDirs[i]);
+        if(!crosses||ports.length!==2)link(corners[i],corners[(i+1)%4],crosses?'crossing':'walk');
       }
-      dirs.forEach(([dx,dz],i)=>{if(!roadTypes.has(adjacent[i]?.type))return;
-        const neighbourY=adjacent[i].type==='bridge'?.57:.12,edgeY=(y+neighbourY)/2;
+      for(const port of ports){
+        const [dx,dz]=ROAD_DIRECTIONS[port.side];
         for(const side of [-1,1]){
-          const end=add(dx*2-dz*side*1.7,dz*2+dx*side*1.7,edgeY);
+          const end=node(port.point[0]-dz*side*offset,port.walkY,port.point[2]+dx*side*offset);
+          roadNodes.add(end);
           const near=corners.reduce((best,n)=>length(n,end)<length(best,end)?n:best);link(near,end);
         }
-      });
+      }
     }
   }
   // Arc endpoints share the neighbouring straight pavement's world coordinates.
   const roadList=[...roadNodes];
   const nearest=(n,candidates,max,ignore)=>{let best,dist=max;for(const candidate of candidates){const d=length(n,candidate);if(d>0.01&&d<dist&&clear(n,candidate,ignore)){best=candidate;dist=d;}}return best;};
   const connect=(n,candidates,max,ignore)=>{const to=nearest(n,candidates,max,ignore);if(to){link(n,to);connectors.push([n,to]);}return to;};
-  const paths=[];
-  for(const e of city.entities.values())if(e.type==='path')paths.push(node(e.x*CELL,.19,e.z*CELL,'path'));
-  for(const p of paths){for(const q of paths)if(q!==p&&length(p,q)<=4.05&&clear(p,q))link(p,q);connect(p,roadList,4.8);}
+  const pathNodes=new Map();
+  for(const s of network.segments.values())if(s.kind==='path')pathNodes.set(s.id,node(s.center[0],s.profile.walkY,s.center[2],'path'));
+  const paths=[...pathNodes.values()];
+  for(const [id,p] of pathNodes){
+    for(const port of network.segments.get(id).ports){const q=pathNodes.get(port.neighborId);if(clear(p,q))link(p,q);}
+    connect(p,roadList,4.8);
+  }
   const quays=[];
   if(roadList.length||paths.length)for(const side of [-1,1]){
     let prev;
     for(let z=-108;z<=108;z+=2){
       const x=riverCenter(z,city.terrain)+side*(riverWidth(z,city.terrain)+1.7),e=entityAt(x,z);
-      if(e&&(BY_ID[e.type].floors||roadTypes.has(e.type)||e.type==='amusement')){prev=null;continue;}
+      if(e&&(BY_ID[e.type].floors||hasTraffic(e.type)||e.type==='amusement')){prev=null;continue;}
       const n=node(x,.12,z,'quay');if(prev&&clear(prev,n))link(prev,n);prev=n;quays.push(n);
       connect(n,roadList,2.7);if(z%4===0)connect(n,paths,4);
     }
@@ -83,7 +88,7 @@ export function buildWalkNetwork(city){
     for(let i=0;i<queue.length;i++){const v=queue[i];group.push(v);for(const id of v.edges.keys())if(!seen.has(id)&&nodes.has(id)){seen.add(id);queue.push(nodes.get(id));}}
     if(group.length>6)components.push(group);
   }
-  return {nodes,components,connectors,destinations};
+  return {revision:network.revision,nodes,components,connectors,destinations};
 }
 
 export function walkingRoute(network,start,seed,steps=55){

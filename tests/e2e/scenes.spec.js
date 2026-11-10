@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { createBaseline, createLegacyBaseline } from '../../src/baseline.js';
+import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
 import { placementOf } from '../../src/parcel.js';
 
@@ -197,7 +197,7 @@ test('T01 parcel import preserves old files and restores an angled building on r
     expect(saved.original.input).toEqual(legacy);
     expect(saved.original.camera).toEqual(legacy.camera);
     const old=new City(legacy.city),current=new City(saved.current.data);
-    expect(saved.current.data.version).toBe(3);
+    expect(saved.current.data.version).toBe(4);
     expect(current.terrain).toBe(old.terrain);
     for(const [id,entity] of old.entities){
       expect(current.entities.get(id)).toEqual(entity);
@@ -224,6 +224,36 @@ test('T01 parcel import preserves old files and restores an angled building on r
   await page.getByRole('button',{name:'我的城市',exact:true}).click();
   const exported=await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}));
   expect(JSON.parse(exported.toString()).city).toEqual(city);
+  expect(errors).toEqual([]);
+});
+
+test('T02 migrates roads and refreshes the shared topology after removal and undo',async({page},testInfo)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T02');await ready(page);
+  const city=new City(createScene('T02').city),target=city.at(-24,-6);
+  expect(target.type).toBe('road');
+  await importCity(page,{city:{...city.snapshot(3),name:'T02 · 道路迁移副本'},camera:{target:[-96,0,-24],position:[-61,30,16]}});
+  await expect(page.locator('#city-name')).toHaveText('T02 · 道路迁移副本');
+  const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+  expect(await stats()).toMatchObject({roadRevision:0,walkRoadRevision:0,entities:city.entities.size});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await page.locator('#scene').click({position:{x:480,y:320}});
+  await expect(page.locator('#selected-name')).toHaveText('城市道路');
+  expect((await stats()).selected).toBe(target.id);
+  await page.locator('.selection-panel').getByRole('button',{name:'拆除',exact:true}).click();
+  expect(await stats()).toMatchObject({roadRevision:1,walkRoadRevision:1,entities:city.entities.size-1});
+  await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+  expect(await stats()).toMatchObject({roadRevision:2,walkRoadRevision:2,entities:city.entities.size});
+  await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
+  expect(await stats()).toMatchObject({roadRevision:2,walkRoadRevision:2});
+  await page.screenshot({path:testInfo.outputPath('t02-restored-road.png')});
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const exported=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+  expect(exported.city.roads).toEqual({layout:'grid-v1',revision:2});
+  expect(exported.city.entities.find(row=>row.id===target.id)).toMatchObject({type:'road',center:[-96,.04,-24]});
+  const restored=new City(exported.city);
+  expect(restored.roadNeighbors(restored.entities.get(target.id)).map(e=>e.id)).toEqual(city.roadNeighbors(target).map(e=>e.id));
   expect(errors).toEqual([]);
 });
 

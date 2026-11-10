@@ -2,8 +2,6 @@ import { BY_ID, CELL } from './catalog.js';
 import { BANK_STEP, legacyFootprintBounds, legacyPlacement, riverBanks } from './space.js';
 import { EDGE_EPSILON, boundsContain, boxOutline, outlineBounds, outlinesOverlap, transformOutline } from './outline.js';
 
-export const CITY_VERSION = 3;
-export const supportedCityVersion = version => [1,2,CITY_VERSION].includes(version);
 export const usesParcel = type => ['home','city','civic','park'].includes(BY_ID[type]?.category);
 
 export function normalAngle(degrees) {

@@ -6,6 +6,7 @@ import { riverCenter, riverWidth, key, waterAt } from './core.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
+import { hasTraffic } from './road-network.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function outlineLines(outline,y){
@@ -102,9 +103,13 @@ export class World {
     for(const id of this.city.chunks.get(ck)||[]){
       const e=this.city.entities.get(id);
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
-      let mask=0;
-      if(['road','bridge'].includes(e.type))[[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dz],i)=>{if(['road','bridge'].includes(this.city.at(e.x+dx,e.z+dz)?.type))mask|=1<<i;});
+      const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
       const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),p=placementOf(e);
+      if(road){
+        p.x=road.center[0];p.z=road.center[2];
+        // Connected masks use world directions. Stored rotation still orients an isolated tile.
+        if(mask)p.radians=0;
+      }
       const matrix=new T.Matrix4().compose(new T.Vector3(p.x,0,p.z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),p.radians),new T.Vector3(p.scaleX,1,p.scaleZ));
       append(model,matrix,id);
       if(detail&&e.type==='road'&&(e.x+e.z)%6===0)append(getTemplate('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.6,.13,e.z*CELL+1.5),id);
@@ -162,25 +167,27 @@ class Traffic {
   rebuild(){
     for(const a of [...this.cars,...this.boats]){this.scene.remove(a.mesh);a.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
     this.cars=[];this.boats=[];
-    const roads=[...this.city.entities.values()].filter(e=>['road','bridge'].includes(e.type)&&this.city.roadNeighbors(e).length);
+    this.network=this.city.roadNetwork;
+    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&s.ports.length);
     for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
       const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);this.scene.add(mesh);
-      this.cars.push({mesh,from:e,to:this.city.roadNeighbors(e)[0],last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
+      this.cars.push({mesh,from:e,to:this.network.segments.get(e.ports[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
     }
-    const paths=[...this.city.entities.values()].filter(e=>e.type==='path');
+    const paths=[...this.network.segments.values()].some(s=>s.kind==='path');
     this.people.rebuild(this.city);
-    if(paths.length)for(let i=0;i<3;i++){const mesh=boat();this.scene.add(mesh);this.boats.push({mesh,phase:i*60});}
+    if(paths)for(let i=0;i<3;i++){const mesh=boat();this.scene.add(mesh);this.boats.push({mesh,phase:i*60});}
     this.followTarget=this.cars[0]?.mesh;
   }
   update(dt,time,focus){
     for(const c of this.cars){
       if(c.dwell>0)c.dwell-=dt;else c.t+=dt*c.speed/CELL;
-      if(c.t>=1){c.t-=1;c.last=c.from.id;c.from=c.to;let next=this.city.roadNeighbors(c.from).filter(e=>e.id!==c.last);if(!next.length)next=this.city.roadNeighbors(c.from);c.to=next[Math.floor(Math.random()*next.length)]||c.from;if(c.kind===3&&c.from.id%31===0)c.dwell=2;}
-      const prev=this.city.entities.get(c.last)||{x:2*c.from.x-c.to.x,z:2*c.from.z-c.to.z,type:c.from.type},t=Math.min(1,c.t),u=1-t;
-      const ax=(prev.x+c.from.x)/2,az=(prev.z+c.from.z)/2,bx=c.from.x,bz=c.from.z,cx=(c.from.x+c.to.x)/2,cz=(c.from.z+c.to.z)/2;
+      if(c.t>=1){c.t-=1;c.last=c.from.id;c.from=c.to;let next=c.from.ports.filter(port=>port.neighborId!==c.last);if(!next.length)next=c.from.ports;const port=next[Math.floor(Math.random()*next.length)];c.to=port?this.network.segments.get(port.neighborId):c.from;if(c.kind===3&&c.from.id%31===0)c.dwell=2;}
+      const prev=this.network.segments.get(c.last),t=Math.min(1,c.t),u=1-t;
+      const [bx,,bz]=c.from.center,[tx,,tz]=c.to.center,[px,,pz]=prev?.center??[2*bx-tx,0,2*bz-tz];
+      const ax=(px+bx)/2,az=(pz+bz)/2,cx=(bx+tx)/2,cz=(bz+tz)/2;
       const vx=2*u*(bx-ax)+2*t*(cx-bx),vz=2*u*(bz-az)+2*t*(cz-bz),len=Math.hypot(vx,vz)||1,dx=vx/len,dz=vz/len;
-      const height=e=>e.type==='bridge'?.45:0;
-      c.mesh.position.set((u*u*ax+2*u*t*bx+t*t*cx)*CELL-dz*.65,.07+u*u*(height(prev)+height(c.from))/2+2*u*t*height(c.from)+t*t*(height(c.from)+height(c.to))/2,(u*u*az+2*u*t*bz+t*t*cz)*CELL+dx*.65);
+      const y=c.from.profile.vehicleY,py=prev?.profile.vehicleY??y,ty=c.to.profile.vehicleY,lane=c.from.profile.lanes[1].offset;
+      c.mesh.position.set(u*u*ax+2*u*t*bx+t*t*cx-dz*lane,u*u*(py+y)/2+2*u*t*y+t*t*(y+ty)/2,u*u*az+2*u*t*bz+t*t*cz+dx*lane);
       const target=Math.atan2(dx,dz),delta=T.MathUtils.euclideanModulo(target-c.mesh.rotation.y+Math.PI,Math.PI*2)-Math.PI;c.mesh.rotation.y+=delta*Math.min(1,dt*9);
       c.mesh.visible=c.mesh.position.distanceTo(focus)<200;
     }
