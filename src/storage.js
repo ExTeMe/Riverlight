@@ -1,4 +1,4 @@
-import { CITY_VERSION, supportedCityVersion } from './parcel.js';
+import { CITY_VERSION, supportedCityVersion } from './city-format.js';
 
 const RECORDS = 'cities';
 const METADATA = 'save-metadata';

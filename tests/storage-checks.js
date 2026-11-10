@@ -67,7 +67,8 @@ export const storageChecks = [
   {
     name: '旧档首次保存前原件不变，保存后仍有完整原始副本',
     async run(factory) {
-      for (const fixture of [createLegacyBaseline(), createBaseline()]) {
+      const baseline=createBaseline(),v3={...baseline,city:new City(baseline.city).snapshot(3)};
+      for (const fixture of [createLegacyBaseline(), baseline, v3]) {
         const original = rawRecord(fixture.city);
         await isolated(factory, [original], async store => {
           const session = new SaveSession(store), opened = await session.open();
@@ -82,7 +83,7 @@ export const storageChecks = [
           await session.persist(opened.city, opened.camera);
           check((await store.list()).filter(item => item.kind === 'original').length === 1, '重复归档原件');
           const migrated = (await store.load('autosave')).data;
-          check(migrated.version === 3, '首次保存未迁移为地块格式');
+          check(migrated.version === 4 && migrated.roads.layout === 'grid-v1', '首次保存未迁移为米制道路格式');
           equal(new City(migrated).snapshot(), opened.city.snapshot(), '迁移往返不一致');
         });
       }

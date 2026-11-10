@@ -1,5 +1,5 @@
 import { City, createDemo } from './core.js';
-import { CITY_VERSION } from './parcel.js';
+import { CITY_VERSION } from './city-format.js';
 
 export function parseCityFile(text) {
   const input = JSON.parse(text);

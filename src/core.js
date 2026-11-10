@@ -1,7 +1,9 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { CITY_VERSION, supportedCityVersion, usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity } from './parcel.js';
+import { CITY_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
+import { usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity } from './parcel.js';
 import { EDGE_EPSILON, boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
+import { buildRoadNetwork, hasTraffic, isRoad, nextRoadRevision, readGridRoad, readRoadHeader, roadCenter, roadHeader } from './road-network.js';
 export { riverCenter, riverWidth, waterAt };
 export const VERSION = CITY_VERSION;
 export const MAX_ENTITIES = 100000;
@@ -16,6 +18,8 @@ const entityChunk = e => {
 const reservesLand = e => BY_ID[e.type].category!=='detail'||e.type==='pier';
 const aroundPoint = (x,z) => ({minX:x-EDGE_EPSILON,minZ:z-EDGE_EPSILON,maxX:x+EDGE_EPSILON,maxZ:z+EDGE_EPSILON});
 const colorOrPoseChanged = (before,after) => before.color!==after.color||['offsetX','offsetZ','angle'].some(key=>before.pose[key]!==after.pose[key]);
+const roadChanged = ({before,after,parcel}) => !parcel&&(isRoad(before?.type)||isRoad(after?.type))
+  &&['id','type','x','z','rotation'].some(key=>before?.[key]!==after?.[key]);
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
   const cells = [];
@@ -38,6 +42,7 @@ export class City {
   constructor(data) {
     this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();this.spatial=new SpatialIndex();
     this.parcels=new Map();this.parcelSpatial=new SpatialIndex();
+    this.roadRevision=0;this._roadNetwork=null;
     this.environment = { season: 'summer', weather: 'clear', hour: 16.5, playing: false, speed: 1, wind: 0.4, quality: 'high' };
     this.undoStack = []; this.redoStack = []; this.nextId = 1;
     if (data) this.restore(data);
@@ -75,7 +80,7 @@ export class City {
       return this.queryFootprints(outlineBounds(outline)).some(other=>other.id!==ignoreId&&outlinesOverlap(outline,footprintOutline(other)))?'这里已有建筑或摆件':null;
     }
     if(!Number.isInteger(e.x/SNAP)||!Number.isInteger(e.z/SNAP))return '请对齐建造网格';
-    if(['road','bridge','path'].includes(e.type)&&(!Number.isInteger(e.x)||!Number.isInteger(e.z)))return '道路请对齐主路网';
+    if(isRoad(e.type)&&(!Number.isInteger(e.x)||!Number.isInteger(e.z)))return '道路请对齐主路网';
     const bounds=legacyFootprintBounds(e),world=this.worldBounds();
     if(!boundsContain(world,bounds))return '这里还未扩展，点击「扩展地图」';
     if(reservesLand(e)&&this.parcelSpatial.query(bounds).some(id=>outlinesOverlap(footprintOutline(e),parcelOutline(this.parcels.get(id)))))return '这里已有地块';
@@ -106,6 +111,10 @@ export class City {
     for(const c of changes)if(c[to]){
       if(c.parcel)this.insertParcel(c[to]);
       else this.insert(c[to]);
+    }
+    if(changes.some(roadChanged)){
+      this.roadRevision=nextRoadRevision(this.roadRevision);
+      this._roadNetwork=null;
     }
   }
   insertParcel(parcel,bounds=outlineBounds(parcelOutline(parcel))) {
@@ -196,12 +205,21 @@ export class City {
     this.undoStack.push(changes); return true;
   }
   expand() { if(this.radius>=4096)return false;this.radius=Math.min(4096,this.radius+CHUNK);return true; }
-  roadNeighbors(e) { return [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dz])=>this.at(e.x+dx,e.z+dz)).filter(n=>n && ['road','bridge'].includes(n.type)); }
+  get roadNetwork(){return this._roadNetwork??=buildRoadNetwork(this.entities.values(),this.roadRevision);}
+  roadNeighbors(e) {
+    if(!hasTraffic(e.type))return [];
+    const segment=this.roadNetwork.segments.get(e.id);
+    return segment?.ports.map(port=>this.entities.get(port.neighborId))??[];
+  }
   snapshot(version=VERSION) {
-    if(version!==VERSION&&(version!==2||this.parcels.size))throw new Error('无法导出为该存档格式');
+    if(![2,PARCEL_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size))throw new Error('无法导出为该存档格式');
     const parcels=[...this.parcels.values()].map(parcel=>({...parcel}));
     const entities=[...this.entities.values()].map(e=>{
       const lot=e.lot?{lot:[...e.lot]}:{};
+      if(version===VERSION&&isRoad(e.type)){
+        const {id,type,rotation,color}=e;
+        return {id,type,rotation,color,center:roadCenter(e),...lot};
+      }
       if(version===2||!usesParcel(e.type))return {...e,...lot};
       const parcel=e.pose?.parcel||legacyParcel(e);
       if(!e.pose)parcels.push(parcel);
@@ -209,13 +227,14 @@ export class City {
         offsetX:e.pose?.offsetX??0,offsetZ:e.pose?.offsetZ??0,angle:e.pose?.angle??0,...lot};
     });
     return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
-      entities,...(version===VERSION?{parcels}:{})};
+      entities,...(version>=PARCEL_VERSION?{parcels}:{}),...(version===VERSION?{roads:roadHeader(this.roadRevision)}:{})};
   }
   restore(raw) {
     if (!raw || !supportedCityVersion(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
     const next = new City(); next.radius=raw.radius;next.terrain=raw.version===1?'legacy':raw.terrain;if(!['legacy','meander'].includes(next.terrain))throw new Error('未知地形');const ids = new Set();
+    if(raw.version===VERSION)next.roadRevision=readRoadHeader(raw.roads);
     const parcels=new Map(),used=new Set();
-    if(raw.version===VERSION){
+    if(raw.version>=PARCEL_VERSION){
       if(!Array.isArray(raw.parcels)||raw.parcels.length>MAX_ENTITIES+raw.entities.length)throw new Error('存档缺少有效地块列表');
       for(const value of raw.parcels){
         const p=normalizeParcel(value);
@@ -232,13 +251,14 @@ export class City {
       let e=raw.version===1&&original?{...original,lot:LEGACY_LOTS[original.type]}:original;
       const lotValid=!e?.lot||(Array.isArray(e.lot)&&e.lot.length===2&&e.lot.every((v,i)=>v===LEGACY_LOTS[e.type]?.[i]));
       if (!e || !Object.hasOwn(BY_ID,e.type) || !lotValid || !Number.isSafeInteger(e.id) || e.id<1 || ids.has(e.id) || !Number.isInteger(e.color) || e.color<0 || e.color>3) throw new Error('存档包含无效或重复建筑');
-      if(raw.version===VERSION&&usesParcel(e.type)){
+      if(raw.version>=PARCEL_VERSION&&usesParcel(e.type)){
         if(used.has(e.parcelId))throw new Error('每个地块只能有一栋主建筑');
         const parcel=parcels.get(e.parcelId);
         e=readParcelEntity(e,parcel);
         used.add(parcel.id);
       }else{
-        if(raw.version===VERSION&&e.parcelId!==undefined)throw new Error('道路或装饰不能引用建筑地块');
+        if(raw.version>=PARCEL_VERSION&&e.parcelId!==undefined)throw new Error('道路或装饰不能引用建筑地块');
+        if(raw.version===VERSION&&isRoad(e.type))e=readGridRoad(e);
         const {id,type,x,z,rotation,color,lot}=e;
         e={id,type,x,z,rotation,color,...(lot?{lot:[...lot]}:{})};
       }
@@ -250,6 +270,7 @@ export class City {
     for(const p of parcels.values())if(p.grid&&!used.has(p.id))throw new Error('兼容地块缺少原建筑');
     this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;this.spatial=next.spatial;
     this.parcels=next.parcels;this.parcelSpatial=next.parcelSpatial;
+    this.roadRevision=next.roadRevision;this._roadNetwork=null;
     this.nextId=[...ids].reduce((max,id)=>Math.max(max,id),0)+1;
     if(Number.isSafeInteger(raw.nextId)&&raw.nextId>this.nextId)this.nextId=raw.nextId;
     const env=raw.environment || {};
