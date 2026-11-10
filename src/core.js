@@ -1,10 +1,18 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
+import { CITY_VERSION, supportedCityVersion, usesParcel, parcelBounds, parcelBuildingBounds, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, readParcelEntity } from './parcel.js';
 export { riverCenter, riverWidth, waterAt };
-export const VERSION = 2;
+export const VERSION = CITY_VERSION;
 export const MAX_ENTITIES = 100000;
 export const key = (x, z) => `${x},${z}`;
 export const chunkKey = (x, z) => key(Math.floor(x / CHUNK), Math.floor(z / CHUNK));
+export const footprintBounds = e => e.pose ? parcelBuildingBounds(e) : legacyFootprintBounds(e);
+const entityChunk = e => {
+  if(!e.pose)return chunkKey(e.x,e.z);
+  const b=footprintBounds(e);
+  return chunkKey(b.minX/CELL+.5,b.minZ/CELL+.5);
+};
+const within = (b,world) => b.minX>=world.minX&&b.minZ>=world.minZ&&b.maxX<=world.maxX&&b.maxZ<=world.maxZ;
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
   const cells = [];
@@ -26,21 +34,29 @@ export function gridLine(a, b) {
 export class City {
   constructor(data) {
     this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();this.spatial=new SpatialIndex();
+    this.parcels=new Map();this.parcelSpatial=new SpatialIndex();
     this.environment = { season: 'summer', weather: 'clear', hour: 16.5, playing: false, speed: 1, wind: 0.4, quality: 'high' };
     this.undoStack = []; this.redoStack = []; this.nextId = 1;
     if (data) this.restore(data);
   }
-  at(x, z) { return this.entities.get(this.occupancy.get(key(Math.floor(x/SNAP)*SNAP,Math.floor(z/SNAP)*SNAP))); }
+  at(x, z) {
+    return this.entities.get(this.occupancy.get(key(Math.floor(x/SNAP)*SNAP,Math.floor(z/SNAP)*SNAP)));
+  }
   worldBounds() { return worldBounds(this.radius); }
   surfaceAt(x,z) { return terrainSurfaceAt(x,z,this.terrain); }
   queryFootprints(bounds) { return this.spatial.query(bounds).map(id=>this.entities.get(id)); }
   canPlace(e, ignoreId) {
     if (!BY_ID[e.type]) return '未知建筑';
+    if(e.pose){
+      if(!fitsParcel(e))return '建筑超出地块边界';
+      return this.spatial.query(footprintBounds(e)).some(id=>id!==ignoreId)?'这里已有建筑':null;
+    }
     if(!Number.isInteger(e.x/SNAP)||!Number.isInteger(e.z/SNAP))return '请对齐建造网格';
     if(['road','bridge','path'].includes(e.type)&&(!Number.isInteger(e.x)||!Number.isInteger(e.z)))return '道路请对齐主路网';
     if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
     const bounds=legacyFootprintBounds(e),world=this.worldBounds();
-    if(bounds.minX<world.minX||bounds.minZ<world.minZ||bounds.maxX>world.maxX||bounds.maxZ>world.maxZ)return '这里还未扩展，点击「扩展地图」';
+    if(!within(bounds,world))return '这里还未扩展，点击「扩展地图」';
+    if(this.parcelSpatial.query(bounds).length)return '这里已有地块';
     if(this.spatial.query(bounds).some(id=>id!==ignoreId))return '这里已有建筑';
     for (const [x, z] of footprint(e)) {
       if (waterAt(this.terrain==='legacy'?Math.floor(x):x,this.terrain==='legacy'?Math.floor(z):z,this.terrain) && !['bridge', 'pier'].includes(e.type)) return e.type === 'road' ? '水面请使用桥梁工具' : '请选择陆地区域';
@@ -50,15 +66,15 @@ export class City {
   }
   insert(e) {
     this.entities.set(e.id, { ...e });
-    this.spatial.insert(e.id,legacyFootprintBounds(e));
-    for (const [x,z] of footprint(e)) this.occupancy.set(key(x,z), e.id);
-    const ck = chunkKey(e.x,e.z); if (!this.chunks.has(ck)) this.chunks.set(ck,new Set()); this.chunks.get(ck).add(e.id);
+    this.spatial.insert(e.id,footprintBounds(e));
+    if(!e.pose)for (const [x,z] of footprint(e)) this.occupancy.set(key(x,z), e.id);
+    const ck = entityChunk(e); if (!this.chunks.has(ck)) this.chunks.set(ck,new Set()); this.chunks.get(ck).add(e.id);
   }
   erase(id) {
     const e = this.entities.get(id); if (!e) return;
     this.spatial.erase(id);
-    for (const [x,z] of footprint(e)) this.occupancy.delete(key(x,z));
-    this.entities.delete(id); const ck = chunkKey(e.x,e.z); this.chunks.get(ck)?.delete(id); if (!this.chunks.get(ck)?.size) this.chunks.delete(ck);
+    if(!e.pose)for (const [x,z] of footprint(e)) this.occupancy.delete(key(x,z));
+    this.entities.delete(id); const ck = entityChunk(e); this.chunks.get(ck)?.delete(id); if (!this.chunks.get(ck)?.size) this.chunks.delete(ck);
   }
   commit(changes) {
     if (!changes.length) return false;
@@ -86,7 +102,7 @@ export class City {
     return this.commit(changes);
   }
   move(id,x,z,rotation) {
-    const old = this.entities.get(id); if (!old) return false;
+    const old = this.entities.get(id); if (!old||old.pose) return false;
     const e = {...old,x,z,rotation}; if (this.canPlace(e,id)) return false;
     return this.commit([{before:{...old},after:e}]);
   }
@@ -106,18 +122,57 @@ export class City {
   }
   expand() { if(this.radius>=4096)return false;this.radius=Math.min(4096,this.radius+CHUNK);return true; }
   roadNeighbors(e) { return [[1,0],[-1,0],[0,1],[0,-1]].map(([dx,dz])=>this.at(e.x+dx,e.z+dz)).filter(n=>n && ['road','bridge'].includes(n.type)); }
-  snapshot() { return {version:VERSION,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},entities:[...this.entities.values()].map(e=>({...e, ...(e.lot?{lot:[...e.lot]}:{})}))}; }
+  snapshot(version=VERSION) {
+    if(version!==VERSION&&(version!==2||this.parcels.size))throw new Error('无法导出为该存档格式');
+    const parcels=[...this.parcels.values()].map(parcel=>({...parcel}));
+    const entities=[...this.entities.values()].map(e=>{
+      const lot=e.lot?{lot:[...e.lot]}:{};
+      if(version===2||!usesParcel(e.type))return {...e,...lot};
+      const parcel=e.pose?.parcel||legacyParcel(e);
+      if(!e.pose)parcels.push(parcel);
+      return {id:e.id,type:e.type,color:e.color,parcelId:parcel.id,
+        offsetX:e.pose?.offsetX??0,offsetZ:e.pose?.offsetZ??0,angle:e.pose?.angle??0,...lot};
+    });
+    return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
+      entities,...(version===VERSION?{parcels}:{})};
+  }
   restore(raw) {
-    if (!raw || ![1,VERSION].includes(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
+    if (!raw || !supportedCityVersion(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
     const next = new City(); next.radius=raw.radius;next.terrain=raw.version===1?'legacy':raw.terrain;if(!['legacy','meander'].includes(next.terrain))throw new Error('未知地形');const ids = new Set();
+    const parcels=new Map(),used=new Set();
+    if(raw.version===VERSION){
+      if(!Array.isArray(raw.parcels)||raw.parcels.length>MAX_ENTITIES+raw.entities.length)throw new Error('存档缺少有效地块列表');
+      for(const value of raw.parcels){
+        const p=normalizeParcel(value),bounds=parcelBounds(p);
+        if(parcels.has(p.id))throw new Error('存档含有重复地块');
+        parcels.set(p.id,p);
+        if(p.grid)continue;
+        if(next.parcels.size>=MAX_ENTITIES||bounds.minX>=bounds.maxX||bounds.minZ>=bounds.maxZ||!within(bounds,next.worldBounds())||!parcelOnLand(bounds,next.terrain)||next.parcelSpatial.query(bounds).length)throw new Error('地块无效、重叠、超界或占用水域');
+        next.parcels.set(p.id,p);next.parcelSpatial.insert(p.id,bounds);
+      }
+    }
     for (const original of raw.entities) {
-      const e=raw.version===1&&original?{...original,lot:LEGACY_LOTS[original.type]}:original;
+      let e=raw.version===1&&original?{...original,lot:LEGACY_LOTS[original.type]}:original;
       const lotValid=!e?.lot||(Array.isArray(e.lot)&&e.lot.length===2&&e.lot.every((v,i)=>v===LEGACY_LOTS[e.type]?.[i]));
-      if (!e || !BY_ID[e.type] || !lotValid || !Number.isSafeInteger(e.id) || e.id<1 || ids.has(e.id) || !Number.isInteger(e.x/SNAP) || !Number.isInteger(e.z/SNAP) || !Number.isInteger(e.rotation) || e.rotation<0 || e.rotation>3 || !Number.isInteger(e.color) || e.color<0 || e.color>3 || next.canPlace(e)) throw new Error('存档包含无效或重叠建筑');
+      if (!e || !Object.hasOwn(BY_ID,e.type) || !lotValid || !Number.isSafeInteger(e.id) || e.id<1 || ids.has(e.id) || !Number.isInteger(e.color) || e.color<0 || e.color>3) throw new Error('存档包含无效或重复建筑');
+      if(raw.version===VERSION&&usesParcel(e.type)){
+        if(used.has(e.parcelId))throw new Error('每个地块只能有一栋主建筑');
+        const parcel=parcels.get(e.parcelId);
+        e=readParcelEntity(e,parcel);
+        used.add(parcel.id);
+      }else{
+        if(raw.version===VERSION&&e.parcelId!==undefined)throw new Error('道路或装饰不能引用建筑地块');
+        const {id,type,x,z,rotation,color,lot}=e;
+        e={id,type,x,z,rotation,color,...(lot?{lot:[...lot]}:{})};
+      }
+      if((!e.pose&&(!Number.isInteger(e.rotation)||e.rotation<0||e.rotation>3))||next.canPlace(e))throw new Error('存档包含无效或重叠建筑');
       ids.add(e.id); next.insert(e);
     }
+    for(const p of parcels.values())if(p.grid&&!used.has(p.id))throw new Error('兼容地块缺少原建筑');
     this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;this.spatial=next.spatial;
+    this.parcels=next.parcels;this.parcelSpatial=next.parcelSpatial;
     this.nextId=[...ids].reduce((max,id)=>Math.max(max,id),0)+1;
+    if(Number.isSafeInteger(raw.nextId)&&raw.nextId>this.nextId)this.nextId=raw.nextId;
     const env=raw.environment || {};
     for(const [field,options] of Object.entries({season:['spring','summer','autumn','winter'],weather:['clear','cloudy','rain','snow','fog'],quality:['high','balanced']})) if(options.includes(env[field])) this.environment[field]=env[field];
     for(const [field,min,max] of [['hour',0,24],['speed',0.25,8],['wind',0,1]]) if(Number.isFinite(env[field])) this.environment[field]=Math.max(min,Math.min(max,env[field]));
