@@ -40,7 +40,7 @@ test('scene exploration preserves the original city and supports weather, views,
   await expect(page.locator('.scene-card')).toHaveCount(7);
   await navigate(page, page.locator('[data-scene="T06"]'));
   await expect(page.locator('.scene-panel h2')).toHaveText('河光小街');
-  expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(132);
+  expect((await page.evaluate(()=>window.riverlight.getStats())).entities).toBe(135);
   await page.screenshot({path:'test-results/t06-street.png'});
   for(const [id,weather,season] of [['day','clear','summer'],['dusk','clear','summer'],['rain','rain','summer'],['autumn','clear','autumn'],['snow','snow','winter']]){
     await page.locator(`[data-weather-id="${id}"]`).click();
@@ -53,7 +53,7 @@ test('scene exploration preserves the original city and supports weather, views,
   await page.getByRole('button',{name:'导出资源快照',exact:true}).click();
   const download=await evidenceDownload;
   const evidence=JSON.parse(await (await download.createReadStream()).toArray().then(chunks=>Buffer.concat(chunks).toString()));
-  expect(evidence.scene).toMatchObject({id:'T06',version:2});
+  expect(evidence.scene).toMatchObject({id:'T06',version:3});
   expect(evidence.drawCalls).toBeGreaterThan(0);
   expect(evidence.rendererMemory.geometries).toBeGreaterThan(0);
   expect(evidence.frameTime).toBeNull();
@@ -70,7 +70,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',77],['T02',76],['T03',61],['T04',60],['T05',78],['T06',132],['T07',841]])
+for(const [id,count] of [['T01',77],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page})=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));

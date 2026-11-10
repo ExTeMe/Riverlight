@@ -48,7 +48,7 @@ export const SCENES = [
   {id:'T03',name:'十字路口',caption:'四条来路，一处相逢',purpose:'观察四个入口的车辆；删除路口中心 (-24,0)，检查道路重建。',limitations:['信号相位、跟车队列与冲突权限尚未实现，灯色不作为通过证据'],target:[-96,0,0],position:[-45,65,70]},
   {id:'T04',name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'沿河观察船体与桥孔，再切换桥头镜头；记录桥底、桥墩及引道穿模。',limitations:['桥船净空尚未解决；当前只有原型船，不代表最大船型验收'],target:[0,0,0],position:[55,35,60]},
   {id:'T05',name:'街坊的一天',caption:'从家门口，到商店与公园',purpose:'沿住宅—商店—公园观察自动行人，切换降雨并检查露天和屋檐位置。',limitations:['目的地、信号过街、可达屋檐与雨伞尚未实现'],target:[-75,0,4],position:[-35,42,65]},
-  {id:'T06',sceneVersion:2,name:'河光小街',caption:'店铺的暖光，河畔的四季',purpose:'保持同一镜头切换白天、黄昏、雨夜、秋景与雪景；比较近中远景。',limitations:['高层、公共建筑、住宅和沿街商业已有精修样板，公园和桥岸待更新'],target:[-65,0,0],position:[-10,55,85]},
+  {id:'T06',sceneVersion:3,name:'河光小街',caption:'店铺的暖光，河畔的四季',purpose:'保持同一镜头切换白天、黄昏、雨夜、秋景与雪景；比较近中远景。',limitations:['六类样板同场展示，待整组画面确认；码头停靠和桥船净空另由水系任务验收'],target:[-65,0,0],position:[-10,55,85]},
   {id:'T07',name:'城市的尺度',caption:'从一条小街，到整座城市',purpose:'选择疏密布局，扩区后移向边缘再返回；保存、重载并采集实际资源快照。',limitations:['帧时间、GPU 内存和长期增长需专项采样，单帧快照不是性能验收'],target:[0,0,0],position:[183,180,230]},
 ];
 
@@ -103,6 +103,8 @@ export function createScene(id, density='standard') {
     for(const entry of [['museum',-21,-8],['office',-17,-8],['clocktower',-12,-7],['plaza',-20,9],['rose-house',-26,5],['mint-apartment',-29,-9]])add(...entry);
     for(let z=-9;z<=11;z++)if(z!==0)add('path',-9,z);
     for(const z of [-10,-4,4,8])add('tree',-10,z);
+    add('path',-20,5);add('path',-20,6);
+    add('pier',-1.5,4,3);
   }
   if(id==='T07'&&density==='dense'){
     city.expand();
