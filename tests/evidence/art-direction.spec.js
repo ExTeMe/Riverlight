@@ -2,6 +2,20 @@ import { test, expect } from '@playwright/test';
 
 test.use({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 0.75, video: 'off', trace: 'off' });
 
+const landscapeViews = {
+  park: { position: [-68, 10, 30], target: [-82, 1.1, 14] },
+  pier: { position: [-20, 9, 32], target: [-3, .55, 13] },
+};
+
+async function photograph(page, testInfo, name) {
+  await page.evaluate(async () => {
+    for (let frame = 0; frame < 2; frame++) await new Promise(requestAnimationFrame);
+  });
+  const result = page.waitForEvent('download');
+  await page.getByRole('button', { name: '拍张照片', exact: true }).click();
+  await (await result).saveAs(testInfo.outputPath(`${name}.png`));
+}
+
 test('T06 captures the same three views by day, at dusk and in rain', async ({ page }, testInfo) => {
   test.setTimeout(600_000);
   const errors = [];
@@ -34,19 +48,22 @@ test('T06 captures the same three views by day, at dusk and in rain', async ({ p
 
     for (const view of ['near', 'medium', 'far']) {
       await page.locator(`[data-view="${view}"]`).click();
-      await page.evaluate(async () => {
-        // Wait for the render loop to apply the camera before photographing.
-        for (let frame = 0; frame < 2; frame++) await new Promise(requestAnimationFrame);
-      });
-      const result = page.waitForEvent('download');
-      await page.getByRole('button', { name: '拍张照片', exact: true }).click();
-      await (await result).saveAs(testInfo.outputPath(`${preset}-${view}.png`));
+      await photograph(page, testInfo, `${preset}-${view}`);
       if (preset === 'day' && view === 'medium') {
         await page.getByText('观察与记录', { exact: true }).click();
         const snapshot = page.waitForEvent('download');
         await page.getByRole('button', { name: '导出资源快照', exact: true }).click();
         await (await snapshot).saveAs(testInfo.outputPath('day-medium-resources.json'));
         await page.getByText('观察与记录', { exact: true }).click();
+      }
+    }
+    if (preset !== 'dusk') {
+      await page.locator('[data-action="camera"]').click();
+      for (const [name, view] of Object.entries(landscapeViews)) {
+        await page.evaluate(camera => localStorage.setItem('riverlight-camera', JSON.stringify(camera)), view);
+        await page.locator('[data-action="help"]').click();
+        await page.locator('[data-action="recall"]').click();
+        await photograph(page, testInfo, `${preset}-${name}`);
       }
     }
   }
