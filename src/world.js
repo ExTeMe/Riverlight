@@ -1,5 +1,6 @@
 import * as T from 'three';
-import { CELL, CHUNK, BY_ID, dimensions, entityDimensions } from './catalog.js';
+import { CELL, CHUNK } from './catalog.js';
+import { GROUND_Y, legacyFootprintBounds, legacyPlacement } from './space.js';
 import { riverCenter, riverWidth, key, waterAt } from './core.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
@@ -14,7 +15,7 @@ function landGeometry(cx,cz,terrain) {
       const aa=ra+side*riverWidth(za,terrain),ab=rb+side*riverWidth(zb,terrain);
       const clamp=x=>Math.max(x0,Math.min(x1,x));
       const la=side<0?x0:clamp(aa),lb=side<0?x0:clamp(ab),ha=side<0?clamp(aa):x1,hb=side<0?clamp(ab):x1;
-      if(ha>la || hb>lb)quad(grass,[la,0,za],[ha,0,za],[hb,0,zb],[lb,0,zb]);
+      if(ha>la || hb>lb)quad(grass,[la,GROUND_Y,za],[ha,GROUND_Y,za],[hb,GROUND_Y,zb],[lb,GROUND_Y,zb]);
       if(Math.abs(za)<112){const a0=clamp(Math.min(aa,aa+side*3.4)),a1=clamp(Math.max(aa,aa+side*3.4)),b0=clamp(Math.min(ab,ab+side*3.4)),b1=clamp(Math.max(ab,ab+side*3.4));if(a1>a0||b1>b0)quad(quay,[a0,.025,za],[a1,.025,za],[b1,.025,zb],[b0,.025,zb]);}
       if(aa>=x0&&aa<x1 && ab>=x0&&ab<x1){
         quad(bank,[aa,0,za],[aa-side*.25,-.8,za],[ab-side*.25,-.8,zb],[ab,0,zb]);
@@ -76,12 +77,12 @@ export class World {
       const k=mesh.geometry.uuid+mesh.material.uuid;if(!batches.has(k))batches.set(k,{mesh,matrices:[],ids:[]});const batch=batches.get(k);batch.matrices.push(matrix);batch.ids.push(id);
     }};
     for(const id of this.city.chunks.get(ck)||[]){
-      const e=this.city.entities.get(id),item=BY_ID[e.type];
+      const e=this.city.entities.get(id);
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       let mask=0;
       if(['road','bridge'].includes(e.type))[[1,0],[-1,0],[0,1],[0,-1]].forEach(([dx,dz],i)=>{if(['road','bridge'].includes(this.city.at(e.x+dx,e.z+dz)?.type))mask|=1<<i;});
-      const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),[w,d]=entityDimensions(e);
-      const matrix=new T.Matrix4().compose(new T.Vector3((e.x+(w-1)/2)*CELL,0,(e.z+(d-1)/2)*CELL),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),e.rotation*Math.PI/2),new T.Vector3(e.lot?e.lot[0]/item.w:1,1,e.lot?e.lot[1]/item.d:1));
+      const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),p=legacyPlacement(e);
+      const matrix=new T.Matrix4().compose(new T.Vector3(p.x,0,p.z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),p.radians),new T.Vector3(p.scaleX,1,p.scaleZ));
       append(model,matrix,id);
       if(detail&&e.type==='road'&&(e.x+e.z)%6===0)append(getTemplate('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.6,.13,e.z*CELL+1.5),id);
     }
@@ -97,15 +98,15 @@ export class World {
   }
   select(id){
     const e=this.city.entities.get(id);if(!e){this.selection.visible=false;return;}
-    const [w,d]=entityDimensions(e);const h=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y;
-    const box=new T.Box3(new T.Vector3((e.x-.5)*CELL,.12,(e.z-.5)*CELL),new T.Vector3((e.x+w-.5)*CELL,h+.3,(e.z+d-.5)*CELL));
+    const {minX,minZ,maxX,maxZ}=legacyFootprintBounds(e),h=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y;
+    const box=new T.Box3(new T.Vector3(minX,.12,minZ),new T.Vector3(maxX,h+.3,maxZ));
     const p=this.selection.geometry.attributes.position;const a=box.min,b=box.max;
     p.copyArray(new Float32Array([b.x,b.y,b.z,a.x,b.y,b.z,a.x,a.y,b.z,b.x,a.y,b.z,b.x,b.y,a.z,a.x,b.y,a.z,a.x,a.y,a.z,b.x,a.y,a.z]));p.needsUpdate=true;this.selection.geometry.computeBoundingSphere();this.selection.visible=true;
   }
   showPreview(e,valid){
     const k=`${e.type}:${e.color}`;
     if(this.previewKey!==k){this.clearPreview();this.preview=getTemplate(e.type,e.color).clone();this.preview.traverse(o=>{if(o.isMesh){const base=o.material.userData.base.clone();o.material=o.material.clone();o.material.userData.base=base;o.material.transparent=true;o.material.opacity=.55;o.material.depthWrite=false;o.castShadow=false;}});this.scene.add(this.preview);this.previewKey=k;}
-    const [w,d]=entityDimensions(e),item=BY_ID[e.type];this.preview.position.set((e.x+(w-1)/2)*CELL,.08,(e.z+(d-1)/2)*CELL);this.preview.scale.set(e.lot?e.lot[0]/item.w:1,1,e.lot?e.lot[1]/item.d:1);this.preview.rotation.y=e.rotation*Math.PI/2;this.preview.visible=true;
+    const p=legacyPlacement(e);this.preview.position.set(p.x,.08,p.z);this.preview.scale.set(p.scaleX,1,p.scaleZ);this.preview.rotation.y=p.radians;this.preview.visible=true;
     this.preview.traverse(o=>{if(o.isMesh)o.material.color.copy(o.material.userData.base).lerp(new T.Color(valid?'#9fc0a4':'#d57762'),.3);});
     this.hover.scale.set(w*CELL,d*CELL,1);this.hover.position.set(this.preview.position.x,.06,this.preview.position.z);this.hover.material.color.set(valid?'#6d9975':'#c06a57');this.hover.visible=true;
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;

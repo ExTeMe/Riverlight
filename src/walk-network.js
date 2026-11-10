@@ -1,4 +1,5 @@
-import { CELL, BY_ID, entityDimensions } from './catalog.js';
+import { CELL, BY_ID } from './catalog.js';
+import { legacyPlacement } from './space.js';
 import { riverCenter, riverWidth } from './core.js';
 
 const roadTypes=new Set(['road','bridge']);
@@ -68,8 +69,8 @@ export function buildWalkNetwork(city){
   }
   const walking=[...roadList,...paths,...quays];
   for(const e of city.entities.values())if(BY_ID[e.type].floors||['park','plaza','garden','amusement'].includes(e.type)){
-    const [w,d]=entityDimensions(e),a=e.rotation*Math.PI/2,item=BY_ID[e.type],depth=(e.lot?.[1]||item.d)*CELL/2+.35;
-    const x=(e.x+(w-1)/2)*CELL+Math.sin(a)*depth,z=(e.z+(d-1)/2)*CELL+Math.cos(a)*depth;
+    const p=legacyPlacement(e),depth=(e.lot?.[1]||BY_ID[e.type].d)*CELL/2+.35;
+    const x=p.x+Math.sin(p.radians)*depth,z=p.z+Math.cos(p.radians)*depth;
     const n=node(x,.14,z,'destination');if(connect(n,walking,7,e.id))destinations.push(n);
   }
   // Disconnected points never produce people. Component membership bounds route choices.

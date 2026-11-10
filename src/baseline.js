@@ -43,7 +43,9 @@ export function createLegacyBaseline() {
 }
 
 export const SCENES = [
-  {id:'T01',name:'河畔编辑院',caption:'小屋、庭院与半格错落',purpose:'移动小屋，取消、撤销，再保存重载；检查邻接和水岸边界。',limitations:['任意角度尚未实现'],target:[-80,0,0],position:[-35,55,70]},
+  {id:'T01',sceneVersion:2,name:'河畔编辑院',caption:'小屋、庭院与不同尺度的沿街建筑',purpose:'比较小屋、图书馆、办公楼与商场的占地；导出资源快照检查图书馆跨分区查询，再试移动、撤销和重载。',limitations:['当前建筑占地仍沿用矩形和四向姿态，地块内偏移与任意角度待实现'],target:[-76,0,-7],position:[-30,57,71],spatialProbe:[
+    {minX:-72,minZ:-24,maxX:-64,maxZ:-6},{minX:-64,minZ:-24,maxX:-24,maxZ:-6}
+  ]},
   {id:'T02',name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'观察直线、左右转角、折线 S 形、T 字与断头路；在 x=-16 的分区边界拆建道路。',limitations:['S 形为正交折线；连续曲线与可编辑坡道尚未实现'],target:[-94,0,-8],position:[-40,90,95]},
   {id:'T03',name:'十字路口',caption:'四条来路，一处相逢',purpose:'观察四个入口的车辆；删除路口中心 (-24,0)，检查道路重建。',limitations:['信号相位、跟车队列与冲突权限尚未实现，灯色不作为通过证据'],target:[-96,0,0],position:[-45,65,70]},
   {id:'T04',name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'沿河观察船体与桥孔，再切换桥头镜头；记录桥底、桥墩及引道穿模。',limitations:['桥船净空尚未解决；当前只有原型船，不代表最大船型验收'],target:[0,0,0],position:[55,35,60]},
@@ -83,6 +85,9 @@ export function createScene(id, density='standard') {
     for(let x=-22;x<=-10;x++)add('path',x,7);
     add('bench',-18,6);add('flowers',-16,6);
   };
+  if(id==='T01'){
+    add('library',-17,-3.5);add('office',-14,-4);add('mall',-11.5,-5);
+  }
   if(id==='T02'){
     road([[-34,-14],[-25,-14],[-25,-6],[-15,-6],[-15,4],[-9,4]]);
     road([[-34,7],[-24,7],[-24,-6]]);road([[-24,7],[-24,13]]);
