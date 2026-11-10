@@ -9,6 +9,7 @@ import { Pedestrians } from './pedestrians.js';
 import { hasTraffic } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
 import { createAlignmentMesh } from './roads.js';
+import { JunctionPreview } from './junction-preview.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function outlineLines(outline,y){
@@ -71,9 +72,9 @@ export class World {
     this.emptyParcels=lineLayer(scene,0xb7ded2,.65);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
-    this.traffic=new Traffic(scene,city);this.sync(true);
+    this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
-  setCity(city){this.city=city;this.select(null);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
+  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -101,7 +102,11 @@ export class World {
     });
     this.emptyParcels.visible=!!lines.length;
     if(lines.length)updateLines(this.emptyParcels,lines);
-    if(force)this.traffic.rebuild();
+    if(force){
+      this.traffic.rebuild();
+      const guide=this.junctionPreview;
+      if(guide.id)this.showJunction(guide.id,guide.kind);
+    }
   }
   buildChunk(ck,detail){
     const c=this.loaded.get(ck);c.detail=detail;disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
@@ -128,7 +133,7 @@ export class World {
       }
       const matrix=new T.Matrix4().compose(new T.Vector3(p.x,0,p.z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),p.radians),new T.Vector3(p.scaleX,1,p.scaleZ));
       append(model,matrix,id);
-      if(detail&&e.type==='road'&&(e.x+e.z)%6===0)append(getTemplate('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.6,.13,e.z*CELL+1.5),id);
+      if(detail&&e.type==='road'&&!road.junction&&(e.x+e.z)%6===0)append(getTemplate('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.8,.13,e.z*CELL+1.8),id);
     }
     const [cx,cz]=ck.split(',').map(Number);
     if(detail)for(let z=Math.ceil(cz*CHUNK*CELL/12)*12;z<(cz+1)*CHUNK*CELL;z+=12){if(Math.abs(z)>105)continue;for(const side of [-1,1]){
@@ -201,7 +206,8 @@ export class World {
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;
   }
   clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;}
-  update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
+  showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
+  update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus,!!this.junctionPreview.active);this.junctionPreview.update(dt);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {
   constructor(scene,city){this.scene=scene;this.city=city;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.followTarget=null;}
@@ -209,20 +215,21 @@ class Traffic {
     for(const a of [...this.cars,...this.boats]){this.scene.remove(a.mesh);a.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
     this.cars=[];this.boats=[];
     this.network=this.city.roadNetwork;
-    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&s.ports.length&&!s.geometry);
+    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&!s.geometry&&this.gridPorts(s).length);
     for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
       const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);this.scene.add(mesh);
-      this.cars.push({mesh,from:e,to:this.network.segments.get(e.ports[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
+      this.cars.push({mesh,from:e,to:this.network.segments.get(this.gridPorts(e)[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
     }
     const paths=[...this.network.segments.values()].some(s=>s.kind==='path');
     this.people.rebuild(this.city);
     if(paths)for(let i=0;i<3;i++){const mesh=boat();this.scene.add(mesh);this.boats.push({mesh,phase:i*60});}
     this.followTarget=this.cars[0]?.mesh;
   }
-  update(dt,time,focus){
+  gridPorts(segment){return segment.ports.filter(port=>!this.network.segments.get(port.neighborId).geometry);}
+  update(dt,time,focus,hideCars){
     for(const c of this.cars){
       if(c.dwell>0)c.dwell-=dt;else c.t+=dt*c.speed/CELL;
-      if(c.t>=1){c.t-=1;c.last=c.from.id;c.from=c.to;let next=c.from.ports.filter(port=>port.neighborId!==c.last);if(!next.length)next=c.from.ports;const port=next[Math.floor(Math.random()*next.length)];c.to=port?this.network.segments.get(port.neighborId):c.from;if(c.kind===3&&c.from.id%31===0)c.dwell=2;}
+      if(c.t>=1){c.t-=1;c.last=c.from.id;c.from=c.to;const ports=this.gridPorts(c.from);let next=ports.filter(port=>port.neighborId!==c.last);if(!next.length)next=ports;const port=next[Math.floor(Math.random()*next.length)];c.to=port?this.network.segments.get(port.neighborId):c.from;if(c.kind===3&&c.from.id%31===0)c.dwell=2;}
       const prev=this.network.segments.get(c.last),t=Math.min(1,c.t),u=1-t;
       const [bx,,bz]=c.from.center,[tx,,tz]=c.to.center,[px,,pz]=prev?.center??[2*bx-tx,0,2*bz-tz];
       const ax=(px+bx)/2,az=(pz+bz)/2,cx=(bx+tx)/2,cz=(bz+tz)/2;
@@ -230,9 +237,9 @@ class Traffic {
       const y=c.from.profile.vehicleY,py=prev?.profile.vehicleY??y,ty=c.to.profile.vehicleY,lane=c.from.profile.lanes[1].offset;
       c.mesh.position.set(u*u*ax+2*u*t*bx+t*t*cx-dz*lane,u*u*(py+y)/2+2*u*t*y+t*t*(y+ty)/2,u*u*az+2*u*t*bz+t*t*cz+dx*lane);
       const target=Math.atan2(dx,dz),delta=T.MathUtils.euclideanModulo(target-c.mesh.rotation.y+Math.PI,Math.PI*2)-Math.PI;c.mesh.rotation.y+=delta*Math.min(1,dt*9);
-      c.mesh.visible=c.mesh.position.distanceTo(focus)<200;
+      c.mesh.visible=!hideCars&&c.mesh.position.distanceTo(focus)<200;
     }
-    this.people.update(dt,time,focus,this.cars);
+    this.people.update(dt,time,focus,hideCars?[]:this.cars);
     for(const b of this.boats){const z=((time*1.8+b.phase)%210)-105,x=riverCenter(z,this.city.terrain)+3;b.mesh.position.set(x,-.25+Math.sin(time+b.phase)*.035,z);b.mesh.rotation.y=Math.atan2(riverCenter(z+1,this.city.terrain)-riverCenter(z,this.city.terrain),1);}
   }
 }

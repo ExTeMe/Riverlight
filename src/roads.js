@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { ROAD_DIRECTIONS, ROAD_PROFILES, cornerPoint, roadCorner } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
+import { junctionLayout } from './road-junction.js';
 
 export function createAlignmentMesh(geometry,ports,material){
   const group=new T.Group(),asphalt=[],paving=[],marks=[];
@@ -46,7 +47,7 @@ export function createAlignmentMesh(geometry,ports,material){
 // A connected corner is an annular road, with tangent joins at the tile edges.
 export function createRoad(type,mask,{Builder,material}){
   const b=new Builder(),bridge=type==='bridge',path=type==='path';
-  const {bedY:y,width,carriageway}=ROAD_PROFILES[type],half=width/2;
+  const profile=ROAD_PROFILES[type],{bedY:y,width,carriageway,vehicleY,walkY}=profile,half=width/2;
   const asphalt=material('#677378','road'),paving=material('#c9c9bd','ground'),paint=material('#e8dfbc','road');
   const connected=ROAD_DIRECTIONS.filter((_,i)=>mask&(1<<i)),corner=roadCorner(mask);
   const strip=(sx,sz,inner,outer,height,m,start=0,end=Math.PI/2)=>{
@@ -54,7 +55,8 @@ export function createRoad(type,mask,{Builder,material}){
     for(let i=0;i<n;i++){
       const a=start+(end-start)*i/n,c=start+(end-start)*(i+1)/n;
       const v=(r,t)=>{const [x,z]=cornerPoint(sx,sz,r,t);return [x,height,z];};
-      const vs=[...v(inner,a),...v(outer,a),...v(outer,c),...v(inner,a),...v(outer,c),...v(inner,c)];
+      const vs=[...v(inner,a),...v(outer,a),...v(outer,c)];
+      if(inner)vs.push(...v(inner,a),...v(outer,c),...v(inner,c));
       // Keep upward winding on every mirrored corner.
       if(sx*sz<0)for(let j=0;j<vs.length;j+=9){const first=vs.slice(j,j+3);vs.splice(j,3,...vs.slice(j+6,j+9));vs.splice(j+6,3,...first);}
       p.push(...vs);
@@ -62,10 +64,24 @@ export function createRoad(type,mask,{Builder,material}){
     const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p,3));g.computeVertexNormals();b.geo(g,m);
   };
   if(corner&&!bridge&&!path){
-    const [sx,sz]=corner;
-    strip(sx,sz,.08,width-.08,y+.04,paving);strip(sx,sz,half-carriageway/2,half+carriageway/2,y+.065,asphalt);
-    for(let i=0;i<3;i++)strip(sx,sz,half-.03,half+.03,y+.07,paint,.14+i*.46,.35+i*.46);
+    const [sx,sz]=corner,inner=half-carriageway/2,outer=half+carriageway/2;
+    strip(sx,sz,0,inner,walkY,paving);strip(sx,sz,outer,width,walkY,paving);
+    strip(sx,sz,inner,outer,vehicleY,asphalt);
+    for(let i=0;i<3;i++)strip(sx,sz,half-.03,half+.03,vehicleY+.006,paint,.14+i*.46,.35+i*.46);
     const result=b.finish();result.userData.roadShape='arc';return result;
+  }
+  if(type==='road'){
+    const layout=junctionLayout(mask,profile);
+    b.box(width,.14,width,0,y-.07,0,paving);
+    for(const [polygons,height,m] of [[layout.asphalt,vehicleY,asphalt],[layout.pavement,walkY,paving],[layout.paint,vehicleY+.006,paint]]){
+      const vertices=[];
+      for(const [first,...rest] of polygons)for(let i=1;i<rest.length;i++){
+        for(const [x,z] of [first,rest[i],rest[i-1]])vertices.push(x,height,z);
+      }
+      if(!vertices.length)continue;
+      const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(vertices,3));buffer.computeVertexNormals();b.geo(buffer,m);
+    }
+    return b.finish();
   }
   b.box(width,.14,width,0,y-.07,0,path?material('#cbc1a6','ground'):paving);
   if(!path){

@@ -48,8 +48,8 @@ export const SCENES = [
     {minX:-72,minZ:-24,maxX:-64,maxZ:-6},{minX:-64,minZ:-24,maxX:-24,maxZ:-6},
     {minX:-75,minZ:-58,maxX:-64,maxZ:-40},{minX:-64,minZ:-58,maxX:-50,maxZ:-40}
   ]},
-  {id:'T02',sceneVersion:2,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'用「线形」镜头检查直线、左右弯和跨分区 S 弯，用「坡道」镜头检查起坡、路缘和步行。原街区保留 T 字与断头路。',limitations:['曲线道路通过端点接续，车道转向和路口接入见后续任务'],target:[-94,0,-8],position:[-40,90,95]},
-  {id:'T03',name:'十字路口',caption:'四条来路，一处相逢',purpose:'观察四个入口的车辆；删除路口中心 (-24,0)，检查道路重建。',limitations:['信号相位、跟车队列与冲突权限尚未实现，灯色不作为通过证据'],target:[-96,0,0],position:[-45,65,70]},
+  {id:'T02',sceneVersion:3,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'比较线形、坡道、T 字和断头路。打开路口镜头查看车辆允许的转向与停车位置。',limitations:['紧邻弯道的路口可能限制部分转向'],target:[-94,0,-8],position:[-40,90,95],junctionViews:{tee:[-27,-14],terminal:[-24,13]}},
+  {id:'T03',sceneVersion:2,name:'十字路口',caption:'四条来路，一处相逢',purpose:'打开「十字路口」镜头比较小车和公交包络，再删除路口中心 (-24,0) 检查拓扑重建。',limitations:['信号相位、跟车队列与冲突权限在交通阶段实现'],target:[-96,0,0],position:[-45,65,70],junctionViews:{junction:[-24,0]}},
   {id:'T04',name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'沿河观察船体与桥孔，再切换桥头镜头；记录桥底、桥墩及引道穿模。',limitations:['桥船净空尚未解决；当前只有原型船，不代表最大船型验收'],target:[0,0,0],position:[55,35,60]},
   {id:'T05',name:'街坊的一天',caption:'从家门口，到商店与公园',purpose:'沿住宅—商店—公园观察自动行人，切换降雨并检查露天和屋檐位置。',limitations:['目的地、信号过街、可达屋檐与雨伞尚未实现'],target:[-75,0,4],position:[-35,42,65]},
   {id:'T06',sceneVersion:3,name:'河光小街',caption:'店铺的暖光，河畔的四季',purpose:'保持同一镜头切换白天、黄昏、雨夜、秋景与雪景；比较近中远景。',limitations:['六类样板同场展示，待整组画面确认；码头停靠和桥船净空另由水系任务验收'],target:[-65,0,0],position:[-10,55,85]},
@@ -108,6 +108,8 @@ export function createScene(id, density='standard') {
       const result=city.editRoadAlignment({start:points[i-1],end:points[i]});
       if(result.error)throw new Error(`T02 道路线形无效：${result.error}`);
     }
+    const connection=city.editRoadAlignment({start:[-108,.04,-58,270],end:[-111,.04,-75,250]});
+    if(connection.error)throw new Error(`T02 曲线路口接入无效：${connection.error}`);
   }
   if(id==='T03'){
     road([[-38,0],[-10,0]]);road([[-24,-14],[-24,14]]);
@@ -134,13 +136,16 @@ export function createScene(id, density='standard') {
       for(let z=-28;z<=28;z+=4){add('apartment',x+2,z);add('townhouse',x-3,z);add('tree',x+1,z+2);}
     }
   }
-  city.name=`${id} · ${spec.name}`;city.environment={...city.environment,hour:id==='T02'?13:17.5,playing:false,wind:.4,quality:'high'};
+  city.name=`${id} · ${spec.name}`;city.environment={...city.environment,hour:['T02','T03'].includes(id)?13:17.5,playing:false,wind:.4,quality:'high'};
   city.undoStack=[];city.redoStack=[];
   const target=[...spec.target],position=[...spec.position];
   const cameras={medium:{position,target},near:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*.48)},far:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*1.75)}};
   if(id==='T02'){
     cameras.alignment={target:[-102,0,-89],position:[-103,95,-9]};
     cameras.ramp={target:[-67,.8,-95],position:[-56,12,-66]};
+  }
+  for(const [view,[x,z]] of Object.entries(spec.junctionViews??{})){
+    cameras[view]={target:[x*4,0,z*4],position:[x*4+5,25,z*4+10]};
   }
   const scene={...structuredClone(spec),sceneVersion:spec.sceneVersion??1,seed:20261103,density,city:city.snapshot(),camera:cameras.medium,cameras};
   if(spec.scaleView){

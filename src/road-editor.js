@@ -1,4 +1,5 @@
 import { normalBearing, roadBearing } from './road-alignment.js';
+import { gridRoadEnd, ROAD_DIRECTIONS } from './road-network.js';
 
 const fields=[['x','X 坐标（米）'],['y','高度（米）'],['z','Z 坐标（米）'],['bearing','方向（°）']];
 const presets={straight:[0,0],left:[30,-30],right:[-30,30],s:[30,30]};
@@ -49,13 +50,14 @@ export class RoadEditor {
   point(x,z,index){
     const radius=1.5,bounds={minX:x-radius,maxX:x+radius,minZ:z-radius,maxZ:z+radius};
     let closest=null,distance=radius;
-    for(const e of this.app.city.queryFootprints(bounds))if(e.alignment&&e.id!==this.id){
+    for(const e of this.app.city.queryFootprints(bounds))if(e.type==='road'&&e.id!==this.id){
       const segment=this.app.city.roadNetwork.segments.get(e.id);
-      for(const [end,point] of [e.alignment.start,e.alignment.end].entries()){
+      const ends=e.alignment?[e.alignment.start,e.alignment.end]:ROAD_DIRECTIONS.map((_,side)=>gridRoadEnd(segment,side));
+      for(const [end,point] of ends.entries()){
         const d=Math.hypot(point[0]-x,point[2]-z);
-        if(d>=distance||segment.ports.some(port=>port.end===end&&port.neighborId!==this.id))continue;
+        if(d>=distance||segment.ports.some(port=>(e.alignment?port.end:port.side)===end&&port.neighborId!==this.id))continue;
         const [px,y,pz,bearing]=point;
-        closest=[px,y,pz,normalBearing(bearing+(end===index?180:0))];distance=d;
+        closest=[px,y,pz,normalBearing(bearing+((e.alignment?end:1)===index?180:0))];distance=d;
       }
     }
     return {point:closest??[Math.round(x*2)/2,0,Math.round(z*2)/2,0],snapped:!!closest};
