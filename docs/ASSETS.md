@@ -21,6 +21,8 @@
 
 ## R1 街区样板
 
+[河光小街画风参考](ART_DIRECTION.md) 记录材质色板、比例与 T06 固定镜头对照，供六类样板统一调校。
+
 住宅与面包房样板源为 `assets/blender/riverlight-street-samples.blend`，制作脚本为 `scripts/blender/build_street_samples.py`。公共建筑图书馆样板源为 `assets/blender/riverlight-library-sample.blend`，制作脚本为 `scripts/blender/build_library_sample.py`；仅写入本次创建的场景，不覆盖用户已打开的场景或旧城市资产库。
 
 图书馆保持 `library` ID 和既有占地适配，包含高低阅览楼、书架展示开间、木格栅、内凹入口、雨棚、座椅和花池。源尺度边界 11.6 × 11.6 米、高 6.26 米；运行时适配 12 × 10 米地块。近景 25,576 三角面、远景 1,860 三角面，运行时合为 19 个材质批次；无外部纹理依赖。Entrance/Shelter 锚点保留在 GLB 中，当前步行系统尚未消费这些锚点，不能据此宣称避雨已实现。
