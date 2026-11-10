@@ -99,6 +99,14 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         expect(samples.at(-1).stats.junctionPreview.distance).toBeGreaterThan(0);
         await page.keyboard.press('h');
       }
+      if (id === 'T05') {
+        await page.locator('[data-view="walk"]').click();
+        await page.keyboard.press('h');
+        await observe('walking-connections', 5);
+        expect(samples.at(-1).stats).toMatchObject({mobilityOverlay:true});
+        expect(samples.at(-1).stats.visiblePedestrians).toBeGreaterThan(0);
+        await page.keyboard.press('h');
+      }
       record.stage = 'resource-snapshot';
       await persist();
       await page.getByText('观察与记录', { exact: true }).click();

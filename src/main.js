@@ -54,7 +54,7 @@ class App {
     this.last=performance.now();this.elapsed=0;this.uiClock=0;this.animate=this.animate.bind(this);requestAnimationFrame(this.animate);
     setTimeout(()=>document.querySelector('.intro')?.classList.add('hide'),22000);
     // Read-only diagnostics are useful during visual and performance verification.
-    window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
+    window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,laneRoadRevision:this.city.roadNetwork.laneGraph.revision,laneEdges:this.city.roadNetwork.laneGraph.edges.size,mobilityOverlay:this.world.walkOverlay.visible,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
   }
   thumbnail(type){
     if(this.thumbCache.has(type))return this.thumbCache.get(type);
@@ -94,10 +94,23 @@ class App {
           gapX:i?bounds.minX-samples[i-1].bounds.maxX:null,authored:model.userData.source==='Blender MCP'};
       });
     }
+    let mobility;
+    if(this.baseline?.id==='T05'){
+      const graph=this.world.traffic.people.network;
+      const byNode=new Map();
+      for(const group of graph.components){
+        const kinds=[...new Set(group.map(node=>node.kind))].sort();
+        for(const node of group)byNode.set(node.id,kinds);
+      }
+      mobility=graph.destinations.flatMap(node=>{
+        const entity=this.city.entities.get(node.entityId);
+        return entity?.pose?[{id:entity.id,type:entity.type,parcel:entity.pose.parcel.id,point:[node.x,node.y,node.z],reachable:byNode.get(node.id)??[]}]:[];
+      });
+    }
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
       capturedAt:new Date().toISOString(),scene:this.baseline?{id:this.baseline.id,version:this.baseline.sceneVersion,seed:this.baseline.seed,density:this.baseline.density}:null,
       browser:navigator.userAgent,viewport:[innerWidth,innerHeight],pixelRatio:this.renderer.getPixelRatio(),camera:this.cameraState(),
-      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,boats:this.world.traffic.boats.length,
+      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,boats:this.world.traffic.boats.length,mobility,
       detailedChunks:[...this.world.loaded.values()].filter(chunk=>chunk.detail).length,
       rendererMemory:{...this.renderer.info.memory},method:'最近一帧累计渲染调用（含反射与后处理）；几何/纹理为 WebGL 资源数量，不是字节数',
       frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[],spatial};
@@ -205,7 +218,7 @@ class App {
     const actions={v:'select',b:'road',t:'trees',x:'erase',c:'camera',h:'quiet',home:'home',delete:'delete',backspace:'delete'};
     if(actions[key]){e.preventDefault();this.action(actions[key]);}
     if(key==='r'){if(this.editor.active)this.editor.rotate();else if(this.buildType){this.rotation=(this.rotation+1)%4;this.preview();}else this.action('rotate');}
-    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.world.junctionPreview.clear();this.ui.refresh();}
+    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.world.junctionPreview.clear();this.world.showMobility(false);this.ui.refresh();}
     if(key===' ')this.action('play');
   }
   async action(action,el){
@@ -258,7 +271,8 @@ class App {
       case 'scene-camera':if(this.baseline?.cameras){
         const view=el.dataset.view,cell=this.baseline.junctionViews?.[view];
         this.follow=false;this.controls.autoRotate=false;this.restoreCamera(this.baseline.cameras[view]);
-        this.world.showJunction(cell&&this.city.at(...cell)?.id,'car');this.ui.refreshJunction();this.scheduleSave();
+        this.world.showJunction(cell&&this.city.at(...cell)?.id,'car');this.world.showMobility(view==='walk',this.controls.target);
+        this.ui.refreshJunction();this.scheduleSave();
       }break;
       case 'scene-weather':{const preset=SCENE_WEATHER.find(p=>p.id===el.dataset.weatherId);if(preset){const {hour,season,weather}=preset;this.setEnvironment({hour,season,weather,playing:false});}break;}
       case 'scene-evidence':download(`${this.baseline.id}-evidence.json`,JSON.stringify(this.sceneEvidence(),null,2));this.ui.toast('已导出当前镜头与实际资源记录');break;

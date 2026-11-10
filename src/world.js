@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
-import { BANK_STEP, GROUND_Y, riverBanks } from './space.js';
+import { BANK_STEP, GROUND_Y, QUAY, riverBanks } from './space.js';
 import { footprintOutline, parcelOutline, placementOf } from './parcel.js';
 import { riverCenter, riverWidth, key, waterAt } from './core.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
@@ -42,7 +42,7 @@ function landGeometry(cx,cz,terrain) {
       const clamp=x=>Math.max(x0,Math.min(x1,x));
       const la=side<0?x0:clamp(aa),lb=side<0?x0:clamp(ab),ha=side<0?clamp(aa):x1,hb=side<0?clamp(ab):x1;
       if(ha>la || hb>lb)quad(grass,[la,GROUND_Y,za],[ha,GROUND_Y,za],[hb,GROUND_Y,zb],[lb,GROUND_Y,zb]);
-      if(Math.abs(za)<112){const a0=clamp(Math.min(aa,aa+side*3.4)),a1=clamp(Math.max(aa,aa+side*3.4)),b0=clamp(Math.min(ab,ab+side*3.4)),b1=clamp(Math.max(ab,ab+side*3.4));if(a1>a0||b1>b0)quad(quay,[a0,.025,za],[a1,.025,za],[b1,.025,zb],[b0,.025,zb]);}
+      if(za>=QUAY.minZ&&zb<=QUAY.maxZ){const a0=clamp(Math.min(aa,aa+side*QUAY.width)),a1=clamp(Math.max(aa,aa+side*QUAY.width)),b0=clamp(Math.min(ab,ab+side*QUAY.width)),b1=clamp(Math.max(ab,ab+side*QUAY.width));if(a1>a0||b1>b0)quad(quay,[a0,QUAY.y,za],[a1,QUAY.y,za],[b1,QUAY.y,zb],[b0,QUAY.y,zb]);}
       if(aa>=x0&&aa<x1 && ab>=x0&&ab<x1){
         quad(bank,[aa,0,za],[aa-side*.25,-.8,za],[ab-side*.25,-.8,zb],[ab,0,zb]);
         quad(edge,[aa,0.012,za],[aa+side*.25,.012,za],[ab+side*.25,.012,zb],[ab,.012,zb]);
@@ -70,11 +70,12 @@ export class World {
     this.selection=lineLayer(scene,0xf2d38c);this.parcelSelection=lineLayer(scene,0x94e2d1);
     this.previewParcel=lineLayer(scene,0x94e2d1);this.previewFootprint=lineLayer(scene,0xffdc94);
     this.emptyParcels=lineLayer(scene,0xb7ded2,.65);
+    this.laneOverlay=lineLayer(scene,0xffd68a);this.walkOverlay=lineLayer(scene,0x89e5d5);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
-  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
+  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -106,6 +107,7 @@ export class World {
       this.traffic.rebuild();
       const guide=this.junctionPreview;
       if(guide.id)this.showJunction(guide.id,guide.kind);
+      if(this.walkOverlay.visible)this.showMobility(true,this.mobilityFocus);
     }
   }
   buildChunk(ck,detail){
@@ -207,6 +209,19 @@ export class World {
   }
   clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;}
   showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
+  showMobility(visible,focus=this.activeCenter){
+    this.laneOverlay.visible=this.walkOverlay.visible=visible;
+    if(!visible)return;
+    this.mobilityFocus=focus.clone();
+    const near=(x,z)=>Math.hypot(x-focus.x,z-focus.z)<115,lanes=[],walk=[];
+    const append=(out,a,b)=>{if(near(a[0],a[2])||near(b[0],b[2]))out.push(a[0],a[1]+.035,a[2],b[0],b[1]+.035,b[2]);};
+    for(const {points} of this.city.roadNetwork.laneGraph.edges.values())for(let i=1;i<points.length;i++)append(lanes,points[i-1],points[i]);
+    const {nodes}=this.traffic.people.network;
+    for(const a of nodes.values())for(const id of a.edges.keys())if(id>a.id){
+      const b=nodes.get(id);append(walk,[a.x,a.y,a.z],[b.x,b.y,b.z]);
+    }
+    updateLines(this.laneOverlay,lanes);updateLines(this.walkOverlay,walk);
+  }
   update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus,!!this.junctionPreview.active);this.junctionPreview.update(dt);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {

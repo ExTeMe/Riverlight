@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { buildWalkNetwork, walkingRoute } from './walk-network.js';
+import { buildWalkNetwork, walkingRoute, WALK_LINK_HALF_WIDTH } from './walk-network.js';
 
 const palette=['#e1b55b','#6e919e','#b85f4e','#e4dccc','#659479','#91749c'];
 /** Autonomous walkers, rendered in six batches regardless of the number of people. */
@@ -21,8 +21,10 @@ export class Pedestrians {
     }
     const positions=[];
     for(const [a,b] of this.network.connectors){
-      const dx=b.x-a.x,dz=b.z-a.z,l=Math.hypot(dx,dz);if(l<.1)continue;const nx=-dz/l*.3,nz=dx/l*.3;
-      positions.push(a.x+nx,a.y-.035,a.z+nz,a.x-nx,a.y-.035,a.z-nz,b.x-nx,b.y-.035,b.z-nz,a.x+nx,a.y-.035,a.z+nz,b.x-nx,b.y-.035,b.z-nz,b.x+nx,b.y-.035,b.z+nz);
+      const dx=b.x-a.x,dz=b.z-a.z,l=Math.hypot(dx,dz);if(l<.1)continue;
+      const nx=-dz/l*WALK_LINK_HALF_WIDTH,nz=dx/l*WALK_LINK_HALF_WIDTH;
+      const y=Math.max(.012,a.y-.014),v=Math.max(.012,b.y-.014);
+      positions.push(a.x+nx,y,a.z+nz,a.x-nx,y,a.z-nz,b.x-nx,v,b.z-nz,a.x+nx,y,a.z+nz,b.x-nx,v,b.z-nz,b.x+nx,v,b.z+nz);
     }
     if(positions.length){const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new T.Mesh(geometry,new T.MeshStandardMaterial({color:'#c8c7b7',roughness:.95,side:T.DoubleSide}));mesh.receiveShadow=true;mesh.name='Entrance_and_quay_walkways';this.group.add(mesh);}
     this.update(0,0,new T.Vector3(),[]);

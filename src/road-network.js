@@ -1,6 +1,7 @@
 import { CELL } from './catalog.js';
 import { alignmentGeometry, matchingRoadEnds, offsetRoadSample } from './road-alignment.js';
-import { ROAD_DIRECTIONS, arcAsphalt, buildJunction, junctionLayout } from './road-junction.js';
+import { ROAD_DIRECTIONS, arcSurface, buildJunction, junctionLayout } from './road-junction.js';
+import { buildLaneGraph, buildRoadPaths } from './road-paths.js';
 export { ROAD_DIRECTIONS };
 
 export const ROAD_LAYOUT = 'grid-v1';
@@ -55,6 +56,26 @@ export function cornerHeight(center,start,end,t){
   return center+((t<.5?start:end)-center)*Math.abs(2*t-1);
 }
 
+const arcSurfaces=new Map();
+export function gridRoadSurface(kind,mask){
+  const profile=ROAD_PROFILES[kind],corner=kind==='road'&&roadCorner(mask);
+  if(!corner)return junctionLayout(mask,profile);
+  if(!arcSurfaces.has(mask))arcSurfaces.set(mask,arcSurface(corner,profile,cornerPoint));
+  return arcSurfaces.get(mask);
+}
+
+export function roadCarriageway(segment){
+  if(segment.geometry){
+    const rows=segment.geometry.samples.map(sample=>[-1,1].map(sign=>{
+      const [x,,z]=offsetRoadSample(sample,sign*segment.profile.carriageway/2);
+      return [x,z];
+    }));
+    return rows.slice(1).map(([a,b],i)=>[rows[i][1],rows[i][0],a,b]);
+  }
+  const [x,,z]=segment.center;
+  return segment.surface.asphalt.map(polygon=>polygon.map(([u,v])=>[u+x,v+z]));
+}
+
 function centerlines(center,ports,corner,rotation){
   const [x,y,z]=center,half=CELL/2;
   if(!ports.length)return rotation%2?[[[x,y,z-half],[x,y,z+half]]]:[[[x-half,y,z],[x+half,y,z]]];
@@ -73,18 +94,12 @@ function centerlines(center,ports,corner,rotation){
 
 function approachSurface(neighbor,junctionId,center){
   const [x,,z]=center;
+  let polygons=roadCarriageway(neighbor);
   if(neighbor.geometry){
     const end=neighbor.ports.find(p=>p.neighborId===junctionId).end;
-    const samples=end?neighbor.geometry.samples.slice(-12):neighbor.geometry.samples.slice(0,12);
-    const rows=samples.map(sample=>[-1,1].map(sign=>{
-      const [u,,v]=offsetRoadSample(sample,sign*neighbor.profile.carriageway/2);
-      return [u-x,v-z];
-    }));
-    return rows.slice(1).map(([a,b],i)=>[rows[i][1],rows[i][0],a,b]);
+    polygons=end?polygons.slice(-11):polygons.slice(0,11);
   }
-  const [u,,v]=neighbor.center;
-  const polygons=neighbor.corner?arcAsphalt(neighbor.corner,neighbor.profile,cornerPoint):junctionLayout(neighbor.mask,neighbor.profile).asphalt;
-  return polygons.map(polygon=>polygon.map(([a,b])=>[a+u-x,b+v-z]));
+  return polygons.map(polygon=>polygon.map(([a,b])=>[a-x,b-z]));
 }
 
 // The old tile layer is projected once into a metre-based network. Road and
@@ -102,7 +117,7 @@ export function buildRoadNetwork(entities,revision){
       if(!neighbor||hasTraffic(e.type)!==hasTraffic(neighbor.type))continue;
       const other=ROAD_PROFILES[neighbor.type];
       ports.push({side,neighborId:neighbor.id,point:[center[0]+dx*CELL/2,(profile.bedY+other.bedY)/2,center[2]+dz*CELL/2],
-        walkY:(profile.walkY+other.walkY)/2});
+        walkY:(profile.walkY+other.walkY)/2,vehicleY:(profile.vehicleY+other.vehicleY)/2});
       mask|=1<<side;
     }
     segments.set(e.id,{id:e.id,kind:e.type,center,profile,ports,mask});
@@ -120,7 +135,7 @@ export function buildRoadNetwork(entities,revision){
       const endpoint=e.alignment[index?'end':'start'];
       const other=ends.get(key);
       if(other&&matchingRoadEnds(endpoint,index,other.endpoint,other.index)){
-        const port={point:sample.point,walkY:sample.point[1]+profile.walkY-profile.bedY};
+        const port={point:sample.point,walkY:sample.point[1]+(profile.walkY-profile.bedY),vehicleY:sample.point[1]+(profile.vehicleY-profile.bedY)};
         segment.ports.push({...port,end:index,neighborId:other.segment.id});
         other.segment.ports.push({...port,end:other.index,neighborId:e.id});
       }else {
@@ -130,7 +145,7 @@ export function buildRoadNetwork(entities,revision){
           if(gridTile?.type!=='road')continue;
           const neighbor=segments.get(gridTile.id);
           if(neighbor.mask&(1<<side)||!matchingRoadEnds(endpoint,index,gridRoadEnd(neighbor,side),1))continue;
-          const port={point:sample.point,walkY:y+profile.walkY-profile.bedY};
+          const port={point:sample.point,walkY:y+(profile.walkY-profile.bedY),vehicleY:y+(profile.vehicleY-profile.bedY)};
           segment.ports.push({...port,end:index,neighborId:neighbor.id});
           neighbor.ports.push({...port,side,neighborId:e.id});neighbor.mask|=1<<side;
           ends.delete(key);break;
@@ -142,6 +157,7 @@ export function buildRoadNetwork(entities,revision){
     const segment=segments.get(e.id),{center,ports,mask}=segment;
     segment.corner=e.type==='road'?roadCorner(mask):null;
     segment.centerlines=centerlines(center,ports,segment.corner,e.rotation);
+    if(hasTraffic(e.type))segment.surface=gridRoadSurface(e.type,mask);
   }
   const junctions=new Map();
   for(const e of grid){
@@ -156,5 +172,6 @@ export function buildRoadNetwork(entities,revision){
       if(key)junctions.set(key,segment.junction);
     }
   }
-  return {revision,segments};
+  for(const segment of segments.values())Object.assign(segment,buildRoadPaths(segment,cornerPoint,cornerHeight));
+  return {revision,segments,laneGraph:buildLaneGraph(segments,revision)};
 }

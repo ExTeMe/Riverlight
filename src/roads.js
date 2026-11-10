@@ -1,7 +1,6 @@
 import * as T from 'three';
-import { ROAD_DIRECTIONS, ROAD_PROFILES, cornerPoint, roadCorner } from './road-network.js';
+import { ROAD_PROFILES, gridRoadSurface, roadCorner } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
-import { junctionLayout } from './road-junction.js';
 
 export function createAlignmentMesh(geometry,ports,material){
   const group=new T.Group(),asphalt=[],paving=[],marks=[];
@@ -47,52 +46,23 @@ export function createAlignmentMesh(geometry,ports,material){
 // A connected corner is an annular road, with tangent joins at the tile edges.
 export function createRoad(type,mask,{Builder,material}){
   const b=new Builder(),bridge=type==='bridge',path=type==='path';
-  const profile=ROAD_PROFILES[type],{bedY:y,width,carriageway,vehicleY,walkY}=profile,half=width/2;
+  const {bedY:y,width,vehicleY,walkY}=ROAD_PROFILES[type];
+  if(path){b.box(width,walkY,width,0,walkY/2,0,material('#cbc1a6','ground'));return b.finish();}
   const asphalt=material('#677378','road'),paving=material('#c9c9bd','ground'),paint=material('#e8dfbc','road');
-  const connected=ROAD_DIRECTIONS.filter((_,i)=>mask&(1<<i)),corner=roadCorner(mask);
-  const strip=(sx,sz,inner,outer,height,m,start=0,end=Math.PI/2)=>{
-    const p=[],n=24;
-    for(let i=0;i<n;i++){
-      const a=start+(end-start)*i/n,c=start+(end-start)*(i+1)/n;
-      const v=(r,t)=>{const [x,z]=cornerPoint(sx,sz,r,t);return [x,height,z];};
-      const vs=[...v(inner,a),...v(outer,a),...v(outer,c)];
-      if(inner)vs.push(...v(inner,a),...v(outer,c),...v(inner,c));
-      // Keep upward winding on every mirrored corner.
-      if(sx*sz<0)for(let j=0;j<vs.length;j+=9){const first=vs.slice(j,j+3);vs.splice(j,3,...vs.slice(j+6,j+9));vs.splice(j+6,3,...first);}
-      p.push(...vs);
+  const corner=!bridge&&roadCorner(mask),layout=gridRoadSurface(type,mask);
+  if(!corner)b.box(width,.14,width,0,y-.07,0,paving);
+  for(const [polygons,height,m] of [[layout.asphalt,vehicleY,asphalt],[layout.pavement,walkY,paving],[layout.paint,vehicleY+.006,paint]]){
+    const vertices=[];
+    for(const [first,...rest] of polygons)for(let i=1;i<rest.length;i++){
+      for(const [x,z] of [first,rest[i],rest[i-1]])vertices.push(x,height,z);
     }
-    const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p,3));g.computeVertexNormals();b.geo(g,m);
-  };
-  if(corner&&!bridge&&!path){
-    const [sx,sz]=corner,inner=half-carriageway/2,outer=half+carriageway/2;
-    strip(sx,sz,0,inner,walkY,paving);strip(sx,sz,outer,width,walkY,paving);
-    strip(sx,sz,inner,outer,vehicleY,asphalt);
-    for(let i=0;i<3;i++)strip(sx,sz,half-.03,half+.03,vehicleY+.006,paint,.14+i*.46,.35+i*.46);
-    const result=b.finish();result.userData.roadShape='arc';return result;
+    if(!vertices.length)continue;
+    const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(vertices,3));buffer.computeVertexNormals();b.geo(buffer,m);
   }
-  if(type==='road'){
-    const layout=junctionLayout(mask,profile);
-    b.box(width,.14,width,0,y-.07,0,paving);
-    for(const [polygons,height,m] of [[layout.asphalt,vehicleY,asphalt],[layout.pavement,walkY,paving],[layout.paint,vehicleY+.006,paint]]){
-      const vertices=[];
-      for(const [first,...rest] of polygons)for(let i=1;i<rest.length;i++){
-        for(const [x,z] of [first,rest[i],rest[i-1]])vertices.push(x,height,z);
-      }
-      if(!vertices.length)continue;
-      const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(vertices,3));buffer.computeVertexNormals();b.geo(buffer,m);
-    }
-    return b.finish();
-  }
-  b.box(width,.14,width,0,y-.07,0,path?material('#cbc1a6','ground'):paving);
-  if(!path){
-    b.box(carriageway,.02,carriageway,0,y+.02,0,asphalt);
-    connected.forEach(([dx,dz])=>b.box(dx?.55:carriageway,.02,dz?.55:carriageway,dx*1.73,y+.02,dz*1.73,asphalt));
-    if(mask===3||mask===12||mask===0)b.box(mask===12?.055:1.25,.01,mask===12?1.25:.055,0,y+.035,0,paint);
-    if(connected.length!==2)for(const [dx,dz] of connected)for(let i=0;i<5;i++)b.box(dx?.48:.22,.008,dz?.48:.22,dx?dx*1.72:-.9+i*.45,y+.036,dz?dz*1.72:-.9+i*.45,paint);
-    if(bridge){const horizontal=mask!==12;for(const side of [-1,1]){
+  if(bridge){const horizontal=mask!==12;for(const side of [-1,1]){
       b.box(horizontal?4:.12,.12,horizontal?.12:4,horizontal?0:side*1.8,y+1,horizontal?side*1.8:0,paving);
       for(const p of [-1.6,0,1.6])b.box(.09,.85,.09,horizontal?p:side*1.8,y+.5,horizontal?side*1.8:p,paving);
-    }b.box(.6,1.9,.6,0,-.55,0,paving);}
+    }b.box(.6,1.9,.6,0,-.55,0,paving);
   }
-  return b.finish();
+  const result=b.finish();if(corner)result.userData.roadShape='arc';return result;
 }
