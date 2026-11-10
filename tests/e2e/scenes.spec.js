@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { PerspectiveCamera, Vector3 } from 'three';
 import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
 import { placementOf } from '../../src/parcel.js';
@@ -311,6 +312,54 @@ test('T02 previews and edits a continuous S ramp through history and reload',asy
   expect(errors).toEqual([]);
 });
 
+test('T02 and T03 show road markings, allowed vehicle movements and topology changes',async({page},info)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+  const guide=async()=> (await stats()).junctionPreview;
+  await page.goto('/?scene=T03');await ready(page);
+  await page.getByRole('button',{name:'十字路口',exact:true}).click();
+  expect(await guide()).toMatchObject({kind:'cross',vehicle:'car',count:12,turn:'left'});
+  await expect.poll(async()=> (await guide()).distance).toBeGreaterThan(.1);
+  await page.screenshot({path:info.outputPath('t03-car.png')});
+  await page.getByRole('button',{name:'公交',exact:true}).click();
+  expect(await guide()).toMatchObject({kind:'cross',vehicle:'bus',count:8,turn:'right'});
+  await expect.poll(async()=> (await guide()).distance).toBeGreaterThan(.1);
+  await page.screenshot({path:info.outputPath('t03-bus.png')});
+  const before=await stats();
+  await page.getByRole('button',{name:'拆除 / X',exact:true}).click();
+  await page.locator('#scene').click({position:{x:480,y:320}});
+  await expect.poll(guide).toBeNull();
+  expect((await stats()).roadRevision).toBe(before.roadRevision+1);
+  await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+  await page.getByRole('button',{name:'十字路口',exact:true}).click();
+  expect(await guide()).toMatchObject({count:12});
+  await page.goto('/?scene=T02');await ready(page);
+  await page.getByRole('button',{name:'T 字路口',exact:true}).click();
+  expect(await guide()).toMatchObject({kind:'tee',count:4});
+  await expect.poll(async()=> (await guide()).distance).toBeGreaterThan(.1);
+  await page.screenshot({path:info.outputPath('t02-tee.png')});
+  await page.getByRole('button',{name:'断头路',exact:true}).click();
+  expect(await guide()).toMatchObject({kind:'terminal',count:1,turn:'stop'});
+  await expect.poll(async()=> (await guide()).distance).toBeGreaterThan(.1);
+  await page.screenshot({path:info.outputPath('t02-terminal.png')});
+  const {position,target}=createScene('T02').cameras.terminal,camera=new PerspectiveCamera(39,960/640,.5,4500);
+  camera.position.fromArray(position);camera.lookAt(new Vector3(...target));camera.updateMatrixWorld();
+  const edge=new Vector3(-96,0,54).project(camera);
+  await page.getByRole('button',{name:'绘制曲线与坡道',exact:true}).click();
+  await page.locator('#scene').click({position:{x:Math.round((1+edge.x)*480),y:Math.round((1-edge.y)*320)}});
+  const editor=page.getByRole('form',{name:'道路编辑'});
+  await expect(editor.getByLabel('起点 高度（米）')).toHaveValue('0.04');
+  await expect(editor.getByLabel('起点 方向（°）')).toHaveValue('90');
+  await editor.getByLabel('终点 X 坐标（米）').fill('-96');
+  await editor.getByLabel('终点 Z 坐标（米）').fill('74');
+  await editor.getByLabel('终点 高度（米）').fill('0.04');
+  await editor.getByLabel('终点 方向（°）').fill('90');
+  await editor.getByRole('button',{name:'应用道路'}).click();
+  expect(await guide()).toBeNull();
+  expect(errors).toEqual([]);
+});
+
 test('scene exploration preserves the original city and supports weather, views, reset and resume', async ({ page }) => {
   test.setTimeout(240000);
   const errors=[];
@@ -355,7 +404,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',83],['T02',80],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',83],['T02',81],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));

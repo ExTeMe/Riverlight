@@ -123,7 +123,8 @@ test('all four road corners have upward surfaces and a continuous pedestrian tur
  for(const [sx,sz,mask] of [[1,1,5],[-1,1,6],[1,-1,9],[-1,-1,10]]){
   const model=getTemplate('road',0,mask);assert.equal(model.userData.roadShape,'arc');model.traverse(m=>{if(m.isMesh)for(let i=1;i<m.geometry.attributes.normal.array.length;i+=3)assert.ok(m.geometry.attributes.normal.array[i]>.99);});
   const c=new City();c.place('road',-30,-30);c.place('road',-30+sx,-30);c.place('road',-30,-30+sz);
-  const net=buildWalkNetwork(c);assert.ok(net.components.some(group=>group.some(n=>n.x===(-30+sx)*4+sx*1.7)&&group.some(n=>n.z===(-30+sz)*4+sz*1.7)),'pavements join across a curved corner');
+  const net=buildWalkNetwork(c),offset=c.roadNetwork.segments.values().next().value.profile.sidewalks[1].offset;
+  assert.ok(net.components.some(group=>group.some(n=>n.x===(-30+sx)*4+sx*offset)&&group.some(n=>n.z===(-30+sz)*4+sz*offset)),'pavements join across a curved corner');
  }
 });
 test('autonomous pedestrians follow valid edges, move over time, and rebuild after roads disappear',()=>{

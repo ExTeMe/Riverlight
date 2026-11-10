@@ -20,7 +20,7 @@ export class UI {
       <div class="section-label">风的轻重 <span id="wind-label">微风</span></div><input class="range" id="wind" aria-label="风力" type="range" min="0" max="1" step=".05" value=".4">
       <div class="section-label">一键好时光 ${icon('sun',14)}</div><div class="presets">${PRESETS.map(p=>`<button class="preset" data-preset="${p.id}"><span>${p.name}</span><small>${p.caption}</small></button>`).join('')}</div>
       <div class="env-footer"><span>让风景多停留一会儿</span><select id="quality" aria-label="画质"><option value="high">精致画质</option><option value="balanced">流畅优先</option></select></div></aside>
-      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['edit-road','road','调整线形'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
+      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['edit-road','road','调整线形'],['inspect-junction','curve','转向预览'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
       <form class="parcel-editor glass" aria-label="地块与建筑编辑" hidden></form>
       <form class="parcel-editor road-editor glass" aria-label="道路编辑" hidden></form>
       <div class="world-controls"><div class="zoom glass">${ib('zoom-in','plus','放大')}${ib('zoom-out','minus','缩小')}${ib('home','compass','回到全景 Home')}</div><button class="pill glass" data-action="expand">${icon('expand',16)}<span>扩展地图</span></button></div>
@@ -50,6 +50,8 @@ export class UI {
       const panel=document.createElement('aside');panel.className='scene-panel glass';panel.setAttribute('aria-label','场景实验室');
       panel.innerHTML=`<div class="scene-kicker">RIVERLIGHT / ${app.baseline.id}</div><h2>${escape(app.baseline.name)}</h2><p>${escape(app.baseline.caption)}</p>
         <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度'],['alignment','线形'],['ramp','坡道']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+        ${app.baseline.junctionViews?`<div class="scene-buttons">${[['tee','T 字路口'],['terminal','断头路'],['junction','十字路口']].filter(([id])=>app.baseline.junctionViews[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+          <div class="scene-buttons" id="junction-controls" hidden><button data-action="junction-vehicle" data-vehicle="car">小车</button><button data-action="junction-vehicle" data-vehicle="bus">公交</button><button data-action="hide-junction">关闭轨迹</button></div><p id="junction-summary" hidden></p>`:''}
         <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>
         ${app.baseline.id==='T07'?`<div class="scene-buttons">${[['sparse','小街'],['standard','城区'],['dense','密集城区']].map(([id,name])=>`<button data-action="scene-density" data-density="${id}" aria-pressed="${app.baseline.density===id}">${name}</button>`).join('')}</div>`:''}
         <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>
@@ -75,6 +77,15 @@ export class UI {
     this.root.querySelector('#wind').value=env.wind;this.root.querySelector('#quality').value=env.quality;this.root.querySelector('#time-speed').value=env.speed;
     this.clock();this.refreshActive();
     this.refreshSelection();
+    this.refreshJunction();
+  }
+  refreshJunction(){
+    const summary=this.root.querySelector('#junction-summary');if(!summary)return;
+    const info=this.app.world.junctionPreview.active,controls=this.root.querySelector('#junction-controls');
+    summary.hidden=controls.hidden=!info;
+    if(!info)return;
+    for(const button of controls.querySelectorAll('[data-vehicle]'))button.setAttribute('aria-pressed',String(button.dataset.vehicle===info.vehicle));
+    summary.textContent=`${info.count} 条可用路径 · 蓝色左转 · 杏色右转 · 绿色直行 · 红色停车`;
   }
   refreshSelection(){
     const selected=this.app.city.entities.get(this.app.selected),parcel=this.app.city.parcels.get(this.app.selectedParcel);
@@ -85,7 +96,9 @@ export class UI {
     panel.querySelector('#selected-name').textContent=item?.name??'空地块';
     panel.querySelector('#selected-meta').textContent=selected?.alignment?'连续道路 · 可调整线形与高度':parcel?`${metres(parcel.width)} × ${metres(parcel.depth)} 米地块 · ${metres(parcel.angle)}°${item?` · 建筑 ${size} 米`:' · 从目录选择建筑'}`:`${size} 米 · 格网物件`;
     const legacy=!!selected&&!parcel&&!selected.alignment;
-    const shown={'edit-lot':!!parcel,'edit-building':!!selected?.pose,'edit-road':!!selected?.alignment,move:legacy,rotate:legacy,copy:!!selected&&!selected.alignment,color:!!item?.floors,focus:true,delete:true};
+    const shown={'edit-lot':!!parcel,'edit-building':!!selected?.pose,'edit-road':!!selected?.alignment,
+      'inspect-junction':selected?.type==='road'&&!!this.app.city.roadNetwork.segments.get(selected.id)?.junction,
+      move:legacy,rotate:legacy,copy:!!selected&&!selected.alignment,color:!!item?.floors,focus:true,delete:true};
     for(const button of panel.querySelectorAll('[data-action]'))button.hidden=!shown[button.dataset.action];
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}

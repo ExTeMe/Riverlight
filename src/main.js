@@ -54,7 +54,7 @@ class App {
     this.last=performance.now();this.elapsed=0;this.uiClock=0;this.animate=this.animate.bind(this);requestAnimationFrame(this.animate);
     setTimeout(()=>document.querySelector('.intro')?.classList.add('hide'),22000);
     // Read-only diagnostics are useful during visual and performance verification.
-    window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
+    window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
   }
   thumbnail(type){
     if(this.thumbCache.has(type))return this.thumbCache.get(type);
@@ -205,7 +205,7 @@ class App {
     const actions={v:'select',b:'road',t:'trees',x:'erase',c:'camera',h:'quiet',home:'home',delete:'delete',backspace:'delete'};
     if(actions[key]){e.preventDefault();this.action(actions[key]);}
     if(key==='r'){if(this.editor.active)this.editor.rotate();else if(this.buildType){this.rotation=(this.rotation+1)%4;this.preview();}else this.action('rotate');}
-    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.ui.refresh();}
+    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.world.junctionPreview.clear();this.ui.refresh();}
     if(key===' ')this.action('play');
   }
   async action(action,el){
@@ -221,6 +221,17 @@ class App {
       case 'road':this.ui.showCategory('road');this.startBuild('road');break;
       case 'draw-road':this.startRoadEdit();break;
       case 'edit-road':if(e?.alignment)this.startRoadEdit(e);break;
+      case 'inspect-junction':if(e){
+        const segment=this.city.roadNetwork.segments.get(e.id);
+        if(!segment?.junction)break;
+        const [x,,z]=segment.center;
+        this.follow=false;this.controls.autoRotate=false;
+        this.restoreCamera({target:[x,0,z],position:[x+5,25,z+10]});
+        if(this.world.junctionPreview.id===e.id)this.world.junctionPreview.clear();else this.world.showJunction(e.id,'car');
+        this.ui.refreshJunction();
+      }break;
+      case 'junction-vehicle':this.world.showJunction(this.world.junctionPreview.id,el.dataset.vehicle);this.ui.refreshJunction();break;
+      case 'hide-junction':this.world.junctionPreview.clear();this.ui.refreshJunction();break;
       case 'trees':this.ui.showCategory('detail');this.startBuild('tree');break;
       case 'erase':this.cancel();this.mode='erase';this.ui.hint('点击拆除 · Ctrl+Z 可撤销 · Esc 返回');this.ui.refreshActive();break;
       case 'undo':this.cancel();if(this.city.undo()){this.selected=null;this.selectedParcel=null;this.changed();}break;
@@ -244,7 +255,11 @@ class App {
       case 'return-city':await this.navigateScene(null);break;
       case 'scene-density':await this.navigateScene('T07',el.dataset.density);break;
       case 'resume-scene':await this.navigateScene(this.baseline.id,this.baseline.density,true);break;
-      case 'scene-camera':if(this.baseline?.cameras){this.follow=false;this.controls.autoRotate=false;this.restoreCamera(this.baseline.cameras[el.dataset.view]);this.scheduleSave();}break;
+      case 'scene-camera':if(this.baseline?.cameras){
+        const view=el.dataset.view,cell=this.baseline.junctionViews?.[view];
+        this.follow=false;this.controls.autoRotate=false;this.restoreCamera(this.baseline.cameras[view]);
+        this.world.showJunction(cell&&this.city.at(...cell)?.id,'car');this.ui.refreshJunction();this.scheduleSave();
+      }break;
       case 'scene-weather':{const preset=SCENE_WEATHER.find(p=>p.id===el.dataset.weatherId);if(preset){const {hour,season,weather}=preset;this.setEnvironment({hour,season,weather,playing:false});}break;}
       case 'scene-evidence':download(`${this.baseline.id}-evidence.json`,JSON.stringify(this.sceneEvidence(),null,2));this.ui.toast('已导出当前镜头与实际资源记录');break;
       case 'save-copy':this.city.name=document.querySelector('#rename-city').value.trim()||'未命名城市';if(await this.persist(`city-${crypto.randomUUID()}`)){await this.persist();this.ui.refresh();await this.ui.cities();this.ui.toast('城市已收藏');}break;

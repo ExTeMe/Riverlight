@@ -47,7 +47,13 @@ export function buildWalkNetwork(city){
       const edgeDirs=[3,0,2,1];
       for(let i=0;i<4;i++){
         const crosses=mask&(1<<edgeDirs[i]);
-        if(!crosses||ports.length!==2)link(corners[i],corners[(i+1)%4],crosses?'crossing':'walk');
+        if(!crosses||(!segment.junction&&ports.length!==2))link(corners[i],corners[(i+1)%4],crosses?'crossing':'walk');
+      }
+      for(const crossing of segment.junction?.crossings??[]){
+        const i=edgeDirs.indexOf(crossing.side),a=corners[i],b=corners[(i+1)%4];
+        const ends=crossing.ends.map(([u,v])=>add(u,v));
+        if(length(a,ends[0])>length(a,ends[1]))ends.reverse();
+        link(a,ends[0]);link(ends[0],ends[1],'crossing');link(ends[1],b);
       }
       for(const port of ports){
         const [dx,dz]=ROAD_DIRECTIONS[port.side];

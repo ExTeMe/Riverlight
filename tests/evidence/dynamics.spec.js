@@ -68,12 +68,13 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
       const roadPosition = { T02: { x: 1183, y: 396 }, T03: { x: 640, y: 399 } }[id];
       if (roadPosition) {
         const before = samples.at(-1).stats;
-        await page.locator('[data-action="erase"]').click();
+        await page.keyboard.press('x');
+        await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().mode)).toBe('erase');
         await page.locator('#scene').click({ position: roadPosition });
         await observe('road-removed', 8);
         expect(samples.at(-1).stats.entities).toBe(before.entities - 1);
         expect(samples.at(-1).stats.walkNodes).not.toBe(before.walkNodes);
-        await page.locator('[data-action="undo"]').click();
+        await page.keyboard.press('Control+z');
         await observe('road-restored', 8);
         expect(samples.at(-1).stats).toMatchObject({ entities: before.entities, walkNodes: before.walkNodes });
       }
@@ -82,6 +83,20 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await page.keyboard.press('h');
         await observe('ramp-start', 2);
         await observe('ramp-walk', 6);
+        await page.keyboard.press('h');
+      }
+      if (id === 'T03') {
+        await page.locator('[data-view="junction"]').click();
+        await page.keyboard.press('h');
+        await observe('junction-car', 2);
+        expect(samples.at(-1).stats.junctionPreview).toMatchObject({vehicle:'car',count:12});
+        expect(samples.at(-1).stats.junctionPreview.distance).toBeGreaterThan(0);
+        await page.keyboard.press('h');
+        await page.locator('[data-vehicle="bus"]').click();
+        await page.keyboard.press('h');
+        await observe('junction-bus', 2);
+        expect(samples.at(-1).stats.junctionPreview).toMatchObject({vehicle:'bus',count:8});
+        expect(samples.at(-1).stats.junctionPreview.distance).toBeGreaterThan(0);
         await page.keyboard.press('h');
       }
       record.stage = 'resource-snapshot';

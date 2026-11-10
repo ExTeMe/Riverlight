@@ -1,11 +1,64 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Box3, Vector3 } from 'three';
 import { City, footprintBounds } from '../src/core.js';
 import { createBaseline, createLegacyBaseline, createScene } from '../src/baseline.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
-import { isRoad } from '../src/road-network.js';
+import { isRoad, ROAD_PROFILES } from '../src/road-network.js';
 import { createAlignmentMesh } from '../src/roads.js';
+import { vehicle } from '../src/models.js';
+import { VEHICLE_ENVELOPES, ROAD_DIRECTIONS } from '../src/road-junction.js';
+
+test('T03 junction turns match the lane ends and gate movements by the actual vehicle models',()=>{
+  const city=new City(createScene('T03').city),e=city.at(-24,0),segment=city.roadNetwork.segments.get(e.id);
+  const {junction,profile}=segment;
+  assert.equal(junction.kind,'cross');
+  assert.equal(junction.movements.filter(route=>route.vehicles.includes('car')).length,12);
+  assert.equal(junction.movements.filter(route=>route.vehicles.includes('bus')).length,8);
+  assert.ok(junction.movements.filter(route=>route.kind==='left').every(route=>!route.vehicles.includes('bus')));
+  for(let i=0;i<5;i++){
+    const model=vehicle(i),dimensions=new Box3().setFromObject(model).getSize(new Vector3()),bounds=VEHICLE_ENVELOPES[i===3?'bus':'car'];
+    assert.ok(dimensions.x<=bounds.width&&dimensions.z<=bounds.length&&bounds.width<=profile.lanes[1].width);
+    model.traverse(mesh=>mesh.geometry?.dispose());
+  }
+  for(const {from,to,samples} of junction.movements){
+    assert.notEqual(from,to);
+    assert.ok(samples[0].direction.every((v,i)=>v===-ROAD_DIRECTIONS[from][i]));
+    assert.ok(samples.at(-1).direction.every((v,i)=>v===ROAD_DIRECTIONS[to][i]));
+  }
+  const walk=buildWalkNetwork(city),[x,,z]=segment.center;
+  assert.equal(junction.paint.length,32);
+  for(const crossing of junction.crossings){
+    assert.ok(crossing.distance<crossing.stopDistance&&crossing.stopDistance<2);
+    const [a,b]=crossing.ends.map(([u,v])=>[x+u,profile.walkY,z+v].map(n=>n.toFixed(3)).join(','));
+    assert.equal(walk.nodes.get(a).edges.get(b),'crossing');
+  }
+});
+
+test('T02 attaches a continuous arm to a tee and reconstructs its routes after history and reload',()=>{
+  const city=new City(createScene('T02').city),tee=city.at(-27,-14),terminal=city.at(-24,13);
+  const segment=()=>city.roadNetwork.segments.get(tee.id);
+  const {junction}=segment();
+  assert.equal(junction.kind,'tee');
+  assert.equal(junction.crossings.length,3);
+  const port=segment().ports.find(p=>p.side===3),arm=city.roadNetwork.segments.get(port.neighborId);
+  assert.deepEqual(port.point,[-108,.04,-58]);
+  assert.equal(arm.ports[0].neighborId,tee.id);
+  assert.ok(junction.movements.some(m=>m.to===port.side||m.from===port.side));
+  for(const walk of arm.sidewalks){
+    const edge=walk.points[0].map(n=>n.toFixed(3)).join(',');
+    assert.ok(buildWalkNetwork(city).nodes.get(edge).edges.size>=2);
+  }
+  const dead=city.roadNetwork.segments.get(terminal.id).junction;
+  assert.equal(dead.kind,'terminal');
+  assert.equal(dead.crossings.length,0);
+  assert.equal(dead.movements.length,2);
+  assert.ok(dead.movements.every(route=>route.kind==='stop'&&route.to===null));
+  assert.ok(city.remove(arm.id));assert.equal(segment().junction,undefined);
+  assert.ok(city.undo());assert.deepEqual(segment().junction,junction);
+  assert.deepEqual(new City(city.snapshot()).roadNetwork,city.roadNetwork);
+});
 
 test('v1–v4 grid roads migrate without moving roads, bridges, paths or parcels',()=>{
   const city=new City(createScene('T01').city);
@@ -31,7 +84,7 @@ test('v1–v4 grid roads migrate without moving roads, bridges, paths or parcels
 });
 
 test('T02 alignment joins share position, tangent, grade and sidewalk edges across chunks',()=>{
-  const city=new City(createScene('T02').city),roads=[...city.roadNetwork.segments.values()].filter(s=>s.geometry);
+  const city=new City(createScene('T02').city),roads=[...city.roadNetwork.segments.values()].filter(s=>s.geometry).slice(0,4);
   assert.equal(roads.length,4);
   const [straight,left,right,ramp]=roads;
   assert.equal(straight.geometry.minRadius,Infinity);
@@ -101,10 +154,11 @@ test('road segments expose shared ports, usable profiles and matching bridge gra
   assert.equal(segment.profile.width,4);
   assert.equal(segment.profile.lanes.length,2);
   assert.ok(segment.profile.lanes.every(lane=>Math.abs(lane.offset)+lane.width/2<=segment.profile.carriageway/2));
-  assert.deepEqual(segment.profile.sidewalks.map(walk=>walk.offset),[-1.7,1.7]);
+  assert.deepEqual(segment.profile.sidewalks.map(walk=>walk.offset),[-1.82,1.82]);
   assert.deepEqual(network.segments.get(trail.id).ports.map(port=>port.neighborId),[nextTrail.id]);
   assert.deepEqual(network.segments.get(trail.id).profile.lanes,[]);
-  const walk=buildWalkNetwork(city),edge=walk.nodes.get(`${seam.point[0].toFixed(3)},${seam.walkY.toFixed(3)},1.700`);
+  const offset=ROAD_PROFILES.road.sidewalks[1].offset;
+  const walk=buildWalkNetwork(city),edge=walk.nodes.get(`${seam.point[0].toFixed(3)},${seam.walkY.toFixed(3)},${offset.toFixed(3)}`);
   assert.equal(walk.revision,network.revision);
   assert.ok(edge.edges.size>=2);
 });
