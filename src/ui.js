@@ -10,7 +10,7 @@ export class UI {
     this.app=app;this.category='home';this.thumbnails=new Map();this.root=document.querySelector('#app');
     this.root.innerHTML=`
       <header class="topbar"><div class="brand glass"><div class="brand-logo">栖</div><div><h1>栖 城</h1><small>R I V E R L I G H T</small></div></div><div class="top-actions"><div class="city-label"><b id="city-name">河光之城</b><span id="save-state">你的城市，随心生长</span></div>${ib('save','save','保存城市 Ctrl+S')}${ib('cities','folder','我的城市')}${ib('audio','mute','声音与音乐')}${ib('screenshot','camera','拍张照片')}${ib('environment','settings','环境与氛围','active')}</div></header>
-      <nav class="toolbar glass" aria-label="建造工具">${ib('select','select','选择 / V')}${ib('draw-parcel','expand','划定地块')}${ib('road','road','铺设道路 / B')}${ib('trees','tree','种植树木 / T')}${ib('erase','erase','拆除 / X')}<div class="sep"></div>${ib('undo','undo','撤销 Ctrl+Z')}${ib('redo','redo','重做 Ctrl+Y')}<div class="sep"></div>${ib('help','info','操作指南')}</nav>
+      <nav class="toolbar glass" aria-label="建造工具">${ib('select','select','选择 / V')}${ib('draw-parcel','expand','划定地块')}${ib('road','road','铺设道路 / B')}${ib('draw-road','curve','绘制曲线与坡道')}${ib('trees','tree','种植树木 / T')}${ib('erase','erase','拆除 / X')}<div class="sep"></div>${ib('undo','undo','撤销 Ctrl+Z')}${ib('redo','redo','重做 Ctrl+Y')}<div class="sep"></div>${ib('help','info','操作指南')}</nav>
       <div class="intro"><div class="eyebrow">A LITTLE CITY. YOUR OWN RHYTHM.</div><h2>在这里，慢慢生活。</h2><p>沿着河流，建造你喜欢的每一天。</p></div>
       <aside class="environment glass" aria-label="环境与氛围"><div class="panel-heading"><div><h2>此刻的风景</h2><small>MAKE A LITTLE ATMOSPHERE</small></div>${icon('leaf',19)}</div>
       <div class="field-label"><strong id="clock-label">16:30</strong><div class="time-controls"><select id="time-speed" aria-label="时间流速"><option value="1">1×</option><option value="4">4×</option><option value="8">8×</option></select><button data-action="play" aria-label="暂停或继续时间">${icon('play',13)}</button></div></div>
@@ -20,8 +20,9 @@ export class UI {
       <div class="section-label">风的轻重 <span id="wind-label">微风</span></div><input class="range" id="wind" aria-label="风力" type="range" min="0" max="1" step=".05" value=".4">
       <div class="section-label">一键好时光 ${icon('sun',14)}</div><div class="presets">${PRESETS.map(p=>`<button class="preset" data-preset="${p.id}"><span>${p.name}</span><small>${p.caption}</small></button>`).join('')}</div>
       <div class="env-footer"><span>让风景多停留一会儿</span><select id="quality" aria-label="画质"><option value="high">精致画质</option><option value="balanced">流畅优先</option></select></div></aside>
-      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
+      <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['edit-road','road','调整线形'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
       <form class="parcel-editor glass" aria-label="地块与建筑编辑" hidden></form>
+      <form class="parcel-editor road-editor glass" aria-label="道路编辑" hidden></form>
       <div class="world-controls"><div class="zoom glass">${ib('zoom-in','plus','放大')}${ib('zoom-out','minus','缩小')}${ib('home','compass','回到全景 Home')}</div><button class="pill glass" data-action="expand">${icon('expand',16)}<span>扩展地图</span></button></div>
       <div class="view-controls"><button class="pill glass" data-action="camera">${icon('camera',16)}<span id="camera-label">自由观察</span><kbd class="key">C</kbd></button><button class="pill glass" data-action="quiet">${icon('eye',16)}<span>静静欣赏</span></button></div>
       <div class="mode-hint" id="mode-hint" hidden></div>
@@ -48,7 +49,7 @@ export class UI {
       this.root.querySelector('[data-action=environment]').classList.remove('active');
       const panel=document.createElement('aside');panel.className='scene-panel glass';panel.setAttribute('aria-label','场景实验室');
       panel.innerHTML=`<div class="scene-kicker">RIVERLIGHT / ${app.baseline.id}</div><h2>${escape(app.baseline.name)}</h2><p>${escape(app.baseline.caption)}</p>
-        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度'],['alignment','线形'],['ramp','坡道']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
         <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>
         ${app.baseline.id==='T07'?`<div class="scene-buttons">${[['sparse','小街'],['standard','城区'],['dense','密集城区']].map(([id,name])=>`<button data-action="scene-density" data-density="${id}" aria-pressed="${app.baseline.density===id}">${name}</button>`).join('')}</div>`:''}
         <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>
@@ -60,7 +61,7 @@ export class UI {
   showCategory(id){this.category=id;this.root.querySelectorAll('[data-category]').forEach(el=>el.classList.toggle('active',el.dataset.category===id));
     this.root.querySelector('#cards').innerHTML=CATALOG.filter(a=>a.category===id).map(a=>`<button class="asset-card" data-asset="${a.id}" draggable="true" aria-label="建造${a.name}"><span class="asset-size">${a.w*CELL}×${a.d*CELL} m</span><img src="${this.app.thumbnail(a.id)}" alt="${a.name}" draggable="false"><b>${a.name}</b><small>${a.kind==='bridge'?'连接河流两岸':a.kind==='road'?'按住拖动铺设':'点击或拖入城市'}</small></button>`).join('');this.refreshActive();
   }
-  refreshActive(){this.root.querySelectorAll('[data-asset]').forEach(el=>el.classList.toggle('active',(this.app.buildType??this.app.editor?.type)===el.dataset.asset));this.root.querySelectorAll('.toolbar [data-action]').forEach(el=>el.classList.toggle('active',({select:'select',erase:'erase',road:'road',trees:'tree','draw-parcel':'parcel'}[el.dataset.action])===(this.app.buildType||this.app.mode)));}
+  refreshActive(){this.root.querySelectorAll('[data-asset]').forEach(el=>el.classList.toggle('active',(this.app.buildType??this.app.editor?.type)===el.dataset.asset));this.root.querySelectorAll('.toolbar [data-action]').forEach(el=>el.classList.toggle('active',({select:'select',erase:'erase',road:'road',trees:'tree','draw-parcel':'parcel','draw-road':'alignment'}[el.dataset.action])===(this.app.buildType||this.app.mode)));}
   refresh(){
     const city=this.app.city,env=city.environment;
     this.root.querySelector('#city-name').textContent=city.name;
@@ -77,13 +78,14 @@ export class UI {
   }
   refreshSelection(){
     const selected=this.app.city.entities.get(this.app.selected),parcel=this.app.city.parcels.get(this.app.selectedParcel);
-    const panel=this.root.querySelector('.selection-panel');panel.hidden=(!selected&&!parcel)||!!this.app.editor?.active;
+    const panel=this.root.querySelector('.selection-panel');panel.hidden=(!selected&&!parcel)||!!this.app.editor?.active||!!this.app.roadEditor?.active;
     if(panel.hidden)return;
     const item=BY_ID[selected?.type],size=selected?entityDimensions(selected).map(n=>n*CELL).join(' × '):'';
     const metres=n=>Number(n.toFixed(2));
     panel.querySelector('#selected-name').textContent=item?.name??'空地块';
-    panel.querySelector('#selected-meta').textContent=parcel?`${metres(parcel.width)} × ${metres(parcel.depth)} 米地块 · ${metres(parcel.angle)}°${item?` · 建筑 ${size} 米`:' · 从目录选择建筑'}`:`${size} 米 · 格网物件`;
-    const shown={'edit-lot':!!parcel,'edit-building':!!selected?.pose,move:!!selected&&!parcel,rotate:!!selected&&!parcel,copy:!!selected,color:!!item?.floors,focus:true,delete:true};
+    panel.querySelector('#selected-meta').textContent=selected?.alignment?'连续道路 · 可调整线形与高度':parcel?`${metres(parcel.width)} × ${metres(parcel.depth)} 米地块 · ${metres(parcel.angle)}°${item?` · 建筑 ${size} 米`:' · 从目录选择建筑'}`:`${size} 米 · 格网物件`;
+    const legacy=!!selected&&!parcel&&!selected.alignment;
+    const shown={'edit-lot':!!parcel,'edit-building':!!selected?.pose,'edit-road':!!selected?.alignment,move:legacy,rotate:legacy,copy:!!selected&&!selected.alignment,color:!!item?.floors,focus:true,delete:true};
     for(const button of panel.querySelectorAll('[data-action]'))button.hidden=!shown[button.dataset.action];
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}

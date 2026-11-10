@@ -197,7 +197,7 @@ test('T01 parcel import preserves old files and restores an angled building on r
     expect(saved.original.input).toEqual(legacy);
     expect(saved.original.camera).toEqual(legacy.camera);
     const old=new City(legacy.city),current=new City(saved.current.data);
-    expect(saved.current.data.version).toBe(4);
+    expect(saved.current.data.version).toBe(5);
     expect(current.terrain).toBe(old.terrain);
     for(const [id,entity] of old.entities){
       expect(current.entities.get(id)).toEqual(entity);
@@ -232,6 +232,7 @@ test('T02 migrates roads and refreshes the shared topology after removal and und
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T02');await ready(page);
   const city=new City(createScene('T02').city),target=city.at(-24,-6);
+  for(const e of city.entities.values())if(e.alignment)city.remove(e.id);
   expect(target.type).toBe('road');
   await importCity(page,{city:{...city.snapshot(3),name:'T02 · 道路迁移副本'},camera:{target:[-96,0,-24],position:[-61,30,16]}});
   await expect(page.locator('#city-name')).toHaveText('T02 · 道路迁移副本');
@@ -254,6 +255,59 @@ test('T02 migrates roads and refreshes the shared topology after removal and und
   expect(exported.city.entities.find(row=>row.id===target.id)).toMatchObject({type:'road',center:[-96,.04,-24]});
   const restored=new City(exported.city);
   expect(restored.roadNeighbors(restored.entities.get(target.id)).map(e=>e.id)).toEqual(city.roadNeighbors(target).map(e=>e.id));
+  expect(errors).toEqual([]);
+});
+
+test('T02 previews and edits a continuous S ramp through history and reload',async({page},testInfo)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T02');await ready(page);
+  const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+  const frame=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await page.getByRole('button',{name:'线形',exact:true}).click();await frame();
+  await page.keyboard.press('h');await frame();
+  await page.screenshot({path:testInfo.outputPath('t02-alignment.png')});
+  await page.keyboard.press('h');
+  await page.getByRole('button',{name:'坡道',exact:true}).click();await frame();
+  await page.keyboard.press('h');await frame();
+  await page.screenshot({path:testInfo.outputPath('t02-ramp.png')});
+  await page.keyboard.press('h');
+  await page.locator('#scene').click({position:{x:480,y:320}});
+  const before=await stats();
+  const ramp=new City(createScene('T02').city).entities.get(before.selected);
+  expect(ramp?.alignment.end[1]).toBe(1.6);
+  await page.getByRole('button',{name:'调整线形',exact:true}).click();
+  const form=page.getByRole('form',{name:'道路编辑'}),apply=form.getByRole('button',{name:'应用道路'});
+  const height=form.getByLabel('终点 高度（米）');
+  await height.fill('8');
+  await expect(form.getByRole('status')).toContainText('坡度超过 12%');
+  await expect(apply).toBeDisabled();
+  expect((await stats()).roadRevision).toBe(before.roadRevision);
+  await height.fill('2');
+  await expect(form.getByRole('status')).toContainText('最小半径');
+  await expect(apply).toBeEnabled();
+  await frame();
+  await page.screenshot({path:testInfo.outputPath('t02-road-editor.png')});
+  await apply.click();
+  await expect.poll(async()=> (await stats()).roadRevision).toBe(before.roadRevision+1);
+  await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+  await page.getByRole('button',{name:'重做 Ctrl+Y',exact:true}).click();
+  await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
+  expect(await stats()).toMatchObject({roadRevision:before.roadRevision+3,walkRoadRevision:before.roadRevision+3});
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const exported=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+  expect(exported.city.roads.layout).toBe('mixed-v1');
+  expect(new City(exported.city).entities.get(ramp.id).alignment.end[1]).toBe(2);
+  await page.locator('[data-action="close-modal"]').click();
+  await page.getByRole('button',{name:'绘制曲线与坡道',exact:true}).click();
+  await form.getByLabel('起点 X 坐标（米）').fill('-155');
+  await form.getByLabel('起点 Z 坐标（米）').fill('-118');
+  await form.getByLabel('终点 X 坐标（米）').fill('-119');
+  await form.getByLabel('终点 Z 坐标（米）').fill('-118');
+  await form.getByRole('button',{name:'S 弯',exact:true}).click();
+  await expect(form.getByLabel('起点 方向（°）')).toHaveValue('30');
+  await expect(apply).toBeEnabled();await apply.click();
+  await expect.poll(async()=> (await stats()).entities).toBe(before.entities+1);
   expect(errors).toEqual([]);
 });
 
@@ -301,7 +355,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',83],['T02',76],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',83],['T02',80],['T03',61],['T04',60],['T05',78],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));

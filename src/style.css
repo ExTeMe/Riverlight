@@ -15,6 +15,7 @@
 .parcel-fields,.parcel-settings,.parcel-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;align-items:end}.parcel-settings{margin-bottom:9px}.parcel-editor label{display:grid;gap:3px;font-size:10px;color:#425946}.parcel-editor .angle-snap{display:flex;align-items:center;min-height:30px}
 .parcel-editor input[type=number],.parcel-editor select{width:100%;padding:5px 7px;min-height:28px;border:1px solid #bdcbb7;border-radius:7px;background:#f8f9f0;color:#293e32;font:inherit;font-size:12px}.parcel-editor input[type=checkbox]{accent-color:#456b54}
 .parcel-actions button{padding:8px;border-radius:8px;background:#e5ebdf;font-size:11px}.parcel-actions button.primary{background:#456b54;color:#fff}.parcel-actions button:disabled{opacity:.45}
+.road-editor .scene-buttons{margin:4px 0 8px}.road-editor .scene-buttons button:disabled{opacity:.45}
 .selection-panel{z-index:5}#app:has(.scene-panel)>.selection-panel{left:auto;right:24px;top:100px}
 @media(max-height:700px){.parcel-editor{top:78px;max-height:calc(100vh - 252px)}}@media(max-width:760px){.parcel-editor{right:12px}}
 @media(max-height:740px){

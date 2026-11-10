@@ -7,6 +7,8 @@ import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, bo
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
 import { hasTraffic } from './road-network.js';
+import { offsetRoadSample } from './road-alignment.js';
+import { createAlignmentMesh } from './roads.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function outlineLines(outline,y){
@@ -18,6 +20,14 @@ function updateLines(mesh,lines){
   else {if(p)g.dispose();g.setAttribute('position',new T.Float32BufferAttribute(lines,3));}
   g.computeBoundingSphere();
 }
+function alignmentLines(samples,offsets){
+  const lines=[];
+  for(const offset of offsets)for(let i=1;i<samples.length;i++){
+    lines.push(...offsetRoadSample(samples[i-1],offset,.1),...offsetRoadSample(samples[i],offset,.1));
+  }
+  return lines;
+}
+function disposeChunkMeshes(group){group.traverse(o=>{if(o.isInstancedMesh)o.dispose();else if(o.userData.roadGeometry)o.geometry.dispose();});}
 function lineLayer(scene,color,opacity=1){
   const layer=new T.LineSegments(new T.BufferGeometry(),new T.LineBasicMaterial({color,transparent:opacity<1,opacity}));
   layer.visible=false;scene.add(layer);return layer;
@@ -65,7 +75,7 @@ export class World {
   }
   setCity(city){this.city=city;this.select(null);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
-  unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});c.buildings.traverse(o=>{if(o.isInstancedMesh)o.dispose();});this.loaded.delete(ck);}
+  unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
     this.activeCenter.copy(focus);
     if(focus.distanceTo(this.horizonCenter)>500){this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(focus,this.city.terrain);this.horizonCenter.copy(focus);}
@@ -94,7 +104,7 @@ export class World {
     if(force)this.traffic.rebuild();
   }
   buildChunk(ck,detail){
-    const c=this.loaded.get(ck);c.detail=detail;c.buildings.traverse(o=>{if(o.isInstancedMesh)o.dispose();});c.buildings.clear();c.animations=[];
+    const c=this.loaded.get(ck);c.detail=detail;disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
     const batches=new Map();
     const append=(model,matrix,id)=>{for(const mesh of model.children){
       if(mesh.userData.dynamic){const holder=new T.Group(),animated=mesh.clone(true);holder.applyMatrix4(matrix);holder.add(animated);holder.traverse(o=>{if(o.isMesh)o.userData.entityId=id;});c.buildings.add(holder);c.animations.push(holder);continue;}
@@ -104,6 +114,12 @@ export class World {
       const e=this.city.entities.get(id);
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
+      if(road?.geometry){
+        const model=createAlignmentMesh(road.geometry,road.ports,material);
+        model.userData.alignment=true;
+        for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
+        c.buildings.add(model);continue;
+      }
       const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),p=placementOf(e);
       if(road){
         p.x=road.center[0];p.z=road.center[2];
@@ -129,6 +145,11 @@ export class World {
     this.parcelSelection.visible=!!parcel;
     if(parcel)updateLines(this.parcelSelection,outlineLines(parcelOutline(parcel),.13));
     if(!e){this.selection.visible=false;return;}
+    if(e.alignment){
+      const road=this.city.roadNetwork.segments.get(id);
+      updateLines(this.selection,alignmentLines(road.geometry.samples,[-road.profile.width/2,road.profile.width/2]));
+      this.selection.visible=true;return;
+    }
     const outline=footprintOutline(e),height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3;
     const lines=[];
     for(let i=0;i<outline.length;i++){
@@ -149,6 +170,26 @@ export class World {
       this.previewFootprint.material.color.set(error?'#df8970':'#ffdc94');
     }
   }
+  showRoadPreview(geometry,error){
+    this.clearPreview();
+    if(!geometry?.samples)return;
+    const points=[],{samples}=geometry;
+    const edge=(sample,side)=>offsetRoadSample(sample,side*CELL/2,.1);
+    for(let i=1;i<samples.length;i++){
+      const a=samples[i-1],b=samples[i];
+      quad(points,edge(a,-1),edge(b,-1),edge(b,1),edge(a,1));
+    }
+    const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(points,3));
+    const tint=new T.MeshBasicMaterial({color:error?'#cb6856':'#5a9f79',transparent:true,opacity:.55,depthWrite:false,depthTest:false});
+    this.preview=new T.Mesh(buffer,tint);this.preview.userData.roadPreview=true;this.preview.renderOrder=4;
+    this.scene.add(this.preview);
+    this.previewFootprint.material.color.set(error?'#f3a289':'#daffe0');
+    this.previewFootprint.material.depthTest=false;this.previewFootprint.renderOrder=5;
+    const lines=alignmentLines(samples,[-CELL/2,0,CELL/2]);
+    for(const sample of [samples[0],samples.at(-1)])lines.push(...edge(sample,-1),...edge(sample,1));
+    updateLines(this.previewFootprint,lines);
+    this.previewFootprint.visible=true;
+  }
   showPreview(e,valid){
     const [w,d]=entityDimensions(e);
     const k=`${e.type}:${e.color}`;
@@ -159,7 +200,7 @@ export class World {
     this.hover.scale.set(w*CELL,d*CELL,1);this.hover.position.set(this.preview.position.x,.06,this.preview.position.z);this.hover.material.color.set(valid?'#6d9975':'#c06a57');this.hover.visible=true;
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;
   }
-  clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh)o.material.dispose();});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;}
+  clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;}
   update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {
@@ -168,7 +209,7 @@ class Traffic {
     for(const a of [...this.cars,...this.boats]){this.scene.remove(a.mesh);a.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
     this.cars=[];this.boats=[];
     this.network=this.city.roadNetwork;
-    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&s.ports.length);
+    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&s.ports.length&&!s.geometry);
     for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
       const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);this.scene.add(mesh);
       this.cars.push({mesh,from:e,to:this.network.segments.get(e.ports[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});

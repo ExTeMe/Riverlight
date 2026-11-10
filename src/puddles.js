@@ -26,7 +26,7 @@ export class Puddles {
     this.city=city;this.center={x:Math.round(focus.x/128)*128,z:Math.round(focus.z/128)*128};
     const size=512;this.mesh.scale.set(size,size,1);this.mesh.position.x=this.center.x;this.mesh.position.z=this.center.z;
     const c=this.canvas,ctx=c.getContext('2d'),s=c.width/size;ctx.fillStyle='black';ctx.fillRect(0,0,c.width,c.height);
-    for(const e of city.entities.values())if(e.type==='road'&&e.id%3!==0){
+    for(const e of city.entities.values())if(e.type==='road'&&!e.alignment&&e.id%3!==0){
       const x=(e.x*CELL-this.center.x+size/2)*s,z=(e.z*CELL-this.center.z+size/2)*s;if(x<0||z<0||x>c.width||z>c.height)continue;
       const r=(.65+(e.id%5)*.13)*s,g=ctx.createRadialGradient(x,z,.1,x,z,r);g.addColorStop(0,'white');g.addColorStop(.65,'#ddd');g.addColorStop(1,'black');
       ctx.fillStyle=g;ctx.save();ctx.translate(x,z);ctx.scale(1,.65);ctx.translate(-x,-z);ctx.beginPath();ctx.arc(x,z,r,0,Math.PI*2);ctx.fill();ctx.restore();

@@ -77,6 +77,13 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await observe('road-restored', 8);
         expect(samples.at(-1).stats).toMatchObject({ entities: before.entities, walkNodes: before.walkNodes });
       }
+      if (id === 'T02') {
+        await page.locator('[data-view="ramp"]').click();
+        await page.keyboard.press('h');
+        await observe('ramp-start', 2);
+        await observe('ramp-walk', 6);
+        await page.keyboard.press('h');
+      }
       record.stage = 'resource-snapshot';
       await persist();
       await page.getByText('观察与记录', { exact: true }).click();

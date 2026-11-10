@@ -1,6 +1,8 @@
 import { CELL } from './catalog.js';
+import { alignmentGeometry, matchingRoadEnds, offsetRoadSample } from './road-alignment.js';
 
 export const ROAD_LAYOUT = 'grid-v1';
+export const MIXED_ROAD_LAYOUT = 'mixed-v1';
 export const ROAD_DIRECTIONS = Object.freeze([[1,0],[-1,0],[0,1],[0,-1]].map(Object.freeze));
 const roadSides=Object.freeze([-1,1].map(side=>Object.freeze({side,offset:side*1.7,width:.44})));
 const roadLanes=Object.freeze([-1,1].map(direction=>Object.freeze({direction,offset:direction*.65,width:1.3})));
@@ -13,10 +15,10 @@ export const isRoad = type => Object.hasOwn(ROAD_PROFILES,type);
 export const hasTraffic = type => isRoad(type)&&ROAD_PROFILES[type].lanes.length>0;
 export const nextRoadRevision = revision => (revision+1)%Number.MAX_SAFE_INTEGER;
 
-export function roadHeader(revision){return {layout:ROAD_LAYOUT,revision};}
+export function roadHeader(revision,mixed=false){return {layout:mixed?MIXED_ROAD_LAYOUT:ROAD_LAYOUT,revision};}
 
-export function readRoadHeader(value){
-  if(value?.layout!==ROAD_LAYOUT||!Number.isSafeInteger(value.revision)||value.revision<0||value.revision>=Number.MAX_SAFE_INTEGER){
+export function readRoadHeader(value,mixed=false){
+  if(value?.layout!==(mixed?MIXED_ROAD_LAYOUT:ROAD_LAYOUT)||!Number.isSafeInteger(value.revision)||value.revision<0||value.revision>=Number.MAX_SAFE_INTEGER){
     throw new Error('道路格式或拓扑版本无效');
   }
   return value.revision;
@@ -67,9 +69,10 @@ function centerlines(center,ports,corner,rotation){
 // bridge tiles share vehicle ports. Standalone paths have pedestrian ports only.
 export function buildRoadNetwork(entities,revision){
   const roads=[...entities].filter(e=>isRoad(e.type));
-  const at=new Map(roads.map(e=>[`${e.x},${e.z}`,e]));
-  const segments=new Map();
-  for(const e of roads){
+  const grid=roads.filter(e=>!e.alignment);
+  const at=new Map(grid.map(e=>[`${e.x},${e.z}`,e]));
+  const segments=new Map(),ends=new Map();
+  for(const e of grid){
     const center=roadCenter(e),profile=ROAD_PROFILES[e.type],ports=[];
     let mask=0;
     for(const [side,[dx,dz]] of ROAD_DIRECTIONS.entries()){
@@ -82,6 +85,25 @@ export function buildRoadNetwork(entities,revision){
     }
     const corner=e.type==='road'?roadCorner(mask):null;
     segments.set(e.id,{id:e.id,kind:e.type,center,profile,ports,mask,corner,centerlines:centerlines(center,ports,corner,e.rotation)});
+  }
+  for(const e of roads)if(e.alignment){
+    const geometry=alignmentGeometry(e.alignment),{samples}=geometry,profile=ROAD_PROFILES.road;
+    const profileLines=(items,height)=>items.map(item=>({...item,points:samples.map(sample=>offsetRoadSample(sample,item.offset,height))}));
+    const segment={id:e.id,kind:'road',profile,center:samples[Math.floor(samples.length/2)].point,
+      centerlines:[samples.map(s=>s.point)],geometry,ports:[],
+      lanes:profileLines(profile.lanes,profile.vehicleY-profile.bedY),
+      sidewalks:profileLines(profile.sidewalks,profile.walkY-profile.bedY)};
+    segments.set(e.id,segment);
+    for(const [index,sample] of [[0,samples[0]],[1,samples.at(-1)]]){
+      const key=sample.point.join(',');
+      const endpoint=e.alignment[index?'end':'start'];
+      const other=ends.get(key);
+      if(other&&matchingRoadEnds(endpoint,index,other.endpoint,other.index)){
+        const port={point:sample.point,walkY:sample.point[1]+profile.walkY-profile.bedY};
+        segment.ports.push({...port,end:index,neighborId:other.segment.id});
+        other.segment.ports.push({...port,end:other.index,neighborId:e.id});
+      }else ends.set(key,{segment,index,endpoint});
+    }
   }
   return {revision,segments};
 }
