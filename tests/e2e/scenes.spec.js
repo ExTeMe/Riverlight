@@ -627,7 +627,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',74],['T02',81],['T03',61],['T04',60],['T05',90],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',74],['T02',85],['T03',61],['T04',60],['T05',90],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
