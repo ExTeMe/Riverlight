@@ -101,7 +101,7 @@ export class World {
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
-  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.setCity(city);this.clear();this.sync(true);}
+  setCity(city){this.clear();this.clearPreview();this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.setCity(city);this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -124,7 +124,7 @@ export class World {
     }
     this.renderedRoadNetwork=network;
     for(const ck of [...this.loaded.keys()])if(!wanted.has(ck))this.unload(ck);
-    this.pickables=[];for(const c of this.loaded.values())this.pickables.push(...c.buildings.children);
+    this.refreshPickables();
     const span=CELL*CHUNK,bounds={minX:(cx-r)*span,minZ:(cz-r)*span,maxX:(cx+r+1)*span,maxZ:(cz+r+1)*span};
     const lines=this.city.parcelSpatial.query(bounds).flatMap(id=>{
       const parcel=this.city.parcels.get(id);
@@ -145,6 +145,22 @@ export class World {
       if(this.walkOverlay.visible)this.showMobility(true,this.mobilityFocus);
     }
   }
+  refreshPickables(){
+    this.pickables=[];
+    for(const chunk of this.loaded.values())this.pickables.push(...chunk.buildings.children);
+  }
+  setPreviewSource(id){
+    const previous=this.previewSource;
+    if(id===previous)return;
+    this.previewSource=id;
+    let rebuilt=false;
+    for(const [ck,chunk] of this.loaded){
+      const ids=this.city.chunks.get(ck);
+      if(ids?.has(id)||ids?.has(previous)){this.buildChunk(ck,chunk.detail);rebuilt=true;}
+    }
+    if(rebuilt)this.refreshPickables();
+    if(this.selectedId!=null&&(this.selectedId===id||this.selectedId===previous))this.select(this.selectedId,this.selectedParcelId);
+  }
   buildChunk(ck,detail){
     const c=this.loaded.get(ck);c.detail=detail;c.revision=this.city.meshRevisions.get(ck);disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
     const batches=new Map();
@@ -153,6 +169,7 @@ export class World {
       const k=mesh.geometry.uuid+mesh.material.uuid;if(!batches.has(k))batches.set(k,{mesh,matrices:[],ids:[]});const batch=batches.get(k);batch.matrices.push(matrix);batch.ids.push(id);
     }};
     for(const id of this.city.chunks.get(ck)||[]){
+      if(id===this.previewSource)continue;
       const e=this.city.entities.get(id);
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
@@ -193,10 +210,12 @@ export class World {
     }
   }
   select(id,parcelId){
+    this.selectedId=id;this.selectedParcelId=parcelId;
     const e=this.city.entities.get(id),parcel=e?.pose?.parcel??this.city.parcels.get(parcelId);
-    this.parcelSelection.visible=!!parcel;
+    const hidden=id!=null&&id===this.previewSource;
+    this.parcelSelection.visible=!!parcel&&!hidden;
     if(parcel)updateLines(this.parcelSelection,outlineLines(parcelOutline(parcel),.13));
-    if(!e){this.selection.visible=false;return;}
+    if(!e||hidden){this.selection.visible=false;return;}
     if(e.alignment){
       const road=this.city.roadNetwork.segments.get(id);
       updateLines(this.selection,alignmentLines(road.geometry.samples,[-road.profile.width/2,road.profile.width/2]));
@@ -211,9 +230,9 @@ export class World {
     }
     updateLines(this.selection,lines);this.selection.visible=true;
   }
-  showParcelPreview({parcel,entity,error}){
+  showParcelPreview({parcel,entity,error},sourceId=null){
     if(!parcel){this.clearPreview();return;}
-    if(entity)this.showPreview(entity,!error);
+    if(entity)this.showPreview(entity,!error,sourceId);
     else this.clearPreview();
     updateLines(this.previewParcel,outlineLines(parcelOutline(parcel),.14));
     this.previewParcel.material.color.set(error?'#df8970':'#94e2d1');this.previewParcel.visible=true;
@@ -226,8 +245,8 @@ export class World {
   showRoadPreview(geometry,error){
     this.showRoadPreviews(geometry?.samples?[geometry.samples]:[],error);
   }
-  showRoadPreviews(profiles,error){
-    this.clearPreview();
+  showRoadPreviews(profiles,error,sourceId=null){
+    this.clearPreview(profiles.length?sourceId:null);
     if(!profiles.length)return;
     const points=[],lines=[];
     const edge=(sample,side)=>offsetRoadSample(sample,side*CELL/2,.1);
@@ -248,17 +267,18 @@ export class World {
     updateLines(this.previewFootprint,lines);
     this.previewFootprint.visible=true;
   }
-  showPreview(e,valid){
+  showPreview(e,valid,sourceId=null){
     const [w,d]=entityDimensions(e);
     const k=`${e.type}:${e.color}`;
-    if(this.previewKey!==k){this.clearPreview();this.preview=getTemplate(e.type,e.color).clone();this.preview.traverse(o=>{if(o.isMesh){const base=o.material.userData.base.clone();o.material=o.material.clone();o.material.userData.base=base;o.material.transparent=true;o.material.opacity=.55;o.material.depthWrite=false;o.castShadow=false;}});this.scene.add(this.preview);this.previewKey=k;}
+    if(this.previewKey!==k){this.clearPreview(sourceId);this.preview=getTemplate(e.type,e.color).clone();this.preview.traverse(o=>{if(o.isMesh){const base=o.material.userData.base.clone();o.material=o.material.clone();o.material.userData.base=base;o.material.transparent=true;o.material.opacity=.55;o.material.depthWrite=false;o.castShadow=false;}});this.scene.add(this.preview);this.previewKey=k;}
+    this.setPreviewSource(sourceId);
     const p=placementOf(e);this.preview.position.set(p.x,.08,p.z);this.preview.scale.set(p.scaleX,1,p.scaleZ);this.preview.rotation.y=p.radians;this.preview.visible=true;
     this.preview.traverse(o=>{if(o.isMesh)o.material.color.copy(o.material.userData.base).lerp(new T.Color(valid?'#9fc0a4':'#d57762'),.3);});
     if(e.pose){this.hover.visible=false;this.grid.visible=false;return;}
     this.hover.scale.set(w*CELL,d*CELL,1);this.hover.position.set(this.preview.position.x,.06,this.preview.position.z);this.hover.material.color.set(valid?'#6d9975':'#c06a57');this.hover.visible=true;
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;
   }
-  clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;}
+  clearPreview(sourceId=null){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;this.setPreviewSource(sourceId);}
   showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
   showRiver(visible){
     this.riverOverlay.visible=visible;

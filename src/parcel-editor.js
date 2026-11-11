@@ -77,7 +77,8 @@ export class ParcelEditor {
   }
   render(){
     const plan=this.plan();
-    this.app.world.showParcelPreview(plan);
+    const sourceId=['lot','building'].includes(this.mode)?plan.entity?.id:null;
+    this.app.world.showParcelPreview(plan,sourceId);
     this.handles.set(plan,this.mode);
     const feedback=this.form.querySelector('.parcel-feedback');
     const relative=['building','attach'].includes(this.mode);

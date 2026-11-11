@@ -174,11 +174,11 @@ class App {
     if(!e)return;
     const error=this.city.canPlace(e,this.moving);
     if(e.type==='bridge')this.previewBridge(e,error);
-    else this.world.showPreview(e,!error);
+    else this.world.showPreview(e,!error,this.moving);
   }
   previewBridge(entity,placementError){
     const placements=this.drawing?this.city.paintPlan('bridge',this.dragCells):placementError?[]:[{...entity,id:this.moving??entity.id}];
-    if(!placements.length){this.world.showPreview(entity,false);this.ui.hint(placementError??'没有可放置的位置');return;}
+    if(!placements.length){this.world.showPreview(entity,false,this.moving);this.ui.hint(placementError??'没有可放置的位置');return;}
     const grid=[...this.city.entities.values()].filter(e=>e.id!==this.moving&&!e.alignment&&hasTraffic(e.type)).concat(placements);
     const {vehicleY,bedY}=ROAD_PROFILES.road;
     const previous=this.city.roadNetwork;
@@ -192,7 +192,7 @@ class App {
       const x=e.x*CELL+offset;
       return {point:[x,bedY+bridgeRise(grades.get(e.id),x),e.z*CELL],direction:[1,0]};
     }));
-    this.world.showRoadPreviews(profiles,!!issue);
+    this.world.showRoadPreviews(profiles,!!issue,this.moving);
     this.ui.hint(issue?hints[issue]:crossings.length?`桥下净空 ${(Math.min(...crossings.map(bridge=>bridge.bottomY))-WATER_Y).toFixed(2)} 米 · 可容纳原型船`:
       '按住左键跨河绘制 · 两岸各接 3 格直线引桥 · Esc 取消');
   }
@@ -319,7 +319,7 @@ class App {
       case 'erase':this.cancel();this.mode='erase';this.ui.hint('点击拆除 · Ctrl+Z 可撤销 · Esc 返回');this.ui.refreshActive();break;
       case 'undo':this.cancel();if(this.city.undo()){this.selected=null;this.selectedParcel=null;this.changed();}else this.reportEditError();break;
       case 'redo':this.cancel();if(this.city.redo()){this.selected=null;this.selectedParcel=null;this.changed();}else this.reportEditError();break;
-      case 'move':if(e&&!e.pose&&!e.alignment){this.startBuild(e.type,e.color,true);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · 原建筑会保留到移动成功 · Esc 取消');this.preview();}break;
+      case 'move':if(e&&!e.pose&&!e.alignment){this.startBuild(e.type,e.color,true);this.moving=e.id;this.rotation=e.rotation;this.ui.hint('选择新的位置 · Esc 恢复原位');this.preview();}break;
       case 'copy':if(e?.pose){this.startParcelEdit({mode:'quick',entity:e,copy:true});}else if(e&&!e.alignment){this.startBuild(e.type,e.color,true);this.rotation=e.rotation;this.preview();}break;
       case 'rotate':if(e?.pose){this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});this.editor.rotate();}else if(e&&!e.alignment){if(!this.city.move(e.id,e.x,e.z,(e.rotation+1)%4))this.ui.toast(this.city.editError??'旋转后会与其他物件重叠',true);else this.changed();}break;
       case 'color':if(e&&BY_ID[e.type].floors){this.city.recolor(e.id);this.changed();}break;
