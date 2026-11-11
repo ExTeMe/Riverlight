@@ -1,6 +1,6 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { ALIGNMENT_ROAD_VERSION, CITY_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
+import { ALIGNMENT_ROAD_VERSION, CITY_VERSION, ELEVATED_ROAD_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
 import { usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity } from './parcel.js';
 import { EDGE_EPSILON, boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
 import { buildRoadNetwork, hasTraffic, isRoad, nextRoadRevision, readGridRoad, readRoadHeader, roadCenter, roadHeader } from './road-network.js';
@@ -247,7 +247,8 @@ export class City {
   editRoadAlignment(raw,id) {
     const {entity,before,error}=this.planRoadAlignment(raw,id);
     if(error)return {error,changed:false};
-    if(before&&before.alignment.elevated===entity.alignment.elevated&&['start','end'].every(key=>before.alignment[key].every((n,i)=>n===entity.alignment[key][i])))return {entity:before,changed:false};
+    if(before&&before.alignment.elevated===entity.alignment.elevated&&before.alignment.arc===entity.alignment.arc
+      &&['start','end'].every(key=>before.alignment[key].every((n,i)=>n===entity.alignment[key][i])))return {entity:before,changed:false};
     const changed=this.commit([{before,after:entity}]);
     if(changed&&!before)this.nextId++;
     return {entity,changed,error:this.editError};
@@ -317,10 +318,10 @@ export class City {
   }
   snapshotHeader(version=VERSION) {
     const mixed=this.alignmentCount>0;
-    if(![2,PARCEL_VERSION,GRID_ROAD_VERSION,ALIGNMENT_ROAD_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size)
+    if(![2,PARCEL_VERSION,GRID_ROAD_VERSION,ALIGNMENT_ROAD_VERSION,ELEVATED_ROAD_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size)
       ||(version<ALIGNMENT_ROAD_VERSION&&mixed)
-      ||(version<VERSION&&this.terrain==='strait')
-      ||(version<VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.elevated)))throw new Error('无法导出为该存档格式');
+      ||(version<ELEVATED_ROAD_VERSION&&(this.terrain==='strait'||mixed&&[...this.entities.values()].some(e=>e.alignment?.elevated)))
+      ||(version<VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.arc)))throw new Error('无法导出为该存档格式');
     return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
       ...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{})};
   }
@@ -351,7 +352,7 @@ export class City {
   restore(raw) {
     if (!raw || !supportedCityVersion(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
     const next = new City(); next.radius=raw.radius;next.terrain=raw.version===1?'legacy':raw.terrain;
-    const terrains=raw.version>=VERSION?['legacy','meander','strait']:['legacy','meander'];
+    const terrains=raw.version>=ELEVATED_ROAD_VERSION?['legacy','meander','strait']:['legacy','meander'];
     if(!terrains.includes(next.terrain))throw new Error('未知地形');
     const ids = new Set();
     const mixed=raw.entities.some(e=>e?.alignment!==undefined);
@@ -377,7 +378,8 @@ export class City {
       if (!e || !Object.hasOwn(BY_ID,e.type) || !lotValid || !Number.isSafeInteger(e.id) || e.id<1 || ids.has(e.id) || !Number.isInteger(e.color) || e.color<0 || e.color>3) throw new Error('存档包含无效或重复建筑');
       if(e.alignment!==undefined){
         if(e.type!=='road'||['x','z','center','lot','rotation','parcelId'].some(key=>e[key]!==undefined))throw new Error('曲线道路记录无效');
-        if(e.alignment?.elevated&&raw.version<VERSION)throw new Error('高架道路需要 v6 存档');
+        if(e.alignment?.elevated&&raw.version<ELEVATED_ROAD_VERSION)throw new Error('高架道路需要 v6 存档');
+        if(e.alignment?.arc&&raw.version<VERSION)throw new Error('圆弧道路需要 v7 存档');
         e={id:e.id,type:e.type,color:e.color,alignment:readAlignment(e.alignment)};
       }else if(raw.version>=PARCEL_VERSION&&usesParcel(e.type)){
         if(used.has(e.parcelId))throw new Error('每个地块只能有一栋主建筑');
