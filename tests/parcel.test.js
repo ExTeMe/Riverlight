@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { City, footprintBounds } from '../src/core.js';
 import { createBaseline, createLegacyBaseline, createScene } from '../src/baseline.js';
-import { footprintOutline, parcelOutline, placementAnchor, placementOf, usesParcel } from '../src/parcel.js';
+import { footprintOutline, PARCEL_EDGES, parcelOutline, parcelPoint, placementAnchor, placementOf, resizeParcelEdge, usesParcel } from '../src/parcel.js';
 import { outlineBounds, outlinesOverlap, transformOutline } from '../src/outline.js';
 import { legacyPlacement, riverBanks } from '../src/space.js';
 import { Matrix4, Scene, Vector3 } from 'three';
@@ -10,6 +10,24 @@ import { World } from '../src/world.js';
 import { getTemplate } from '../src/models.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
+
+test('each edge of a rotated lot moves independently and preserves an occupied lot building pose',()=>{
+  const city=new City(createScene('T01').city),lot=city.parcels.get('t01-cottage'),building=city.parcelOwner(lot);
+  const compare=(a,b)=>assert.ok(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8,`${a} differs from ${b}`);
+  for(const [key,{axis,index,sign}] of Object.entries(PARCEL_EDGES)){
+    const point=(p,side)=>{const v=[0,0];v[index]=side*p[axis]/2;return parcelPoint(p,...v);};
+    for(const distance of [2.5,-1.5]){
+      const result=resizeParcelEdge(lot,key,sign*distance),next=result.parcel;
+      compare(point(lot,-sign),point(next,-sign));
+      assert.equal(next[axis],lot[axis]+distance);
+      assert.equal(next[index===0?'depth':'width'],lot[index===0?'depth':'width']);
+      const pose=placementOf({...building,pose:{...building.pose,parcel:next,
+        offsetX:building.pose.offsetX-result.shift[0],offsetZ:building.pose.offsetZ-result.shift[1]}});
+      const before=placementOf(building);
+      compare([pose.x,pose.z],[before.x,before.z]);assert.equal(pose.radians,before.radians);
+    }
+  }
+});
 
 test('v1 and v2 baselines retain original grid occupancy, model transforms and river after migration', () => {
   for (const fixture of [createLegacyBaseline(), createBaseline()]) {

@@ -1,5 +1,6 @@
 import { BY_ID, CELL } from './catalog.js';
-import { normalAngle, parcelLocal } from './parcel.js';
+import { normalAngle, PARCEL_EDGES, parcelLocal, resizeParcelEdge } from './parcel.js';
+import { ParcelHandles } from './parcel-handles.js';
 
 const snap=(value,step)=>step?Math.round(value/step)*step:value;
 const field=(name,label)=>`<label>${label}<input type="number" name="${name}" step="any" required></label>`;
@@ -33,6 +34,7 @@ export class ParcelEditor {
     });
     this.form.addEventListener('focusin',()=>this.app.keys.clear());
     this.form.addEventListener('submit',event=>{event.preventDefault();this.apply();});
+    this.handles=new ParcelHandles(this,root);
   }
   get active(){return !this.form.hidden;}
   get(name){return this.form.elements.namedItem(name);}
@@ -54,10 +56,10 @@ export class ParcelEditor {
     this.form.querySelector('[data-edit=lot]').hidden=buildingOnly;
     this.form.querySelector('[data-edit=building]').hidden=lotOnly;
     this.form.querySelector('h3').textContent={quick:item?`放置${item.name}`:'放置',draw:'划定空地块',lot:'移动或调整地块',building:'调整建筑',attach:item?`在地块内放置${item.name}`:'放置建筑'}[mode];
-    this.form.querySelector('.parcel-instructions').textContent={quick:'在地图点击放置，或输入数值后确认。R 旋转地块。',draw:'在地图点选两个对角，或输入中心和宽深后确认。',lot:'点击地图设定新中心，建筑随地块一起移动。',building:'点击地图设定建筑位置，地块边界保持原位。',attach:'点击地块内的位置，或输入局部偏移后确认。'}[mode];
+    this.form.querySelector('.parcel-instructions').textContent={quick:'在地图点击放置，或输入数值后确认。R 旋转地块。',draw:'在地图点选两个对角，或输入中心和宽深后确认。',lot:'拖动四边调整范围，拖动中间手柄移动整块。也可输入数值。',building:'拖动建筑手柄或点选地块内的新位置。',attach:'点击地块内的位置，或输入局部偏移后确认。'}[mode];
     this.render();
   }
-  close(){this.form.hidden=true;this.type=null;this.corner=null;}
+  close(){this.form.hidden=true;this.type=null;this.corner=null;this.handles.clear();}
   read(name,step=0){
     const value=this.get(name).valueAsNumber;
     return this.dirty.has(name)?snap(value,step):value;
@@ -76,11 +78,29 @@ export class ParcelEditor {
   render(){
     const plan=this.plan();
     this.app.world.showParcelPreview(plan);
+    this.handles.set(plan,this.mode);
     const feedback=this.form.querySelector('.parcel-feedback');
     const relative=['building','attach'].includes(this.mode);
     feedback.textContent=plan.error||(relative?`可以放置 · 相对 ${plan.entity.pose.angle}°`:`可以放置 · 地块 ${plan.parcel.angle}°`);
     feedback.classList.toggle('invalid',!!plan.error);
     this.form.querySelector('[type=submit]').disabled=!!plan.error;
+  }
+  setDraft({parcel,building}){
+    for(const name of ['x','z','width','depth','angle'])this.set(name,parcel[name]);
+    if(building){this.set('offsetX',building.offsetX);this.set('offsetZ',building.offsetZ);this.set('relative',building.angle);}
+    this.render();
+  }
+  dragHandle(key,{parcel,building},dx,dz){
+    const [u,v]=parcelLocal({x:0,z:0,angle:parcel.angle},dx,dz);
+    if(PARCEL_EDGES[key]){
+      const edge=PARCEL_EDGES[key],delta=snap([u,v][edge.index],this.step);
+      const resized=resizeParcelEdge(parcel,key,delta,this.step||.01);
+      parcel=resized.parcel;
+      if(building)building={...building,offsetX:building.offsetX-resized.shift[0],offsetZ:building.offsetZ-resized.shift[1]};
+    }else if(this.mode==='building'&&building){
+      building={...building,offsetX:building.offsetX+snap(u,this.step),offsetZ:building.offsetZ+snap(v,this.step)};
+    }else parcel={...parcel,x:parcel.x+snap(dx,this.step),z:parcel.z+snap(dz,this.step)};
+    this.setDraft({parcel,building});
   }
   pointer(x,z){
     if(this.follow){this.position(x,z);this.render();}

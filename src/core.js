@@ -48,7 +48,7 @@ export function gridLine(a, b) {
 export class City {
   constructor(data) {
     this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();this.spatial=new SpatialIndex();
-    this.parcels=new Map();this.parcelSpatial=new SpatialIndex();
+    this.parcels=new Map();this.parcelSpatial=new SpatialIndex();this.meshRevisions=new Map();
     this.roadRevision=0;this._roadNetwork=null;this.alignmentCount=0;
     this.environment = { season: 'summer', weather: 'clear', hour: 16.5, playing: false, speed: 1, wind: 0.4, quality: 'high' };
     this.undoStack = []; this.redoStack = []; this.nextId = 1;
@@ -128,13 +128,22 @@ export class City {
     if(pier)return '码头需要接触水面';
     return e.type==='road'?'水面请使用桥梁工具':'请选择陆地区域';
   }
+  touchMeshChunks(bounds,owner){
+    // Waterfront furniture queries nearby entity footprints across chunk seams.
+    const span=CELL*CHUNK,pad=QUAY.width+CELL,dirty=new Set([owner]);
+    for(let x=Math.floor((bounds.minX-pad)/span);x<=Math.floor((bounds.maxX+pad)/span);x++){
+      for(let z=Math.floor((bounds.minZ-pad)/span);z<=Math.floor((bounds.maxZ+pad)/span);z++)dirty.add(key(x,z));
+    }
+    for(const ck of dirty)this.meshRevisions.set(ck,(this.meshRevisions.get(ck)??0)+1);
+  }
   insert(e) {
     this._waterfront=null;
     this.entities.set(e.id, { ...e });
     if(e.alignment)this.alignmentCount++;
-    this.spatial.insert(e.id,footprintBounds(e));
+    const bounds=footprintBounds(e);this.spatial.insert(e.id,bounds);
     if(!e.pose&&!e.alignment)for (const [x,z] of footprint(e)) this.occupancy.set(key(x,z), e.id);
     const ck = entityChunk(e); if (!this.chunks.has(ck)) this.chunks.set(ck,new Set()); this.chunks.get(ck).add(e.id);
+    this.touchMeshChunks(bounds,ck);
   }
   erase(id) {
     const e = this.entities.get(id); if (!e) return;
@@ -143,6 +152,7 @@ export class City {
     this.spatial.erase(id);
     if(!e.pose&&!e.alignment)for (const [x,z] of footprint(e)) this.occupancy.delete(key(x,z));
     this.entities.delete(id); const ck = entityChunk(e); this.chunks.get(ck)?.delete(id); if (!this.chunks.get(ck)?.size) this.chunks.delete(ck);
+    this.touchMeshChunks(footprintBounds(e),ck);
   }
   applyChanges(changes,from,to) {
     for(const c of changes)if(c[from]){
@@ -284,26 +294,36 @@ export class City {
     const segment=this.roadNetwork.segments.get(e.id);
     return segment?.ports.map(port=>this.entities.get(port.neighborId))??[];
   }
-  snapshot(version=VERSION) {
+  snapshotHeader(version=VERSION) {
     const mixed=this.alignmentCount>0;
     if(![2,PARCEL_VERSION,GRID_ROAD_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size)
       ||(version<VERSION&&mixed))throw new Error('无法导出为该存档格式');
-    const parcels=[...this.parcels.values()].map(parcel=>({...parcel}));
-    const entities=[...this.entities.values()].map(e=>{
-      const lot=e.lot?{lot:[...e.lot]}:{};
-      if(e.alignment)return {...e,alignment:{start:[...e.alignment.start],end:[...e.alignment.end]}};
-      if(version>=GRID_ROAD_VERSION&&isRoad(e.type)){
-        const {id,type,rotation,color}=e;
-        return {id,type,rotation,color,center:roadCenter(e),...lot};
-      }
-      if(version===2||!usesParcel(e.type))return {...e,...lot};
-      const parcel=e.pose?.parcel||legacyParcel(e);
-      if(!e.pose)parcels.push(parcel);
-      return {id:e.id,type:e.type,color:e.color,parcelId:parcel.id,
-        offsetX:e.pose?.offsetX??0,offsetZ:e.pose?.offsetZ??0,angle:e.pose?.angle??0,...lot};
-    });
     return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
-      entities,...(version>=PARCEL_VERSION?{parcels}:{}),...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{})};
+      ...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{})};
+  }
+  *snapshotEntries(version=VERSION) {
+    if(version>=PARCEL_VERSION)for(const parcel of this.parcels.values())yield {parcel:{...parcel}};
+    for(const e of this.entities.values()){
+      const lot=e.lot?{lot:[...e.lot]}:{};
+      if(e.alignment)yield {entity:{...e,alignment:{start:[...e.alignment.start],end:[...e.alignment.end]}}};
+      else if(version>=GRID_ROAD_VERSION&&isRoad(e.type)){
+        const {id,type,rotation,color}=e;
+        yield {entity:{id,type,rotation,color,center:roadCenter(e),...lot}};
+      }else if(version===2||!usesParcel(e.type))yield {entity:{...e,...lot}};
+      else {
+        const parcel=e.pose?.parcel||legacyParcel(e);
+        yield {parcel:e.pose?undefined:parcel,entity:{id:e.id,type:e.type,color:e.color,parcelId:parcel.id,
+          offsetX:e.pose?.offsetX??0,offsetZ:e.pose?.offsetZ??0,angle:e.pose?.angle??0,...lot}};
+      }
+    }
+  }
+  snapshot(version=VERSION) {
+    const header=this.snapshotHeader(version),entities=[],parcels=[];
+    for(const {entity,parcel} of this.snapshotEntries(version)){
+      if(entity)entities.push(entity);
+      if(parcel)parcels.push(parcel);
+    }
+    return {...header,entities,...(version>=PARCEL_VERSION?{parcels}:{})};
   }
   restore(raw) {
     if (!raw || !supportedCityVersion(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
@@ -350,7 +370,7 @@ export class City {
     }
     for(const p of parcels.values())if(p.grid&&!used.has(p.id))throw new Error('兼容地块缺少原建筑');
     this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;this.spatial=next.spatial;
-    this.parcels=next.parcels;this.parcelSpatial=next.parcelSpatial;
+    this.parcels=next.parcels;this.parcelSpatial=next.parcelSpatial;this.meshRevisions=next.meshRevisions;
     this.roadRevision=next.roadRevision;this._roadNetwork=null;this._waterfront=null;this.alignmentCount=next.alignmentCount;
     this.nextId=[...ids].reduce((max,id)=>Math.max(max,id),0)+1;
     if(Number.isSafeInteger(raw.nextId)&&raw.nextId>this.nextId)this.nextId=raw.nextId;

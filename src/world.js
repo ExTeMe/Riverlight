@@ -112,14 +112,17 @@ export class World {
     const state=`${cx}:${cz}:${r}:${this.city.radius}:${distance<420}`;
     if(!force&&state===this.lastRegion)return;
     this.lastRegion=state;
+    const network=this.city.roadNetwork,roadsChanged=network!==this.renderedRoadNetwork;
     const wanted=new Set();
     for(let x=cx-r;x<=cx+r;x++)for(let z=cz-r;z<=cz+r;z++){
       if(x*CHUNK>=this.city.radius || (x+1)*CHUNK<=-this.city.radius || z*CHUNK>=this.city.radius || (z+1)*CHUNK<=-this.city.radius)continue;
       const ck=key(x,z);wanted.add(ck);
       const detail=distance<420&&Math.hypot((x+.5)*CHUNK*CELL-focus.x,(z+.5)*CHUNK*CELL-focus.z)<210;
-      if(!this.loaded.has(ck)){const land=landGeometry(x,z,this.city.terrain),buildings=new T.Group();this.scene.add(land,buildings);this.loaded.set(ck,{land,buildings,detail});this.buildChunk(ck,detail);}
-      else if(force || this.loaded.get(ck).detail!==detail)this.buildChunk(ck,detail);
+      const chunk=this.loaded.get(ck);
+      if(!chunk){const land=landGeometry(x,z,this.city.terrain),buildings=new T.Group();this.scene.add(land,buildings);this.loaded.set(ck,{land,buildings,detail});this.buildChunk(ck,detail);}
+      else if(roadsChanged||chunk.detail!==detail||chunk.revision!==this.city.meshRevisions.get(ck))this.buildChunk(ck,detail);
     }
+    this.renderedRoadNetwork=network;
     for(const ck of [...this.loaded.keys()])if(!wanted.has(ck))this.unload(ck);
     this.pickables=[];for(const c of this.loaded.values())this.pickables.push(...c.buildings.children);
     const span=CELL*CHUNK,bounds={minX:(cx-r)*span,minZ:(cz-r)*span,maxX:(cx+r+1)*span,maxZ:(cz+r+1)*span};
@@ -143,7 +146,7 @@ export class World {
     }
   }
   buildChunk(ck,detail){
-    const c=this.loaded.get(ck);c.detail=detail;disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
+    const c=this.loaded.get(ck);c.detail=detail;c.revision=this.city.meshRevisions.get(ck);disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
     const batches=new Map();
     const append=(model,matrix,id)=>{for(const mesh of model.children){
       if(mesh.userData.dynamic){const holder=new T.Group(),animated=mesh.clone(true);holder.applyMatrix4(matrix);holder.add(animated);holder.traverse(o=>{if(o.isMesh)o.userData.entityId=id;});c.buildings.add(holder);c.animations.push(holder);continue;}

@@ -213,3 +213,16 @@ test('streaming a large city releases render chunks without deleting city data',
  for(const car of world.traffic.cars)car.mesh.traverse(m=>{if(m.geometry)m.geometry.addEventListener('dispose',()=>released++);});
  world.sync(true);assert.ok(released>0);world.clear();assert.equal(world.loaded.size,0);
 });
+
+test('a local edit and its undo keep unrelated chunk meshes loaded',()=>{
+ const city=new City(),near=city.place('tree',-42,0),far=city.place('tree',42,0);
+ const world=new World(new Scene(),city);
+ const mesh=id=>world.pickables.find(object=>object.userData.entityIds?.includes(id));
+ const before=mesh(near.id),unrelated=mesh(far.id);
+ assert.ok(before&&unrelated);
+ const placed=city.place('tree',-42,3);assert.ok(placed);world.sync(true);
+ assert.notEqual(mesh(near.id),before);assert.equal(mesh(far.id),unrelated);assert.ok(mesh(placed.id));
+ assert.ok(city.undo());world.sync(true);
+ assert.equal(mesh(far.id),unrelated);assert.equal(mesh(placed.id),undefined);
+ world.clear();
+});
