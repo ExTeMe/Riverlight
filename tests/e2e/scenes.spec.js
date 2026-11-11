@@ -369,6 +369,7 @@ test('T02 previews and edits a continuous S ramp through history and reload',asy
   const ramp=new City(createScene('T02').city).entities.get(before.selected);
   expect(ramp?.alignment.end[1]).toBe(1.6);
   await page.getByRole('button',{name:'调整线形',exact:true}).click();
+  await expect(page.getByRole('button',{name:'调整起点高度',exact:true})).toBeDisabled();
   const form=page.getByRole('form',{name:'道路编辑'}),apply=form.getByRole('button',{name:'应用道路'});
   const height=form.getByLabel('终点 高度（米）');
   await height.fill('8');
@@ -449,6 +450,74 @@ test('T02 and T03 show road markings, allowed vehicle movements and topology cha
   await editor.getByRole('button',{name:'应用道路'}).click();
   expect(await guide()).toBeNull();
   expect(errors).toEqual([]);
+});
+
+test.describe('Ramp placement at native screenshot resolution',()=>{
+  test.use({viewport:{width:1440,height:900},deviceScaleFactor:1});
+
+  test('build a slope from the road catalog and drag its height within the available range',async({page},info)=>{
+    test.setTimeout(120000);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+    await page.goto('/');await ready(page);
+    await page.getByRole('button',{name:'我的城市',exact:true}).click();
+    await page.getByRole('button',{name:'新建空白城市',exact:true}).click();
+    await expect.poll(async()=> (await stats()).entities).toBe(0);
+    const position=[6,127,-42],target=[-80,0,-42];
+    await page.evaluate(view=>localStorage.setItem('riverlight-camera',JSON.stringify(view)),{position,target});
+    await page.getByRole('button',{name:'操作指南',exact:true}).click();
+    await page.getByRole('button',{name:'返回收藏镜头',exact:true}).click();
+    await page.getByRole('button',{name:'道路',exact:true}).click();
+    await page.getByRole('button',{name:'建造坡道',exact:true}).click();
+    const camera=new PerspectiveCamera(39,1440/900,.5,4500);
+    camera.position.fromArray(position);camera.lookAt(...target);camera.updateMatrixWorld();
+    const draw=async end=>{
+      const move=async z=>{
+        const p=new Vector3(-80,0,z).project(camera);
+        await page.mouse.move(720*(1+p.x),450*(1-p.y));
+      };
+      await move(-73);await page.mouse.down();await move(end);await page.mouse.up();
+    };
+    const form=page.getByRole('form',{name:'道路编辑'}),status=form.getByRole('status');
+    const height=page.getByRole('button',{name:'调整终点高度',exact:true});
+    const dragHeight=async dy=>{
+      const {x,y,width,height:boxHeight}=await height.boundingBox();
+      await page.mouse.move(x+width/2,y+boxHeight/2);
+      await page.mouse.down();await page.mouse.move(x+width/2,y+boxHeight/2+dy,{steps:4});await page.mouse.up();
+    };
+    await draw(-53);
+    await expect(status).toContainText('最大坡度 12.0%');
+    await expect(form.getByText(/终点可调/)).toContainText('终点可调 0.00–1.60 米');
+    await expect(height).toHaveText('1.60 米');
+    await dragHeight(12);
+    await expect(height).toHaveText('0.60 米');
+    await height.press('ArrowUp');
+    await expect(height).toHaveText('0.70 米');
+    await dragHeight(-120);
+    await expect(height).toHaveText('1.60 米');
+    await form.getByRole('button',{name:'重画端点',exact:true}).click();
+    await draw(27);
+    await expect(height).toHaveText('2.00 米');
+    await expect(form.getByText(/终点可调/)).toContainText('终点可调 0.00–8.00 米');
+    await dragHeight(-120);
+    await expect(height).toHaveText('8.00 米');
+    await expect(status).toContainText('端点间距 100.0 米 · 高差 8.00 米 · 最大坡度 12.0%');
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.screenshot({path:info.outputPath('ramp-height-controls.png')});
+    await form.getByRole('button',{name:'应用道路',exact:true}).click();
+    await expect.poll(async()=> (await stats()).entities).toBe(1);
+    await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+    await expect.poll(async()=> (await stats()).entities).toBe(0);
+    await page.getByRole('button',{name:'重做 Ctrl+Y',exact:true}).click();
+    await page.getByRole('button',{name:'保存城市 Ctrl+S',exact:true}).click();
+    await expect(page.locator('#save-state')).toHaveText('已保存 · 只属于你的节奏');
+    await page.reload();await ready(page);
+    await expect.poll(async()=> (await stats()).entities).toBe(1);
+    await page.getByRole('button',{name:'我的城市',exact:true}).click();
+    const exported=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+    expect(exported.city.entities[0].alignment).toEqual({start:[-80,0,-73,90],end:[-80,8,27,90]});
+    expect(errors).toEqual([]);
+  });
 });
 
 test('T04 renders the shore and a continuous route through the verified bridge',async({page},info)=>{

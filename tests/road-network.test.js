@@ -6,6 +6,7 @@ import { createBaseline, createLegacyBaseline, createScene } from '../src/baseli
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
 import { isRoad, ROAD_PROFILES, roadCarriageway } from '../src/road-network.js';
+import { maxRoadRise } from '../src/road-alignment.js';
 import { outlineContains } from '../src/outline.js';
 import { placementAnchor } from '../src/parcel.js';
 import { createAlignmentMesh } from '../src/roads.js';
@@ -217,6 +218,22 @@ test('alignment edits reject invalid geometry and occupied footprints and surviv
   assert.ok(city.undo());assert.deepEqual(city.entities.get(first.entity.id).alignment,first.entity.alignment);
   assert.ok(city.redo());assert.deepEqual(city.entities.get(first.entity.id).alignment,changed.entity.alignment);
   assert.deepEqual(new City(JSON.parse(JSON.stringify(city.snapshot()))).snapshot(),city.snapshot());
+});
+
+test('road height guidance uses placement grade limits and allows an 8 m rise in one span',()=>{
+  const city=new City(),start=[-80,0,-73,90];
+  const short=[-80,0,-53,90];
+  assert.equal(maxRoadRise(start,short),1.6);
+  assert.match(city.planRoadAlignment({start,end:[-80,1.61,-53,90]}).error,/坡度超过 12%/);
+  const curved=[-80,0,-43,60],rise=maxRoadRise(start,curved);
+  assert.equal(rise,2.47);
+  assert.equal(city.planRoadAlignment({start,end:[-80,rise,-43,60]}).error,null);
+  assert.match(city.planRoadAlignment({start,end:[-80,rise+.01,-43,60]}).error,/坡度超过 12%/);
+  const end=[-80,8,27,90],result=city.editRoadAlignment({start,end});
+  assert.ok(result.changed,result.error);
+  assert.equal(maxRoadRise(start,end),8);
+  assert.deepEqual(new City(city.snapshot()).entities.get(result.entity.id).alignment,{start,end});
+  assert.match(city.planRoadAlignment({start,end:[-80,8,48,90]},result.entity.id).error,/6–120 米/);
 });
 
 test('road segments expose shared ports, usable profiles and matching bridge grades',()=>{

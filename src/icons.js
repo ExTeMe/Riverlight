@@ -1,5 +1,6 @@
 const paths={
   resize:'M3 12h18M7 8l-4 4 4 4m10-8 4 4-4 4',
+  ramp:'M3 18c8 0 10-12 18-12M3 14c8 0 10-12 18-12m-8 9 3 8',
   home:'M3 10 12 3l9 7M5 9v12h5v-7h4v7h5V9', building:'M4 21V5h9v16M13 10h7v11M7 8h3M7 12h3M7 16h3M16 14h1M16 18h1M2 21h20',
   landmark:'m3 9 9-6 9 6H3Zm2 3v7m5-7v7m4-7v7m5-7v7M3 21h18', tree:'m12 3-6 8h3l-5 6h6v4h4v-4h6l-5-6h3L12 3Z',
   road:'M7 3 4 21M17 3l3 18M12 3v4m0 4v3m0 4v3', flower:'M12 12c-8-12-12 0-3 1-10 2-3 11 3 3 4 9 13 1 4-3 9-3 1-13-4-1ZM12 16v6',
