@@ -4,6 +4,7 @@ import { boundsContain, outlineBounds, outlineContains, outlinesOverlap } from '
 const MIN_LENGTH = 6;
 const MAX_LENGTH = 120;
 const MIN_RADIUS = 6;
+const ARC_TOLERANCE = 1e-8;
 export const MAX_ROAD_HEIGHT = 8;
 export const MAX_ELEVATED_ROAD_HEIGHT = 32;
 export const MAX_ROAD_GRADE = .12;
@@ -14,6 +15,22 @@ const cross = ([x,z],[u,v]) => x*v-z*u;
 const mid = (a,b) => a.map((v,i)=>(v+b[i])/2);
 export const roadBearing = (a,b) => Math.atan2(b[2]-a[2],b[0]-a[0])*180/Math.PI;
 export const normalBearing = angle => {const wrapped=angle%360;return wrapped<0?wrapped+360:wrapped||0;};
+export const signedRoadAngle = angle => normalBearing(angle+180)-180;
+const unit=angle=>{
+  angle=normalBearing(angle);
+  const radians=(angle%180)*Math.PI/180,sign=angle>=180?-1:1;
+  return [sign*Math.cos(radians),sign*Math.sin(radians)];
+};
+
+export function arcRoadBearings(start,end,sweep){
+  const heading=roadBearing(start,end);
+  return [normalBearing(heading+sweep/2),normalBearing(heading-sweep/2)];
+}
+
+export function maxRoadArc(start,end){
+  const chord=Math.hypot(end[0]-start[0],end[2]-start[2]);
+  return 2*Math.asin(Math.min(1,chord/(2*MIN_RADIUS)))*180/Math.PI;
+}
 
 export function matchingRoadEnds(a,i,b,j) {
   if(a[1]!==b[1])return false;
@@ -23,6 +40,8 @@ export function matchingRoadEnds(a,i,b,j) {
 
 export function readAlignment(raw) {
   if(raw?.elevated!==undefined&&typeof raw.elevated!=='boolean')throw new Error('高架道路标记无效');
+  const arc=raw?.arc===undefined?0:raw.arc;
+  if(!Number.isFinite(arc)||Math.abs(arc)>180)throw new Error('圆弧转角须为 -180° 至 180°');
   const maxHeight=raw?.elevated?MAX_ELEVATED_ROAD_HEIGHT:MAX_ROAD_HEIGHT;
   const read = point => {
     if(!Array.isArray(point)||point.length!==4||!point.every(Number.isFinite)
@@ -32,7 +51,7 @@ export function readAlignment(raw) {
     const [x,y,z,bearing]=point;
     return Object.freeze([x,y,z,normalBearing(bearing)]);
   };
-  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{})});
+  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{}),...(arc?{arc}:{})});
 }
 
 // Bound curvature and grade over the whole cubic. The derivative is a
@@ -59,11 +78,6 @@ export function offsetRoadSample(sample,offset,height=0) {
 function horizontalAlignment([x,,z,a],[u,,w,b]){
   const length=Math.hypot(u-x,w-z);
   if(length<MIN_LENGTH||length>MAX_LENGTH)return {error:`端点距离须为 ${MIN_LENGTH}–${MAX_LENGTH} 米`};
-  const unit=angle=>{
-    angle=normalBearing(angle);
-    const radians=(angle%180)*Math.PI/180,sign=angle>=180?-1:1;
-    return [sign*Math.cos(radians),sign*Math.sin(radians)];
-  };
   const forward=[(u-x)/length,(w-z)/length], first=unit(a),last=unit(b);
   if(Math.min(dot(first,forward),dot(last,forward))<.5)return {error:'端点方向与连线最多可偏转 60°'};
   const velocity=[first,forward.map((n,i)=>3*n-first[i]-last[i]),last].map(p=>p.map(n=>n*length));
@@ -72,7 +86,11 @@ function horizontalAlignment([x,,z,a],[u,,w,b]){
 
 // Use the same full-curve grade check as placement. Round down to centimetres
 // so a height offered by the editor can pass the grade check.
-export function maxRoadRise(start,end){
+export function maxRoadRise(start,end,arc){
+  if(arc){
+    const {length,error}=arcProfile(start,end,arc);
+    return error?null:Math.floor((length*MAX_ROAD_GRADE/1.5+1e-9)*100)/100;
+  }
   const {forward,velocity,error}=horizontalAlignment(start,end);
   if(error||limits(velocity,forward,0))return null;
   let low=0,high=MAX_ELEVATED_ROAD_HEIGHT*100;
@@ -84,10 +102,40 @@ export function maxRoadRise(start,end){
   return low/100;
 }
 
-export function alignmentGeometry(alignment) {
-  if(cache.has(alignment))return cache.get(alignment);
-  const {start:[x,y,z],end:[u,v,w]}=alignment;
-  const {length,first,last,forward,velocity,error}=horizontalAlignment(alignment.start,alignment.end);
+function arcProfile(start,end,sweep){
+  const chord=Math.hypot(end[0]-start[0],end[2]-start[2]);
+  if(chord<MIN_LENGTH||chord>MAX_LENGTH)return {error:`端点距离须为 ${MIN_LENGTH}–${MAX_LENGTH} 米`};
+  if(Math.abs(sweep)>maxRoadArc(start,end)+ARC_TOLERANCE)return {error:'圆弧半径不足 6 米，请拉开两端或减小转角'};
+  const bearings=arcRoadBearings(start,end,sweep);
+  if([start,end].some((point,i)=>Math.abs(signedRoadAngle(point[3]-bearings[i]))>ARC_TOLERANCE)){
+    return {error:'圆弧须与两端方向相切，请调整端点位置'};
+  }
+  const half=sweep*Math.PI/360,sin=Math.sin(half);
+  return {chord,half,sin,radius:Math.abs(chord/(2*sin)),length:chord*half/sin,bearings};
+}
+
+function sampleArc(start,end,sweep){
+  const {chord,half,sin,radius,length,bearings,error}=arcProfile(start,end,sweep);
+  if(error)return {error};
+  const [x,y,z]=start,[u,v,w]=end,[dx,dz]=[(u-x)/chord,(w-z)/chord];
+  const segments=Math.ceil(length/.5),samples=[];
+  for(let i=0;i<=segments;i++){
+    const t=i/segments,theta=(1-2*t)*half;
+    const along=chord/2*(1-Math.sin(theta)/sin);
+    const side=chord*Math.sin(t*half)*Math.sin((1-t)*half)/sin;
+    const point=i===0?start.slice(0,3):i===segments?end.slice(0,3):
+      [x+dx*along-dz*side,y+(v-y)*t*t*(3-2*t),z+dz*along+dx*side];
+    const direction=i===0?unit(bearings[0]):i===segments?unit(bearings[1]):
+      [dx*Math.cos(theta)-dz*Math.sin(theta),dz*Math.cos(theta)+dx*Math.sin(theta)];
+    samples.push({point,direction});
+  }
+  const maxGrade=1.5*Math.abs(v-y)/length;
+  return {samples,minRadius:radius,maxGrade,error:maxGrade>MAX_ROAD_GRADE+1e-10?'坡度超过 12%，请拉长道路或减小高差':null};
+}
+
+function sampleBezier(start,end){
+  const [x,y,z]=start,[u,v,w]=end;
+  const {length,first,last,forward,velocity,error}=horizontalAlignment(start,end);
   if(error)return {error};
   const [p,q,r]=velocity;
   const segments=Math.ceil(length/.5),samples=[];
@@ -104,6 +152,15 @@ export function alignmentGeometry(alignment) {
       y+(v-y)*t*t*(3-2*t),z+s*s*t*p[1]+3*s*t*t*(w-z-r[1]/3)+t**3*(w-z)];
     samples.push({point,direction:i===0?first:i===segments?last:direction.map(n=>n/speed)});
   }
+  return {samples,minRadius,maxGrade,error:limits(velocity,forward,Math.abs(v-y))};
+}
+
+export function alignmentGeometry(alignment) {
+  if(cache.has(alignment))return cache.get(alignment);
+  const {start,end,arc}=alignment;
+  const shape=arc?sampleArc(start,end,arc):sampleBezier(start,end);
+  const {samples}=shape;
+  if(!samples)return shape;
   const edges=offset=>samples.map(sample=>{const [px,,pz]=offsetRoadSample(sample,offset);return [px,pz];});
   const left=edges(-HALF_WIDTH),right=edges(HALF_WIDTH);
   const sections=left.slice(1).map((p,i)=>{
@@ -111,9 +168,8 @@ export function alignmentGeometry(alignment) {
     const y=samples[i].point[1],nextY=samples[i+1].point[1];
     return {outline,bounds:outlineBounds(outline),minY:Math.min(y,nextY),maxY:Math.max(y,nextY)};
   });
-  const geometry={samples,sections,bounds:outlineBounds([...left,...right]),minRadius,maxGrade,
-    error:limits(velocity,forward,Math.abs(v-y))};
-  if(!geometry.error&&sections.some((a,i)=>sections.slice(i+2).some(b=>sectionsOverlap(a,b)))){
+  const geometry={...shape,sections,bounds:outlineBounds([...left,...right])};
+  if(!arc&&!geometry.error&&sections.some((a,i)=>sections.slice(i+2).some(b=>sectionsOverlap(a,b)))){
     geometry.error='道路边缘自交，请拉长道路或减小转角';
   }
   cache.set(alignment,geometry);

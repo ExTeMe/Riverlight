@@ -6,7 +6,7 @@ import { createBaseline, createLegacyBaseline, createScene } from '../src/baseli
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
 import { isRoad, ROAD_PROFILES, roadCarriageway } from '../src/road-network.js';
-import { maxRoadRise } from '../src/road-alignment.js';
+import { arcRoadBearings, maxRoadRise } from '../src/road-alignment.js';
 import { outlineContains } from '../src/outline.js';
 import { placementAnchor } from '../src/parcel.js';
 import { createAlignmentMesh } from '../src/roads.js';
@@ -234,6 +234,37 @@ test('road height guidance uses placement grade limits and allows an 8 m rise in
   assert.equal(maxRoadRise(start,end),8);
   assert.deepEqual(new City(city.snapshot()).entities.get(result.entity.id).alignment,{start,end});
   assert.match(city.planRoadAlignment({start,end:[-80,8,48,90]},result.entity.id).error,/6–120 米/);
+});
+
+test('circular roads keep a constant radius, share endpoint tangents and persist independently of Bézier roads',()=>{
+  const city=new City(),start=[-100,0,-70,45],end=[-72,2,-70,315];
+  const approach=city.editRoadAlignment({start:[-120,0,-90,45],end:start});
+  assert.ok(approach.changed);
+  const v6=city.snapshot(6);
+  const arc=city.editRoadAlignment({start,end,arc:90});
+  assert.ok(arc.changed,arc.error);
+  const {segments,laneGraph}=city.roadNetwork,segment=segments.get(arc.entity.id);
+  const {samples,minRadius}=segment.geometry;
+  assert.ok(Math.abs(minRadius-14*Math.SQRT2)<1e-9);
+  for(const {point:[x,,z]} of samples)assert.ok(Math.abs(Math.hypot(x+86,z+84)-minRadius)<1e-8);
+  assert.deepEqual(samples[0].direction,segments.get(approach.entity.id).geometry.samples.at(-1).direction);
+  assert.equal(segment.ports[0].neighborId,approach.entity.id);
+  assert.ok(laneGraph.nodes.get(`${approach.entity.id}>${arc.entity.id}`).outgoing.length);
+  const walk=buildWalkNetwork(city);
+  for(const {points} of segment.walkways)assert.equal(walk.nodes.get(points[0].map(n=>n.toFixed(3)).join(',')).edges.size,2);
+  assert.equal(maxRoadRise(start,end,90),2.48);
+  assert.match(city.planRoadAlignment({start,end:[-72,3,-70,315],arc:90},arc.entity.id).error,/坡度/);
+  assert.throws(()=>city.snapshot(6),/无法导出/);
+  const reopened=new City(city.snapshot());
+  assert.deepEqual(reopened.roadNetwork,city.roadNetwork);
+  assert.deepEqual(new City(v6).snapshot(6),v6);
+  const mirrorStart=[-100,0,-120,0],mirrorEnd=[-72,0,-120,0],sweep=-180;
+  const [a,b]=arcRoadBearings(mirrorStart,mirrorEnd,sweep);
+  mirrorStart[3]=a;mirrorEnd[3]=b;
+  const mirror=city.planRoadAlignment({start:mirrorStart,end:mirrorEnd,arc:sweep,elevated:true});
+  assert.equal(mirror.error,null);
+  assert.equal(mirror.geometry.minRadius,14);
+  assert.equal(mirror.geometry.samples[Math.floor(mirror.geometry.samples.length/2)].point[2]<-133,true);
 });
 
 test('road segments expose shared ports, usable profiles and matching bridge grades',()=>{

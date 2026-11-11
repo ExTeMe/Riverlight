@@ -597,6 +597,49 @@ test.describe('Elevated road construction at native screenshot resolution',()=>{
   });
 });
 
+test.describe('Circular road placement at native screenshot resolution',()=>{
+  test.use({viewport:{width:1440,height:900},deviceScaleFactor:1});
+
+  test('adjust a circular arc to a semicircle and restore it from a save',async({page},info)=>{
+    test.setTimeout(120000);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    const city=new City();
+    city.name='圆弧道路验收';
+    const position=[-65,38,61],target=[-67,0,29];
+    await page.goto('/');await ready(page);
+    await importCity(page,{city:city.snapshot(6),camera:{position,target}});
+    await expect(page.locator('#city-name')).toHaveText(city.name);
+    const camera=new PerspectiveCamera(39,1440/900,.5,4500);
+    camera.position.fromArray(position);camera.lookAt(...target);camera.updateMatrixWorld();
+    await page.getByRole('button',{name:'绘制曲线与坡道',exact:true}).click();
+    for(const x of [-88,-56]){
+      const p=new Vector3(x,0,24).project(camera);
+      await page.locator('#scene').click({position:{x:720*(1+p.x),y:450*(1-p.y)}});
+    }
+    const form=page.getByRole('form',{name:'道路编辑'}),status=form.getByRole('status');
+    await form.getByRole('button',{name:'左圆弧',exact:true}).click();
+    await expect(status).toContainText('圆弧半径 32.0 米');
+    const slider=form.getByRole('slider',{name:/圆弧转角/});
+    await slider.press('End');
+    await expect(status).toContainText('圆弧半径 16.0 米');
+    await expect(form.getByText('左 180°',{exact:true})).toBeVisible();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.screenshot({path:info.outputPath('circular-road-semicircle.png')});
+    await form.getByRole('button',{name:'应用道路',exact:true}).click();
+    await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().entities)).toBe(1);
+    await page.getByRole('button',{name:'保存城市 Ctrl+S',exact:true}).click();
+    await expect(page.locator('#save-state')).toHaveText('已保存 · 只属于你的节奏');
+    await page.reload();await ready(page);
+    await page.getByRole('button',{name:'我的城市',exact:true}).click();
+    const {city:saved}=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+    expect(saved.version).toBe(CITY_VERSION);
+    expect(saved.entities[0].alignment).toEqual({start:[-88,0,24,90],end:[-56,0,24,270],arc:180});
+    const reloaded=new City(saved);
+    expect(reloaded.roadNetwork.segments.get(saved.entities[0].id).geometry.minRadius).toBe(16);
+    expect(errors).toEqual([]);
+  });
+});
+
 test('T04 renders the shore and a continuous route through the verified bridge',async({page},info)=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T04');await ready(page);

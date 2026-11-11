@@ -28,6 +28,9 @@
 .road-height-handle{width:max-content;min-width:76px;height:30px;padding:0 9px;display:flex;gap:5px;justify-content:center;font-size:12px;white-space:nowrap;--handle-angle:90deg}
 .road-height-handle:disabled{opacity:.85;background:#546457}
 .road-editor .road-grades button[aria-pressed=true]{background:#456b54;color:#fff8e5}
+.road-arc{padding:7px 10px 2px;border-radius:8px;background:#edf1e5}
+.road-arc label{display:flex;justify-content:space-between;font-size:12px;font-weight:600}
+.road-arc .range{width:100%;margin:8px 0 0}
 .road-continue{margin-top:7px;padding:7px 10px;border:1px solid #98ab94;border-radius:8px;color:#344f3b;font-size:12px;font-weight:600}
 .selection-panel{z-index:5}#app:has(.scene-panel)>.selection-panel{left:auto;right:24px;top:100px}
 @media(max-height:700px){.parcel-editor{top:78px;max-height:calc(100vh - 252px)}}@media(max-width:760px){.parcel-editor{right:12px}}

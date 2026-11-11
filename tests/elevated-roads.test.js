@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { Box3, Raycaster, Vector3 } from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { City } from '../src/core.js';
+import { CITY_VERSION } from '../src/city-format.js';
 import { CATALOG } from '../src/catalog.js';
 import { obstacleHeight } from '../src/elevated-roads.js';
 import { getTemplate, material } from '../src/models.js';
@@ -42,7 +43,7 @@ test('elevated continuation shares 3D ports through ascent, water crossing and d
   assert.ok(Math.abs(ray.intersectObject(mesh,true)[0].point.y-(up[1]-.25))<1e-6);
   for(const child of mesh.children)child.geometry.dispose();
   const before=city.snapshot();
-  assert.equal(before.version,6);
+  assert.equal(before.version,CITY_VERSION);
   assert.throws(()=>city.snapshot(5),/无法导出/);
   assert.deepEqual(new City(before).snapshot(),before);
   assert.ok(city.undo());assert.ok(city.redo());
