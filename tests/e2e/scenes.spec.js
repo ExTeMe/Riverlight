@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test';
-import { PerspectiveCamera, Vector3 } from 'three';
+import { PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
-import { placementAnchor, placementOf } from '../../src/parcel.js';
+import { parcelOutline, parcelPoint, placementAnchor, placementOf } from '../../src/parcel.js';
 import { sailingCenter, PROTOTYPE_RADIUS } from '../../src/river.js';
 
 // Software-rendered browsers need time for input between expensive WebGL frames.
@@ -43,6 +43,87 @@ async function downloadFile(page,button) {
   const download=await result,stream=await download.createReadStream();
   return Buffer.concat(await stream.toArray());
 }
+
+test.describe('T01 canvas handles at native screenshot resolution',()=>{
+  test.use({viewport:{width:1440,height:960},deviceScaleFactor:1});
+
+  test('drag a rotated parcel edge, then move its building and the whole lot independently',async({page},info)=>{
+    test.setTimeout(120000);
+    const errors=[];page.on('pageerror',e=>errors.push(e.message));
+    await page.goto('/?scene=T01');await ready(page);
+    const editor=page.getByRole('form',{name:'地块与建筑编辑'}),field=name=>editor.getByLabel(name,{exact:true});
+    const confirm=editor.getByRole('button',{name:'确认',exact:true}),selection=page.locator('.selection-panel');
+    const record=()=>page.evaluate(async()=>{
+      const {createSaveStore}=await import('/src/storage.js');
+      return createSaveStore({name:'riverlight-scenes-T01-standard'}).load('autosave');
+    });
+    const saved=async(previous=0)=>{
+      await expect.poll(async()=>(await record())?.date??0,{timeout:15000}).toBeGreaterThan(previous);
+      return record();
+    };
+    await page.getByRole('button',{name:'建造河畔小屋',exact:true}).click();
+    await field('中心 X').fill('-120');await field('中心 Z').fill('48');
+    await field('宽度').fill('16');await field('进深').fill('16');
+    await field('15° 角度吸附').uncheck();await field('地块角度 °').fill('32');
+    await confirm.click();
+    const initial=await saved(),building=initial.data.entities.at(-1),id=building.parcelId;
+    const getLot=save=>save.data.parcels.find(p=>p.id===id);
+    const pose=save=>placementOf(new City(save.data).entities.get(building.id));
+    const view={position:[-107,35,78],target:[-120,0,48]};
+    await page.evaluate(view=>{
+      localStorage.setItem('riverlight-camera',JSON.stringify(view));
+      document.querySelector('[data-action="help"]').click();document.querySelector('[data-action="recall"]').click();
+    },view);
+    const camera=new PerspectiveCamera(39,1440/960,.5,4500);
+    camera.position.fromArray(view.position);camera.lookAt(...view.target);camera.updateMatrixWorld();
+    const local=(u,v)=>parcelPoint({x:0,z:0,angle:32},u,v);
+    const drag=async(label,[dx,dz])=>{
+      const button=page.getByRole('button',{name:label,exact:true});await expect(button).toBeVisible();
+      const {x,y,width,height}=await button.boundingBox(),start=[x+width/2,y+height/2];
+      const ray=new Raycaster();ray.setFromCamera(new Vector2(start[0]/720-1,1-start[1]/480),camera);
+      const ground=ray.ray.intersectPlane(new Plane(new Vector3(0,1,0),0),new Vector3());
+      const end=ground.add(new Vector3(dx,0,dz)).project(camera);
+      await page.mouse.move(...start);await page.mouse.down();
+      await page.mouse.move((1+end.x)*720,(1-end.y)*480,{steps:8});await page.mouse.up();
+    };
+    await selection.getByRole('button',{name:'移动整块'}).click();
+    await drag('调整地块右边',local(3,0));
+    await expect(field('宽度')).toHaveValue('19');await expect(field('进深')).toHaveValue('16');
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.screenshot({path:info.outputPath('parcel-edge-handles.png'),scale:'device'});
+    await confirm.click();
+    const resized=await saved(initial.date);
+    const [a,,,b]=parcelOutline(getLot(initial)),[c,,,d]=parcelOutline(getLot(resized));
+    for(const [first,second] of [[a,c],[b,d]]){
+      expect(first[0]).toBeCloseTo(second[0],8);expect(first[1]).toBeCloseTo(second[1],8);
+    }
+    expect(pose(resized).x).toBeCloseTo(pose(initial).x,8);expect(pose(resized).z).toBeCloseTo(pose(initial).z,8);
+
+    await selection.getByRole('button',{name:'移动整块'}).click();
+    await drag('调整地块右边',local(-16,0));
+    await expect(confirm).toBeDisabled();await editor.getByRole('button',{name:'取消'}).click();
+    expect((await record()).data).toEqual(resized.data);
+
+    await selection.getByRole('button',{name:'调整建筑'}).click();
+    await drag('拖动建筑',local(1,-1.5));
+    await expect(field('局部 X（米）')).toHaveValue('-0.5');await expect(field('局部 Z（米）')).toHaveValue('-1.5');
+    await confirm.click();
+    const movedBuilding=await saved(resized.date);
+    expect(getLot(movedBuilding)).toEqual(getLot(resized));
+    await selection.getByRole('button',{name:'移动整块'}).click();
+    await drag('拖动整块地块',[2,3]);await confirm.click();
+    const movedLot=await saved(movedBuilding.date);
+    expect(getLot(movedLot)).toMatchObject({x:getLot(resized).x+2,z:getLot(resized).z+3,width:19,depth:16});
+    expect(pose(movedLot).x-pose(movedBuilding).x).toBeCloseTo(2,8);
+    expect(pose(movedLot).z-pose(movedBuilding).z).toBeCloseTo(3,8);
+    await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+    const undone=await saved(movedLot.date);expect(getLot(undone)).toEqual(getLot(movedBuilding));
+    await page.getByRole('button',{name:'重做 Ctrl+Y',exact:true}).click();
+    expect((await saved(undone.date)).data).toEqual(movedLot.data);
+    await navigate(page,page.getByRole('button',{name:'保存并重载',exact:true}));
+    expect((await record()).data).toEqual(movedLot.data);expect(errors).toEqual([]);
+  });
+});
 
 test('T01 keeps free-angle edits through failed moves, copy, history and file roundtrips', async ({page},testInfo)=>{
   test.setTimeout(180000);

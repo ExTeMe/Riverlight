@@ -27,6 +27,23 @@ export function parcelLocal(parcel,x,z) {
   return transformOutline([[x-parcel.x,z-parcel.z]],0,0,-parcel.angle*Math.PI/180)[0];
 }
 
+export const PARCEL_EDGES={
+  left:{axis:'width',index:0,sign:-1},right:{axis:'width',index:0,sign:1},
+  far:{axis:'depth',index:1,sign:-1},near:{axis:'depth',index:1,sign:1},
+};
+
+export function parcelPoint(parcel,u,v){
+  return transformOutline([[u,v]],parcel.x,parcel.z,parcel.angle*Math.PI/180)[0];
+}
+
+export function resizeParcelEdge(parcel,edge,delta,minimum=.01){
+  const {axis,index,sign}=PARCEL_EDGES[edge];
+  const size=Math.max(Math.min(parcel[axis],minimum),parcel[axis]+sign*delta);
+  const shift=[0,0];shift[index]=(size-parcel[axis])*sign/2;
+  const [x,z]=parcelPoint(parcel,...shift);
+  return {parcel:{...parcel,[axis]:size,x,z},shift};
+}
+
 export function placementOf(entity) {
   if(!entity.pose)return legacyPlacement(entity);
   const {parcel,offsetX,offsetZ,angle}=entity.pose,r=parcel.angle*Math.PI/180;

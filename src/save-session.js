@@ -60,6 +60,10 @@ export class SaveSession {
     return this.enqueue(() => this.store.write(id, snapshot, view));
   }
 
+  persistEncoded(parts,camera,write,id=this.target){
+    return this.enqueue(()=>write(id,parts,camera));
+  }
+
   replace(previous, previousCamera, next, camera, original) {
     const before = previous.snapshot(), after = next.snapshot();
     const oldView = structuredClone(previousCamera), newView = structuredClone(camera);
