@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Box3, Vector3 } from 'three';
-import { City, footprintBounds } from '../src/core.js';
+import { Box3, Raycaster, Vector3 } from 'three';
+import { City, chunkKey, footprintBounds } from '../src/core.js';
 import { createBaseline, createLegacyBaseline, createScene } from '../src/baseline.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
@@ -32,6 +32,43 @@ test('directed lanes meet across curve, grid and junction seams on the shared ca
       assert.ok(laneGraph.nodes.get(`${curve}>${tee.id}`).outgoing.some(id=>laneGraph.edges.get(id).roadId===tee.id));
     }
   }
+});
+
+test('T02 joins all four grid turns and keeps their lanes and sidewalks on the rendered surface',()=>{
+  const city=new City(createScene('T02').city),{segments,laneGraph}=city.roadNetwork;
+  const walk=buildWalkNetwork(city),ray=new Raycaster(),down=new Vector3(0,-1,0);
+  const cases=[
+    {cell:[-34,7],corner:[1,1]},
+    {cell:[-15,4],corner:[1,-1]},
+    {cell:[-15,-6],corner:[-1,1]},
+    {cell:[-9,4],corner:[-1,-1]},
+  ];
+  for(const {cell,corner} of cases){
+    const road=segments.get(city.at(...cell).id),[x,,z]=road.center;
+    assert.deepEqual(road.corner,corner);
+    const mesh=getTemplate('road',0,road.mask);
+    assert.equal(mesh.userData.roadShape,'arc');
+    mesh.updateMatrixWorld(true);
+    for(const {points} of [...road.lanePaths,...road.walkways]){
+      for(const [px,y,pz] of points){
+        ray.set(new Vector3(px-x,4,pz-z),down);
+        assert.ok(ray.intersectObject(mesh,true).some(hit=>Math.abs(hit.point.y-y)<1e-5),`Turn ${corner} at ${px}, ${pz}`);
+      }
+    }
+    for(const {to,points} of road.lanePaths){
+      const outgoing=laneGraph.nodes.get(`${road.id}>${to.neighborId}`).outgoing;
+      assert.ok(outgoing.some(id=>laneGraph.edges.get(id).points[0].every((v,i)=>Math.abs(v-points.at(-1)[i])<1e-8)));
+    }
+    for(const {points} of road.walkways)for(const p of [points[0],points.at(-1)]){
+      assert.equal(walk.nodes.get(p.map(n=>n.toFixed(3)).join(',')).edges.size,2);
+    }
+  }
+  const a=city.at(-17,-6),b=city.at(-16,-6);
+  assert.notEqual(chunkKey(a.x,a.z),chunkKey(b.x,b.z));
+  assert.deepEqual(segments.get(a.id).ports.find(p=>p.neighborId===b.id).point,[-66,.04,-24]);
+  const seam=laneGraph.nodes.get(`${a.id}>${b.id}`);
+  assert.ok(seam.outgoing.some(id=>laneGraph.edges.get(id).roadId===b.id));
+  for(const z of [-25.82,-22.18])assert.equal(walk.nodes.get(`-66.000,0.120,${z.toFixed(3)}`).edges.size,2);
 });
 
 test('T05 rotated entrances connect to public paths and the quay until the last link is removed',()=>{

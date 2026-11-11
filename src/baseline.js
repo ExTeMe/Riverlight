@@ -50,7 +50,7 @@ export const SCENES = [
     scaleView:{target:[-68,0,-43],position:[-68,28,9]},scaleTypes:['cottage','library'],spatialProbe:[
     {minX:-75,minZ:-58,maxX:-64,maxZ:-40},{minX:-64,minZ:-58,maxX:-50,maxZ:-40}
   ]},
-  {id:'T02',sceneVersion:3,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'比较线形、坡道、T 字和断头路。打开路口镜头查看车辆允许的转向与停车位置。',limitations:['紧邻弯道的路口可能限制部分转向'],target:[-94,0,-8],position:[-40,90,95],junctionViews:{tee:[-27,-14],terminal:[-24,13]}},
+  {id:'T02',sceneVersion:4,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'比较四向转角、线形、坡道、T 字和断头路。打开路口镜头查看车辆允许的转向与停车位置。',limitations:['紧邻弯道的路口可能限制部分转向'],target:[-94,0,-8],position:[-40,90,95],junctionViews:{tee:[-27,-14],terminal:[-24,13]}},
   {id:'T03',sceneVersion:2,name:'十字路口',caption:'四条来路，一处相逢',purpose:'打开「十字路口」镜头比较小车和公交包络，再删除路口中心 (-24,0) 检查拓扑重建。',limitations:['信号相位、跟车队列与冲突权限在交通阶段实现'],target:[-96,0,0],position:[-45,65,70],junctionViews:{junction:[-24,0]}},
   {id:'T04',sceneVersion:4,name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'在「河岸与航域」观察金色航线与船只状态，打开「步行连接」检查桥头坡道。',limitations:['单船沿参考航线往返，码头靠泊尚待实现。'],target:[0,0,0],position:[55,35,60]},
   {id:'T05',sceneVersion:2,name:'街坊的一天',caption:'从家门口，到商店与公园',purpose:'切换「步行连接」，检查旋转入口、公共场所和滨水步道是否属于同一可达路网。',limitations:['目的地调度、信号过街、可达屋檐与雨伞在行人阶段实现'],target:[-75,0,4],position:[-35,42,65]},
@@ -116,6 +116,7 @@ export function createScene(id, density='standard') {
     }
     const connection=city.editRoadAlignment({start:[-108,.04,-58,270],end:[-111,.04,-75,250]});
     if(connection.error)throw new Error(`T02 曲线路口接入无效：${connection.error}`);
+    road([[-9,4],[-9,2]]);road([[-34,7],[-34,9]]);
   }
   if(id==='T03'){
     road([[-38,0],[-10,0]]);road([[-24,-14],[-24,14]]);
@@ -156,6 +157,7 @@ export function createScene(id, density='standard') {
   const target=[...spec.target],position=[...spec.position];
   const cameras={medium:{position,target},near:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*.48)},far:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*1.75)}};
   if(id==='T02'){
+    cameras.corners={target:[-106,0,8],position:[-106,158,41]};
     cameras.alignment={target:[-102,0,-89],position:[-103,95,-9]};
     cameras.ramp={target:[-67,.8,-95],position:[-56,12,-66]};
   }
