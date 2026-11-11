@@ -174,7 +174,7 @@ export class World {
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
       if(road?.geometry){
-        const model=createAlignmentMesh(road.geometry,road.ports,material);
+        const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure);
         model.userData.alignment=true;
         for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
         c.buildings.add(model);continue;
@@ -242,12 +242,17 @@ export class World {
       this.previewFootprint.material.color.set(error?'#df8970':'#ffdc94');
     }
   }
-  showRoadPreview(geometry,error){
-    this.showRoadPreviews(geometry?.samples?[geometry.samples]:[],error);
+  showRoadPreview(geometry,error,sourceId=null){
+    this.showRoadPreviews(geometry?.samples?[geometry.samples]:[],error,sourceId);
   }
   showRoadPreviews(profiles,error,sourceId=null){
-    this.clearPreview(profiles.length?sourceId:null);
-    if(!profiles.length)return;
+    if(!profiles.length){this.clearPreview();return;}
+    if(!this.preview?.userData.roadPreview){
+      this.clearPreview(sourceId);
+      const tint=new T.MeshBasicMaterial({transparent:true,opacity:.55,depthWrite:false,depthTest:false});
+      this.preview=new T.Mesh(new T.BufferGeometry(),tint);this.preview.userData.roadPreview=true;this.preview.renderOrder=4;
+      this.scene.add(this.preview);
+    }else this.setPreviewSource(sourceId);
     const points=[],lines=[];
     const edge=(sample,side)=>offsetRoadSample(sample,side*CELL/2,.1);
     for(const samples of profiles){
@@ -258,10 +263,8 @@ export class World {
       lines.push(...alignmentLines(samples,[-CELL/2,0,CELL/2]));
       for(const sample of [samples[0],samples.at(-1)])lines.push(...edge(sample,-1),...edge(sample,1));
     }
-    const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(points,3));
-    const tint=new T.MeshBasicMaterial({color:error?'#cb6856':'#5a9f79',transparent:true,opacity:.55,depthWrite:false,depthTest:false});
-    this.preview=new T.Mesh(buffer,tint);this.preview.userData.roadPreview=true;this.preview.renderOrder=4;
-    this.scene.add(this.preview);
+    this.preview.material.color.set(error?'#cb6856':'#5a9f79');
+    updateLines(this.preview,points);
     this.previewFootprint.material.color.set(error?'#f3a289':'#daffe0');
     this.previewFootprint.material.depthTest=false;this.previewFootprint.renderOrder=5;
     updateLines(this.previewFootprint,lines);

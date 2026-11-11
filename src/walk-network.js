@@ -4,6 +4,7 @@ import { boundsContain, outlineBounds, outlineContains, outlinesOverlap } from '
 import { SpatialIndex } from './space.js';
 import { getTemplate } from './models.js';
 import { hasTraffic, roadCarriageway } from './road-network.js';
+import { roadBlocksOutline } from './elevated-roads.js';
 
 export const WALK_LINK_HALF_WIDTH=.13;
 const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
@@ -40,6 +41,7 @@ export function buildWalkNetwork(city){
     for(const entity of city.queryFootprints(bounds)){
       const segment=network.segments.get(entity.id);
       if(segment&&hasTraffic(entity.type)){
+        if(entity.alignment?.elevated&&!roadBlocksOutline(entity.alignment,outline,Math.max(a.y,b.y)+2.2,city.terrain))continue;
         if(!carriageways.has(entity.id))carriageways.set(entity.id,roadCarriageway(segment));
         if(carriageways.get(entity.id).some(surface=>outlinesOverlap(outline,surface)))return false;
         continue;

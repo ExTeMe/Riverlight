@@ -3,6 +3,7 @@ import { alignmentGeometry, matchingRoadEnds, offsetRoadSample } from './road-al
 import { ROAD_DIRECTIONS, arcSurface, buildJunction, junctionLayout } from './road-junction.js';
 import { buildLaneGraph, buildRoadPaths } from './road-paths.js';
 import { bridgeRise, buildBridges } from './bridges.js';
+import { elevatedCrossing, elevatedStructure } from './elevated-roads.js';
 export { ROAD_DIRECTIONS };
 
 export const ROAD_LAYOUT = 'grid-v1';
@@ -129,6 +130,7 @@ export function buildRoadNetwork(entities,revision,terrain){
       centerlines:[samples.map(s=>s.point)],geometry,ports:[],
       lanes:profileLines(profile.lanes,profile.vehicleY-profile.bedY),
       sidewalks:profileLines(profile.sidewalks,profile.walkY-profile.bedY)};
+    if(e.alignment.elevated)segment.structure=elevatedStructure(e.alignment,terrain);
     segments.set(e.id,segment);
     for(const [index,sample] of [[0,samples[0]],[1,samples.at(-1)]]){
       const key=sample.point.join(',');
@@ -155,6 +157,10 @@ export function buildRoadNetwork(entities,revision,terrain){
     }
   }
   const bridges=buildBridges(grid.filter(e=>hasTraffic(e.type)),alignmentMasks,terrain,ROAD_PROFILES.road.vehicleY);
+  for(const e of roads)if(e.alignment?.elevated){
+    const crossing=elevatedCrossing(e.alignment,terrain,e.id);
+    if(crossing)bridges.crossings.push(crossing);
+  }
   for(const e of grid){
     const segment=segments.get(e.id),{center,ports,mask}=segment;
     segment.grade=bridges.grades.get(e.id);

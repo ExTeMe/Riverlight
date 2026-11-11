@@ -16,6 +16,7 @@ import { ROAD_PROFILES, hasTraffic } from './road-network.js';
 import { placementOf, usesParcel } from './parcel.js';
 import { ParcelEditor } from './parcel-editor.js';
 import { RoadEditor } from './road-editor.js';
+import { normalBearing } from './road-alignment.js';
 import { World } from './world.js';
 import { Environment } from './environment.js';
 import { getTemplate } from './models.js';
@@ -233,12 +234,21 @@ class App {
     this.selected=result.entity?.id??null;this.selectedParcel=result.parcel.id;this.cancel();
     if(result.changed){this.changed();this.sound.click();}
   }
-  startRoadEdit(entity,ramp=false){
-    this.cancel();this.mode='alignment';this.world.select(null);this.roadEditor.open(entity,ramp);this.ui.refreshActive();this.ui.refreshSelection();
+  startRoadEdit(entity,options){
+    this.cancel();this.mode='alignment';this.world.select(null);this.roadEditor.open(entity,options);this.ui.refreshActive();this.ui.refreshSelection();
   }
-  finishRoadEdit(result){
+  extendRoad(entity,end,grade='up'){
+    const segment=entity?.alignment&&this.city.roadNetwork.segments.get(entity.id);
+    if(!segment||segment.ports.some(port=>port.end===end))return;
+    const point=entity.alignment[end?'end':'start'];
+    const anchor=end?point:[...point.slice(0,3),normalBearing(point[3]+180)];
+    this.startRoadEdit(undefined,{elevated:true,anchor,grade});
+  }
+  finishRoadEdit(result,extend=false){
+    const grade=this.roadEditor.grade;
     this.selected=result.entity.id;this.selectedParcel=null;this.cancel();
     if(result.changed){this.changed();this.sound.click();}
+    if(extend)this.extendRoad(result.entity,1,grade);
   }
   cancel(){
     this.world.clearPreview();this.buildType=null;this.moving=null;this.rotation=0;this.buildColor=0;this.mode='select';this.drawing=false;this.dragCells=[];
@@ -326,8 +336,11 @@ class App {
       case 'edit-building':if(e?.pose)this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});break;
       case 'road':this.ui.showCategory('road');this.startBuild('road');break;
       case 'draw-road':this.startRoadEdit();break;
-      case 'draw-ramp':this.startRoadEdit(undefined,true);break;
+      case 'draw-ramp':this.startRoadEdit(undefined,{ramp:true});break;
+      case 'draw-elevated':this.startRoadEdit(undefined,{elevated:true});break;
       case 'edit-road':if(e?.alignment)this.startRoadEdit(e);break;
+      case 'extend-road-start':this.extendRoad(e,0);break;
+      case 'extend-road-end':this.extendRoad(e,1);break;
       case 'inspect-junction':if(e){
         const segment=this.city.roadNetwork.segments.get(e.id);
         if(!segment?.junction)break;
@@ -376,7 +389,13 @@ class App {
       case 'scene-evidence':download(`${this.baseline.id}-evidence.json`,JSON.stringify(this.sceneEvidence(),null,2));this.ui.toast('已导出当前镜头与实际资源记录');break;
       case 'save-copy':this.city.name=document.querySelector('#rename-city').value.trim()||'未命名城市';if(await this.persist(`city-${crypto.randomUUID()}`)){await this.persist();this.ui.refresh();await this.ui.cities();this.ui.toast('城市已收藏');}break;
       case 'load-city':{const s=await this.saves.load(el.dataset.saveId);if(!s?.data)throw new Error('该存档无法打开，请保留原记录并使用其他备份');await this.replaceCity(new City(s.data),s.camera);break;}
-      case 'new-city':{const city=new City();city.name='新的河畔';await this.replaceCity(city);break;}
+      case 'new-city':
+      case 'new-strait-city':{
+        const city=new City(),strait=action==='new-strait-city';
+        city.name=strait?'海峡新城':'新的河畔';
+        if(strait)city.terrain='strait';
+        await this.replaceCity(city);break;
+      }
       case 'demo-city':await this.replaceCity(createDemo());break;
       case 'export':download(`${this.city.name}.riverlight.json`,JSON.stringify({city:this.city.snapshot(),camera:this.cameraState()},null,2));this.ui.toast('城市文件已导出');break;
       case 'export-original':{const original=await this.saveSession.originalRecord();if(!original)throw new Error('原记录暂时无法读取，请保留浏览器数据并稍后重试');download('riverlight-original-record.json',JSON.stringify(original,null,2));this.ui.toast('原存档记录已导出，未作修改');break;}
