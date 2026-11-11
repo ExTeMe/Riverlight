@@ -30,7 +30,7 @@ export class RoadEditor {
     form.addEventListener('submit',event=>{
       event.preventDefault();
       const [start,end]=this.values(),result=this.app.city.editRoadAlignment({start,end},this.id);
-      if(result.error){this.render();return;}
+      if(result.error){this.render();this.app.ui.toast(result.error,true);return;}
       this.app.finishRoadEdit(result);
     });
   }

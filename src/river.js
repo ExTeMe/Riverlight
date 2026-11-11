@@ -80,16 +80,3 @@ export function sailingCenter(z,terrain,radius){
   const span=navigableSpan(z,terrain,radius);
   return span?(span[0]+span[1])/2:null;
 }
-
-export function sailingReaches({minZ,maxZ},obstacles){
-  const reaches=[],radius=PROTOTYPE_RADIUS,end=Math.min(105,maxZ-radius);
-  let start=Math.max(-105,minZ+radius);
-  for(const {minZ:from,maxZ:to} of obstacles.slice().sort((a,b)=>a.minZ-b.minZ)){
-    if(to+radius<=start)continue;
-    if(from-radius>=end)break;
-    if(from-radius-start>=16)reaches.push([start,from-radius]);
-    start=Math.max(start,to+radius);
-  }
-  if(end-start>=16)reaches.push([start,end]);
-  return reaches;
-}

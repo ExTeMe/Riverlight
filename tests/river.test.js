@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Box3, Raycaster, Scene, Vector3 } from 'three';
-import { City, footprintBounds } from '../src/core.js';
+import { City, gridLine } from '../src/core.js';
 import { createScene } from '../src/baseline.js';
 import { bridgeRise, REQUIRED_UNDERSIDE } from '../src/bridges.js';
 import { riverWaterGeometry } from '../src/environment.js';
 import { boat } from '../src/models.js';
-import { footprintOutline } from '../src/parcel.js';
-import { WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, navigableSpan, riverBanks, riverSections, sailingCenter, sailingReaches, terrainSurfaceAt, waterAt, waterOverlaps } from '../src/river.js';
+import { WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, riverBanks, sailingCenter, waterAt } from '../src/river.js';
+import { BOAT_SPEED, navigationTrack, pointOnTrack } from '../src/navigation.js';
 import { World } from '../src/world.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 
@@ -151,27 +151,67 @@ test('occupied shore sections leave both the quay mesh and walking graph and ret
   }
   assert.ok(city.undo());assert.deepEqual(city.waterfront,before);
   world.sync(true);assert.equal(world.quay.geometry.attributes.position.count,before.length*6);
-  world.clear();world.quay.geometry.dispose();world.horizon.geometry.dispose();
+  world.clear();world.horizon.geometry.dispose();world.quay.geometry.dispose();
 });
 
-test('prototype hull envelope stays inside water and its reaches keep bridges clear',()=>{
-  const model=boat(),hull=new Box3().setFromObject(model),{x,z}=hull.getSize(new Vector3());
-  assert.ok(Math.hypot(x/2,z/2)<PROTOTYPE_RADIUS);
-  assert.ok(hull.min.y+PROTOTYPE_HULL.originAboveWater+.035<0);
-  const city=new City(),bridge=city.place('bridge',0,0),obstacles=[footprintBounds(bridge)];
-  assert.ok(waterOverlaps(footprintOutline(bridge),obstacles[0],city.terrain));
-  const reaches=sailingReaches(city.worldBounds(),obstacles);
-  assert.equal(reaches.length,2);
-  for(const [from,to] of reaches){
-    assert.ok(to+PROTOTYPE_RADIUS<=obstacles[0].minZ||from-PROTOTYPE_RADIUS>=obstacles[0].maxZ);
-    for(let z=from;z<to;z+=1.3){
-      const [west,east]=navigableSpan(z,city.terrain,PROTOTYPE_RADIUS);
-      for(const {a,b} of riverSections(z-PROTOTYPE_RADIUS,z+PROTOTYPE_RADIUS,city.terrain)){
-        assert.ok(west-PROTOTYPE_RADIUS>=Math.max(a[0],b[0])-1e-8);
-        assert.ok(east+PROTOTYPE_RADIUS<=Math.min(a[1],b[1])+1e-8);
-      }
-      assert.equal(terrainSurfaceAt((west+east)/2,z,city.terrain).waterY,WATER_Y);
-    }
+test('the reference route leaves the largest hull room to turn in both river layouts',()=>{
+  for(const terrain of ['legacy','meander']){
+    const track=navigationTrack(new City().worldBounds(),terrain);
+    assert.equal(track.segments.length,210);
+    assert.ok(track.segments.every(segment=>segment.safe));
   }
-  model.traverse(o=>o.geometry?.dispose());
+});
+
+test('the largest vessel clears two bridges, waits short of a low bridge, and turns without jumping',()=>{
+  const city=new City(createScene('T04').city);
+  assert.ok(city.paint('bridge',gridLine([-7,2],[9,2])));
+  const world=new World(new Scene(),city),traffic=world.traffic;
+  const [vessel]=traffic.boats,mesh=vessel.mesh,focus=new Vector3(),box=new Box3();
+  const blocker=city.place('bridge',Math.round(sailingCenter(28,city.terrain,PROTOTYPE_RADIUS)/4),7);
+  assert.ok(blocker);world.sync(true);
+  const open=city.roadNetwork.bridges.crossings.filter(bridge=>bridge.passable);
+  assert.equal(open.length,2);assert.equal(traffic.routes.length,2);
+  const crossed=new Set();let wait=0,turned=false,testedEdit=false;
+  const dt=.05;
+  for(let i=0;i<1000;i++){
+    const before=mesh.position.clone(),yaw=mesh.rotation.y;
+    traffic.update(dt,i*dt,focus,false);
+    const {x,y,z}=mesh.position;
+    assert.ok(Math.hypot(x-before.x,z-before.z)<=BOAT_SPEED*dt+1e-6);
+    assert.ok(Math.abs(mesh.rotation.y-yaw)<=1.5*dt+1e-6);
+    assert.ok(z<=26-PROTOTYPE_RADIUS);
+    for(const bridge of open)if(z+PROTOTYPE_RADIUS>=bridge.bounds.minZ&&z-PROTOTYPE_RADIUS<=bridge.bounds.maxZ){
+      crossed.add(bridge);
+      for(const bob of [-PROTOTYPE_HULL.bob,PROTOTYPE_HULL.bob]){
+        mesh.position.y=WATER_Y+PROTOTYPE_HULL.originAboveWater+bob;
+        box.setFromObject(mesh,true);
+        assert.ok(box.max.y+.25<=bridge.bottomY&&box.min.y<WATER_Y);
+        for(const pier of bridge.piers)assert.ok(box.max.x+.5<pier.x-pier.width/2||box.min.x-.5>pier.x+pier.width/2);
+      }
+      mesh.position.y=y;
+    }
+    if(!testedEdit&&Math.abs(z)<.2){
+      const approach=open[0].approachIds[0],history=city.undoStack.length;
+      assert.equal(city.remove(approach),false);
+      assert.match(city.editError,/船只正在经过/);
+      assert.equal(city.undoStack.length,history);assert.ok(city.entities.has(approach));
+      testedEdit=true;
+    }
+    if(vessel.state==='waiting'){
+      assert.equal(vessel.speed,0);wait+=dt;
+    }
+    if(vessel.state==='turning'){
+      assert.ok(Math.hypot(x-before.x,z-before.z)<1e-8);turned=true;
+    }
+    if(turned&&vessel.direction===-1&&vessel.speed>0)break;
+  }
+  assert.equal(crossed.size,2);assert.ok(testedEdit&&turned&&wait>=2.95);
+  const before=mesh.position.clone(),distance=vessel.distance;
+  assert.ok(city.remove(blocker.id));world.sync(true);
+  assert.equal(traffic.boats[0],vessel);assert.equal(vessel.distance,distance);assert.deepEqual(mesh.position,before);
+  assert.equal(traffic.routes.length,1);
+  assert.ok(city.undo());world.sync(true);assert.equal(vessel.distance,distance);
+  assert.equal(traffic.routes.length,2);
+  assert.ok(Math.abs(pointOnTrack(traffic.track,distance).z-before.z)<1e-8);
+  world.clear();
 });

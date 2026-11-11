@@ -3,12 +3,14 @@ import { PerspectiveCamera, Vector3 } from 'three';
 import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
 import { placementAnchor, placementOf } from '../../src/parcel.js';
+import { sailingCenter, PROTOTYPE_RADIUS } from '../../src/river.js';
 
 // Software-rendered browsers need time for input between expensive WebGL frames.
 // Keep real assets and high-quality effects at reduced test pixel density.
 // These are interaction checks, not visual-quality or performance measurements.
 test.use({ viewport: { width: 960, height: 640 }, deviceScaleFactor: 0.5 });
-test.beforeEach(async ({page}) => {
+test.beforeEach(async ({page},info) => {
+  if(info.title.startsWith('T04 sails through'))return;
   await page.addInitScript(() => {
     window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 1000);
     window.cancelAnimationFrame = id => clearTimeout(id);
@@ -360,7 +362,7 @@ test('T02 and T03 show road markings, allowed vehicle movements and topology cha
   expect(errors).toEqual([]);
 });
 
-test('T04 renders shore and navigable spans and keeps moving hulls outside the bridge zone',async({page},info)=>{
+test('T04 renders the shore and a continuous route through the verified bridge',async({page},info)=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T04');await ready(page);
   await page.getByRole('button',{name:'河岸与航域',exact:true}).click();
@@ -377,18 +379,39 @@ test('T04 renders shore and navigable spans and keeps moving hulls outside the b
   expect(river.bridges).toHaveLength(1);
   expect(river.bridges[0]).toMatchObject({passable:true,bottomY:1.23});
   expect(river.bridges[0].bottomY).toBeGreaterThan(river.requiredUnderside);
-  expect(river.reaches).toHaveLength(2);
-  expect(river.boats).toHaveLength(2);
+  expect(river.reaches).toEqual([[-105,105]]);
+  expect(river.hull).toMatchObject({width:2,length:4});
   const widths=river.sections.map(({banks:[west,east]})=>east-west);
   expect(Math.max(...widths)-Math.min(...widths)).toBeGreaterThan(5);
-  for(const [i,[,y,z]] of river.boats.entries()){
-    expect(z).toBeGreaterThanOrEqual(river.reaches[i][0]);expect(z).toBeLessThanOrEqual(river.reaches[i][1]);
-    expect(Math.abs(z)).toBeGreaterThan(2+river.radius-1e-8);
-    expect(y-river.waterY).toBeGreaterThanOrEqual(0);expect(y-river.waterY).toBeLessThan(.075);
-  }
-  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
-  const later=(await report()).river.boats;
-  expect(later.some((point,i)=>Math.abs(point[2]-river.boats[i][2])>.02)).toBe(true);
+  const [,y,z]=river.sailing.point;
+  expect(z).toBeGreaterThanOrEqual(-105);expect(z).toBeLessThanOrEqual(105);
+  expect(y-river.waterY).toBeGreaterThanOrEqual(0);expect(y-river.waterY).toBeLessThan(.075);
+  expect(errors).toEqual([]);
+});
+
+test('T04 sails through the bridge and waits before a low span added in the editor',async({page},info)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T04');await ready(page);
+  await page.getByRole('button',{name:'河岸与航域',exact:true}).click();
+  await page.getByRole('button',{name:'白天',exact:true}).click();
+  await page.locator('[data-category="road"]').click();
+  await page.getByRole('button',{name:'建造跨河桥梁',exact:true}).click();
+  const {position,target}=createScene('T04').cameras.river,camera=new PerspectiveCamera(39,960/640,.5,4500);
+  camera.position.fromArray(position);camera.lookAt(...target);camera.updateMatrixWorld();
+  const z=20,x=Math.round(sailingCenter(z,'meander',PROTOTYPE_RADIUS)/4)*4;
+  const p=new Vector3(x,0,z).project(camera);
+  await page.locator('#scene').click({position:{x:480*(1+p.x),y:320*(1-p.y)}});
+  await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().entities)).toBe(61);
+  const vessel=()=>page.evaluate(()=>window.riverlight.getStats().sailing);
+  expect((await vessel()).point[2]).toBeLessThan(2);
+  await expect.poll(async()=> (await vessel()).point[2],{timeout:50000}).toBeGreaterThan(2+PROTOTYPE_RADIUS);
+  await expect(page.getByText('航道受阻 · 船只正在等待',{exact:true})).toBeVisible({timeout:50000});
+  const waiting=await vessel();
+  expect(waiting.speed).toBe(0);expect(waiting.point[2]).toBeLessThan(18-PROTOTYPE_RADIUS);
+  await page.screenshot({path:info.outputPath('boat-waiting.png')});
+  await expect.poll(async()=> (await vessel()).direction,{timeout:18000}).toBe(-1);
+  await expect.poll(async()=> (await vessel()).point[2],{timeout:18000}).toBeLessThan(waiting.point[2]-1);
   expect(errors).toEqual([]);
 });
 
