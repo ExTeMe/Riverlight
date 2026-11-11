@@ -5,6 +5,7 @@ const MIN_LENGTH = 6;
 const MAX_LENGTH = 120;
 const MIN_RADIUS = 6;
 export const MAX_ROAD_HEIGHT = 8;
+export const MAX_ELEVATED_ROAD_HEIGHT = 32;
 export const MAX_ROAD_GRADE = .12;
 const HALF_WIDTH = CELL / 2;
 const cache = new WeakMap();
@@ -21,15 +22,17 @@ export function matchingRoadEnds(a,i,b,j) {
 }
 
 export function readAlignment(raw) {
+  if(raw?.elevated!==undefined&&typeof raw.elevated!=='boolean')throw new Error('高架道路标记无效');
+  const maxHeight=raw?.elevated?MAX_ELEVATED_ROAD_HEIGHT:MAX_ROAD_HEIGHT;
   const read = point => {
     if(!Array.isArray(point)||point.length!==4||!point.every(Number.isFinite)
-      ||Math.abs(point[0])>20000||Math.abs(point[2])>20000||point[1]<0||point[1]>MAX_ROAD_HEIGHT){
-      throw new Error(`道路端点无效，高度须为 0–${MAX_ROAD_HEIGHT} 米`);
+      ||Math.abs(point[0])>20000||Math.abs(point[2])>20000||point[1]<0||point[1]>maxHeight){
+      throw new Error(`道路端点无效，高度须为 0–${maxHeight} 米`);
     }
     const [x,y,z,bearing]=point;
     return Object.freeze([x,y,z,normalBearing(bearing)]);
   };
-  return Object.freeze({start:read(raw?.start),end:read(raw?.end)});
+  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{})});
 }
 
 // Bound curvature and grade over the whole cubic. The derivative is a
@@ -72,7 +75,7 @@ function horizontalAlignment([x,,z,a],[u,,w,b]){
 export function maxRoadRise(start,end){
   const {forward,velocity,error}=horizontalAlignment(start,end);
   if(error||limits(velocity,forward,0))return null;
-  let low=0,high=MAX_ROAD_HEIGHT*100;
+  let low=0,high=MAX_ELEVATED_ROAD_HEIGHT*100;
   while(low<high){
     const mid=Math.ceil((low+high)/2);
     if(limits(velocity,forward,mid/100))high=mid-1;
@@ -105,7 +108,8 @@ export function alignmentGeometry(alignment) {
   const left=edges(-HALF_WIDTH),right=edges(HALF_WIDTH);
   const sections=left.slice(1).map((p,i)=>{
     const outline=[left[i],right[i],right[i+1],p];
-    return {outline,bounds:outlineBounds(outline)};
+    const y=samples[i].point[1],nextY=samples[i+1].point[1];
+    return {outline,bounds:outlineBounds(outline),minY:Math.min(y,nextY),maxY:Math.max(y,nextY)};
   });
   const geometry={samples,sections,bounds:outlineBounds([...left,...right]),minRadius,maxGrade,
     error:limits(velocity,forward,Math.abs(v-y))};
@@ -122,7 +126,7 @@ export function roadOverlaps(alignment,outline,other) {
   return sections.some(a=>candidates.some(b=>sectionsOverlap(a,b)));
 }
 
-function sectionsOverlap(a,b) {
+export function sectionsOverlap(a,b) {
   const u=a.bounds,v=b.bounds;
   return u.maxX>v.minX&&v.maxX>u.minX&&u.maxZ>v.minZ&&v.maxZ>u.minZ&&outlinesOverlap(a.outline,b.outline);
 }

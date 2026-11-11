@@ -1,4 +1,5 @@
 import { City } from '../src/core.js';
+import { CITY_VERSION } from '../src/city-format.js';
 import { createSaveStore, BACKUP_LIMIT } from '../src/storage.js';
 import { SaveSession, parseCityFile } from '../src/save-session.js';
 import { createBaseline, createLegacyBaseline } from '../src/baseline.js';
@@ -83,7 +84,7 @@ export const storageChecks = [
           await session.persist(opened.city, opened.camera);
           check((await store.list()).filter(item => item.kind === 'original').length === 1, '重复归档原件');
           const migrated = (await store.load('autosave')).data;
-          check(migrated.version === 5 && migrated.roads.layout === 'grid-v1', '首次保存未迁移为米制道路格式');
+          check(migrated.version === CITY_VERSION && migrated.roads.layout === 'grid-v1', '首次保存未迁移为米制道路格式');
           equal(new City(migrated).snapshot(), opened.city.snapshot(), '迁移往返不一致');
         });
       }

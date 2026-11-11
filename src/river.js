@@ -8,11 +8,16 @@ export const QUAY = Object.freeze({width:3.4,minZ:-110,maxZ:112,y:.025});
 export const PROTOTYPE_HULL = Object.freeze({width:2,length:4,margin:.5,originAboveWater:.035,top:1.215,bob:.035});
 export const PROTOTYPE_RADIUS = Math.hypot(PROTOTYPE_HULL.width/2,PROTOTYPE_HULL.length/2)+PROTOTYPE_HULL.margin;
 
-const sourceCenter = (z,terrain) => terrain==='legacy'
-  ? Math.sin(z*.016)*11+Math.sin(z*.004)*9
-  : Math.sin(z*.025)*23+Math.sin(z*.009)*10;
-const sourceWidth = (z,terrain) => terrain==='legacy'
-  ? 11.9 : 11.3+1.8*Math.sin(z*.033+.6)+5*Math.exp(-(((z-30)/26)**2));
+function sourceCenter(z,terrain){
+  if(terrain==='legacy')return Math.sin(z*.016)*11+Math.sin(z*.004)*9;
+  if(terrain==='strait')return Math.sin(z*.009)*16+Math.sin(z*.024)*5;
+  return Math.sin(z*.025)*23+Math.sin(z*.009)*10;
+}
+function sourceWidth(z,terrain){
+  if(terrain==='legacy')return 11.9;
+  if(terrain==='strait')return 82+6*Math.sin(z*.012+.5)+4*Math.cos(z*.021);
+  return 11.3+1.8*Math.sin(z*.033+.6)+5*Math.exp(-(((z-30)/26)**2));
+}
 
 function sampleBanks(z,terrain){
   const center=sourceCenter(z,terrain),width=sourceWidth(z,terrain);

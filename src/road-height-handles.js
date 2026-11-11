@@ -42,7 +42,7 @@ export class RoadHeightHandles {
     }
     this.layout();
   }
-  clear(){this.drag=null;this.layer.hidden=true;}
+  clear(){this.cancelFrame();this.drag=null;this.layer.hidden=true;}
   layout(){
     if(this.layer.hidden)return;
     const {camera,canvas}=this.editor.app;
@@ -69,12 +69,18 @@ export class RoadHeightHandles {
   move(event){
     const drag=this.drag;
     if(!drag||drag.id!==event.pointerId)return;
-    this.editor.setHeight(drag.index,drag.y+(drag.screenY-event.clientY)/drag.pixelsPerMetre);
+    this.pendingY=event.clientY;
+    if(this.frame)return;
+    this.frame=requestAnimationFrame(()=>{
+      this.frame=null;
+      this.editor.setHeight(drag.index,drag.y+(drag.screenY-this.pendingY)/drag.pixelsPerMetre);
+    });
   }
+  cancelFrame(){if(this.frame)cancelAnimationFrame(this.frame);this.frame=null;}
   finish(event,canceled){
     const drag=this.drag;
     if(!drag||drag.id!==event.pointerId)return;
-    this.drag=null;
+    this.cancelFrame();this.drag=null;
     if(canceled)this.editor.writeHeight(drag.index,drag.y);
     else this.editor.setHeight(drag.index,drag.y+(drag.screenY-event.clientY)/drag.pixelsPerMetre);
   }

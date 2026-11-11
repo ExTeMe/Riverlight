@@ -3,6 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ROAD_PROFILES, gridRoadSurface, roadCorner } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
 import { bridgeRise, DECK_DEPTH, PIER_BASE } from './bridges.js';
+import { ROAD_DECK_BOTTOM, ROAD_RAIL_TOP } from './elevated-roads.js';
 
 function tileSurface(polygons,point){
   const vertices=[];
@@ -68,11 +69,12 @@ export function createBridgeRoad(segment,rotation,material){
   return group;
 }
 
-export function createAlignmentMesh(geometry,ports,material){
-  const group=new T.Group(),asphalt=[],paving=[],marks=[];
+export function createAlignmentMesh(geometry,ports,material,structure=null){
+  const group=new T.Group(),asphalt=[],paving=[],marks=[],deck=[];
   const {width,carriageway,bedY,vehicleY,walkY}=ROAD_PROFILES.road;
   const half=width/2,edge=carriageway/2,road=vehicleY-bedY,walk=walkY-bedY;
   const {samples}=geometry;
+  const floor=s=>structure?ROAD_DECK_BOTTOM:-.03-s.point[1];
   const quad=(out,a,b,c,d)=>out.push(...a,...b,...c,...a,...c,...d);
   const surface=(out,a,b,left,right,height)=>quad(out,offsetRoadSample(a,right,height),
     offsetRoadSample(b,right,height),offsetRoadSample(b,left,height),offsetRoadSample(a,left,height));
@@ -84,27 +86,43 @@ export function createAlignmentMesh(geometry,ports,material){
     surface(asphalt,a,b,-edge,edge,road);
     surface(paving,a,b,-half,-edge,walk);
     surface(paving,a,b,edge,half,walk);
-    wall(b,a,-half,walk,s=>-.03-s.point[1]);
-    wall(a,b,half,walk,s=>-.03-s.point[1]);
+    wall(b,a,-half,walk,floor);
+    wall(a,b,half,walk,floor);
     wall(a,b,-edge,walk,()=>road);
     wall(b,a,edge,walk,()=>road);
     const step=Math.hypot(b.point[0]-a.point[0],b.point[2]-a.point[2]);
     if((distance+step/2)%5<1.5)surface(marks,a,b,-.035,.035,road+.008);
+    if(structure){
+      surface(deck,b,a,-half,half,ROAD_DECK_BOTTOM);
+      if(Math.max(a.point[1],b.point[1])>.6){
+        const rail=.10;
+        for(const [left,right] of [[-half,-half+rail],[half-rail,half]]){
+          surface(deck,a,b,left,right,ROAD_RAIL_TOP);
+          wall(b,a,left,ROAD_RAIL_TOP,()=>walk);
+          wall(a,b,right,ROAD_RAIL_TOP,()=>walk);
+        }
+      }
+    }
     distance+=step;
   }
   for(const [end,sample] of [[0,samples[0]],[1,samples.at(-1)]])if(!ports.some(port=>port.end===end)){
-    const floor=-.03-sample.point[1];
     for(const [left,right,top] of [[-half,-edge,walk],[-edge,edge,road],[edge,half,walk]]){
       const [a,b]=end?[right,left]:[left,right];
-      quad(paving,offsetRoadSample(sample,a,top),offsetRoadSample(sample,a,floor),
-        offsetRoadSample(sample,b,floor),offsetRoadSample(sample,b,top));
+      quad(paving,offsetRoadSample(sample,a,top),offsetRoadSample(sample,a,floor(sample)),
+        offsetRoadSample(sample,b,floor(sample)),offsetRoadSample(sample,b,top));
     }
   }
-  for(const [points,color,role] of [[asphalt,'#677378','road'],[paving,'#c9c9bd','ground'],[marks,'#e8dfbc','road']]){
+  for(const [points,color,role] of [[asphalt,'#677378','road'],[paving,'#c9c9bd','ground'],[marks,'#e8dfbc','road'],[deck,'#a5ada6','ground']]){
     if(!points.length)continue;
     const buffer=new T.BufferGeometry();
     buffer.setAttribute('position',new T.Float32BufferAttribute(points,3));buffer.computeVertexNormals();
     const mesh=new T.Mesh(buffer,material(color,role));mesh.receiveShadow=true;mesh.castShadow=role==='ground';group.add(mesh);
+  }
+  if(structure?.piers.length){
+    const parts=structure.piers.map(({x,z,width,base,top})=>new T.BoxGeometry(width,top-base,width).translate(x,(top+base)/2,z));
+    const geometry=mergeGeometries(parts);
+    for(const part of parts)part.dispose();
+    const piers=new T.Mesh(geometry,material('#9ca3a0','ground'));piers.castShadow=true;piers.receiveShadow=true;group.add(piers);
   }
   return group;
 }

@@ -10,7 +10,7 @@ const tileKey=(x,z)=>`${x},${z}`;
 const tileBounds=({x,z})=>({minX:x*CELL-HALF,maxX:x*CELL+HALF,minZ:z*CELL-HALF,maxZ:z*CELL+HALF});
 const pierAt=({x,z})=>({x:x*CELL,z:z*CELL,width:PIER_WIDTH});
 
-function channelEnvelope(bounds,terrain){
+export function channelEnvelope(bounds,terrain){
   const r=PROTOTYPE_RADIUS;
   let westMin=Infinity,westMax=-Infinity,eastMin=Infinity,eastMax=-Infinity;
   for(const {a,b} of riverSections(bounds.minZ-2*r,bounds.maxZ+2*r,terrain)){

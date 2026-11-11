@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import { createBaseline, createLegacyBaseline, createScene } from '../../src/baseline.js';
 import { City, footprintBounds } from '../../src/core.js';
+import { CITY_VERSION } from '../../src/city-format.js';
 import { parcelOutline, parcelPoint, placementAnchor, placementOf } from '../../src/parcel.js';
 import { sailingCenter, PROTOTYPE_RADIUS } from '../../src/river.js';
 
@@ -10,7 +11,7 @@ import { sailingCenter, PROTOTYPE_RADIUS } from '../../src/river.js';
 // These are interaction checks, not visual-quality or performance measurements.
 test.use({ viewport: { width: 960, height: 640 }, deviceScaleFactor: 0.5 });
 test.beforeEach(async ({page},info) => {
-  if(info.title.startsWith('T04 sails through'))return;
+  if(/^T04 sails (through|under)/.test(info.title))return;
   await page.addInitScript(() => {
     window.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 1000);
     window.cancelAnimationFrame = id => clearTimeout(id);
@@ -289,7 +290,7 @@ test('T01 parcel import preserves old files and restores an angled building on r
     expect(saved.original.input).toEqual(legacy);
     expect(saved.original.camera).toEqual(legacy.camera);
     const old=new City(legacy.city),current=new City(saved.current.data);
-    expect(saved.current.data.version).toBe(5);
+    expect(saved.current.data.version).toBe(CITY_VERSION);
     expect(current.terrain).toBe(old.terrain);
     for(const [id,entity] of old.entities){
       expect(current.entities.get(id)).toEqual(entity);
@@ -520,6 +521,82 @@ test.describe('Ramp placement at native screenshot resolution',()=>{
   });
 });
 
+test.describe('Elevated road construction at native screenshot resolution',()=>{
+  test.use({viewport:{width:1440,height:900},deviceScaleFactor:1});
+
+  test('extend an existing ramp upward, bridge the river above a cottage and descend',async({page},info)=>{
+    test.setTimeout(150000);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+    const city=new City();
+    city.name='高架道路验收';
+    const old=city.editRoadAlignment({start:[-124,0,0,0],end:[-34,7.2,0,0]}).entity;
+    expect(city.place('cottage',7,0)).toBeTruthy();
+    expect(city.place('path',-12,3)).toBeTruthy();
+    const position=[35,115,170],target=[27,4,0];
+    await page.goto('/');await ready(page);
+    await importCity(page,{city:city.snapshot(5),camera:{position,target}});
+    await expect(page.locator('#city-name')).toHaveText(city.name);
+    const frame=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await frame();
+    const camera=new PerspectiveCamera(39,1440/900,.5,4500);
+    camera.position.fromArray(position);camera.lookAt(...target);camera.updateMatrixWorld();
+    const click=async point=>{
+      const p=new Vector3(...point).project(camera);
+      await page.locator('#scene').click({position:{x:720*(1+p.x),y:450*(1-p.y)}});
+    };
+    const sample=city.roadNetwork.segments.get(old.id).geometry.samples[135].point;
+    await click([sample[0],sample[1]+.03,sample[2]]);
+    await expect.poll(async()=> (await stats()).selected).toBe(old.id);
+    await page.getByRole('button',{name:'延伸终点',exact:true}).click();
+    const form=page.getByRole('form',{name:'道路编辑'}),status=form.getByRole('status');
+    const next=form.getByRole('button',{name:'应用并延伸',exact:true});
+    await click([-10,0,0]);
+    await expect(status).toContainText('高差 1.92 米');
+    await expect(form.getByText(/起点接路/)).toContainText('起点接路 7.20 米');
+    await next.click();
+    await expect.poll(async()=> (await stats()).entities).toBe(4);
+    await form.getByRole('button',{name:'水平',exact:true}).click();
+    await click([45,0,0]);
+    await expect(status).toContainText('水面净空 9.27 米');
+    await expect(page.getByRole('button',{name:'调整起点高度',exact:true})).toBeDisabled();
+    await frame();
+    await page.screenshot({path:info.outputPath('elevated-road-continuation.png')});
+    await next.click();
+    await form.getByRole('button',{name:'下降',exact:true}).click();
+    await click([81,0,0]);
+    await expect(status).toContainText('高差 -2.00 米');
+    await form.getByRole('button',{name:'应用道路',exact:true}).click();
+    await expect.poll(async()=> (await stats()).entities).toBe(6);
+    await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+    await expect.poll(async()=> (await stats()).entities).toBe(5);
+    await page.getByRole('button',{name:'重做 Ctrl+Y',exact:true}).click();
+    await page.getByRole('button',{name:'保存城市 Ctrl+S',exact:true}).click();
+    await expect(page.locator('#save-state')).toHaveText('已保存 · 只属于你的节奏');
+    await page.reload();await ready(page);
+    await expect.poll(async()=> (await stats()).entities).toBe(6);
+    await page.getByRole('button',{name:'我的城市',exact:true}).click();
+    const {city:saved}=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+    const reloaded=new City(saved),roads=saved.entities.filter(e=>e.alignment);
+    expect(saved.version).toBe(CITY_VERSION);
+    expect(roads.slice(1).map(({alignment})=>alignment)).toEqual([
+      {start:[-34,7.2,0,0],end:[-10,9.12,0,0],elevated:true},
+      {start:[-10,9.12,0,0],end:[45,9.12,0,0],elevated:true},
+      {start:[45,9.12,0,0],end:[81,7.12,0,0],elevated:true},
+    ]);
+    for(const [i,road] of roads.slice(1).entries()){
+      expect(reloaded.roadNetwork.segments.get(road.id).ports).toContainEqual(expect.objectContaining({end:0,neighborId:roads[i].id}));
+    }
+    await page.locator('[data-action="close-modal"]').click();
+    await page.evaluate(view=>localStorage.setItem('riverlight-camera',JSON.stringify(view)),{position:[55,28,48],target:[8,4,0]});
+    await page.getByRole('button',{name:'操作指南',exact:true}).click();
+    await page.getByRole('button',{name:'返回收藏镜头',exact:true}).click();
+    await page.keyboard.press('h');await frame();
+    await page.screenshot({path:info.outputPath('elevated-road-bridge.png')});
+    expect(errors).toEqual([]);
+  });
+});
+
 test('T04 renders the shore and a continuous route through the verified bridge',async({page},info)=>{
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.goto('/?scene=T04');await ready(page);
@@ -570,6 +647,37 @@ test('T04 sails through the bridge and waits before a low span added in the edit
   await page.screenshot({path:info.outputPath('boat-waiting.png')});
   await expect.poll(async()=> (await vessel()).direction,{timeout:18000}).toBe(-1);
   await expect.poll(async()=> (await vessel()).point[2],{timeout:18000}).toBeLessThan(waiting.point[2]-1);
+  expect(errors).toEqual([]);
+});
+
+test('T04 sails under two high bridge spans in a strait city',async({page})=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T04');await ready(page);
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  await page.getByRole('button',{name:'新建海峡城市',exact:true}).click();
+  await expect(page.locator('#city-name')).toHaveText('海峡新城');
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const {city:blank}=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出城市',exact:true}))).toString());
+  expect(blank.terrain).toBe('strait');
+  const city=new City(blank);
+  city.name='跨海高架航行';
+  expect(city.place('path',-25,3)).toBeTruthy();
+  for(const [x,u] of [[-100,0],[0,100]]){
+    expect(city.editRoadAlignment({start:[x,7,0,0],end:[u,7,0,0],elevated:true}).changed).toBeTruthy();
+  }
+  await importCity(page,{city:city.snapshot(),camera:{position:[21,100,141],target:[0,4,0]}});
+  await expect(page.locator('#city-name')).toHaveText(city.name);
+  const vessel=()=>page.evaluate(()=>window.riverlight.getStats().sailing);
+  expect((await vessel()).point[2]).toBeLessThan(2);
+  await expect.poll(async()=> (await vessel()).point[2],{timeout:70000}).toBeGreaterThan(2+PROTOTYPE_RADIUS);
+  expect(await vessel()).toMatchObject({blocked:false,direction:1,state:'sailing'});
+  await page.getByText('观察与记录',{exact:true}).click();
+  const {river}=JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}))).toString());
+  expect(river.bridges).toHaveLength(2);
+  expect(river.reaches).toEqual([[-105,105]]);
+  const [west,east]=river.sections.find(section=>section.z===0).banks;
+  expect(east-west).toBeGreaterThan(160);
   expect(errors).toEqual([]);
 });
 
