@@ -2,9 +2,10 @@ import { CELL } from './catalog.js';
 import { boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
 
 const MIN_LENGTH = 6;
-const MAX_LENGTH = 96;
+const MAX_LENGTH = 120;
 const MIN_RADIUS = 6;
-const MAX_GRADE = .12;
+export const MAX_ROAD_HEIGHT = 8;
+export const MAX_ROAD_GRADE = .12;
 const HALF_WIDTH = CELL / 2;
 const cache = new WeakMap();
 const dot = ([x,z],[u,v]) => x*u+z*v;
@@ -22,8 +23,8 @@ export function matchingRoadEnds(a,i,b,j) {
 export function readAlignment(raw) {
   const read = point => {
     if(!Array.isArray(point)||point.length!==4||!point.every(Number.isFinite)
-      ||Math.abs(point[0])>20000||Math.abs(point[2])>20000||point[1]<0||point[1]>8){
-      throw new Error('道路端点无效，高度须为 0–8 米');
+      ||Math.abs(point[0])>20000||Math.abs(point[2])>20000||point[1]<0||point[1]>MAX_ROAD_HEIGHT){
+      throw new Error(`道路端点无效，高度须为 0–${MAX_ROAD_HEIGHT} 米`);
     }
     const [x,y,z,bearing]=point;
     return Object.freeze([x,y,z,normalBearing(bearing)]);
@@ -40,7 +41,7 @@ function limits(velocity,forward,rise,start=0,end=1,depth=0) {
   const curvature=Math.max(...crossProducts)/speed**3;
   const peak=Math.max(start,Math.min(.5,end));
   const grade=6*rise*peak*(1-peak)/speed;
-  const safeRadius=curvature<=1/MIN_RADIUS+1e-10,safeGrade=grade<=MAX_GRADE+1e-10;
+  const safeRadius=curvature<=1/MIN_RADIUS+1e-10,safeGrade=grade<=MAX_ROAD_GRADE+1e-10;
   if(safeRadius&&safeGrade)return null;
   if(depth===8)return safeRadius?'坡度超过 12%，请拉长道路或减小高差':'弯曲半径不足 6 米，请拉长道路或减小转角';
   const [a,b,c]=velocity,ab=mid(a,b),bc=mid(b,c),m=mid(ab,bc),t=(start+end)/2;
@@ -52,18 +53,39 @@ export function offsetRoadSample(sample,offset,height=0) {
   return [x-dz*offset,y+height,z+dx*offset];
 }
 
-export function alignmentGeometry(alignment) {
-  if(cache.has(alignment))return cache.get(alignment);
-  const {start:[x,y,z,a],end:[u,v,w,b]}=alignment;
+function horizontalAlignment([x,,z,a],[u,,w,b]){
   const length=Math.hypot(u-x,w-z);
   if(length<MIN_LENGTH||length>MAX_LENGTH)return {error:`端点距离须为 ${MIN_LENGTH}–${MAX_LENGTH} 米`};
   const unit=angle=>{
+    angle=normalBearing(angle);
     const radians=(angle%180)*Math.PI/180,sign=angle>=180?-1:1;
     return [sign*Math.cos(radians),sign*Math.sin(radians)];
   };
   const forward=[(u-x)/length,(w-z)/length], first=unit(a),last=unit(b);
   if(Math.min(dot(first,forward),dot(last,forward))<.5)return {error:'端点方向与连线最多可偏转 60°'};
   const velocity=[first,forward.map((n,i)=>3*n-first[i]-last[i]),last].map(p=>p.map(n=>n*length));
+  return {length,first,last,forward,velocity};
+}
+
+// Use the same full-curve grade check as placement. Round down to centimetres
+// so a height offered by the editor can pass the grade check.
+export function maxRoadRise(start,end){
+  const {forward,velocity,error}=horizontalAlignment(start,end);
+  if(error||limits(velocity,forward,0))return null;
+  let low=0,high=MAX_ROAD_HEIGHT*100;
+  while(low<high){
+    const mid=Math.ceil((low+high)/2);
+    if(limits(velocity,forward,mid/100))high=mid-1;
+    else low=mid;
+  }
+  return low/100;
+}
+
+export function alignmentGeometry(alignment) {
+  if(cache.has(alignment))return cache.get(alignment);
+  const {start:[x,y,z],end:[u,v,w]}=alignment;
+  const {length,first,last,forward,velocity,error}=horizontalAlignment(alignment.start,alignment.end);
+  if(error)return {error};
   const [p,q,r]=velocity;
   const segments=Math.ceil(length/.5),samples=[];
   let minRadius=Infinity,maxGrade=0;
