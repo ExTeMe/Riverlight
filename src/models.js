@@ -137,7 +137,7 @@ export function vehicle(kind=0) {
   for(const x of [-.4,.4]){b.box(.25,.15,.08,x,.68,bus?1.93:1.23,material('#fff3be','light'));b.box(.2,.15,.08,x,.68,bus?-1.93:-1.23,material('#b25546','light'));}
   return b.finish();
 }
-export function boat(){const b=new Builder();b.box(PROTOTYPE_HULL.width,.45,PROTOTYPE_HULL.length,0,.15,0,material('#e5dfc9'));b.box(1.55,.8,1.9,0,.65,-.35,material('#a8c3c0','glass'));b.box(1.8,.15,2.3,0,1.14,-.35,material('#eee7d3','roof'));return b.finish();}
+export function boat(){const b=new Builder();b.box(PROTOTYPE_HULL.width,.45,PROTOTYPE_HULL.length,0,.15,0,material('#e5dfc9'));b.box(1.55,.8,1.9,0,.65,-.35,material('#a8c3c0','glass'));b.box(1.8,.15,2.3,0,PROTOTYPE_HULL.top-.075,-.35,material('#eee7d3','roof'));return b.finish();}
 export function person(seed=0){const b=new Builder();b.cylinder(.18,.21,.6,0,.7,0,material(['#b17e66','#738d8c','#d1b373'][seed%3]),6);b.sphere(.18,0,1.2,0,material('#cda982'));for(const x of [-.1,.1])b.box(.12,.43,.13,x,.24,0,material('#62716a'));return b.finish();}
 
 function applyAssetColor(model,type,color){

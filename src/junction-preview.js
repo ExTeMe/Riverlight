@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { vehicle } from './models.js';
 import { VEHICLE_ENVELOPES } from './road-junction.js';
+import { bridgeRise } from './bridges.js';
 
 const colors={left:0x7fe0fd,right:0xffcf84,straight:0xb5f1aa,stop:0xffa299};
 
@@ -27,7 +28,7 @@ export class JunctionPreview {
     this.group.position.set(segment.center[0],y,segment.center[2]);
     for(const route of routes){
       const line=new T.Line(new T.BufferGeometry(),new T.LineBasicMaterial({color:colors[route.kind]}));
-      line.geometry.setAttribute('position',new T.Float32BufferAttribute(route.samples.flatMap(({point:[x,z]})=>[x,.015,z]),3));
+      line.geometry.setAttribute('position',new T.Float32BufferAttribute(route.samples.flatMap(({point:[x,z]})=>[x,this.height(x)+.015,z]),3));
       this.group.add(line);
     }
     if(!routes.length)return;
@@ -41,6 +42,7 @@ export class JunctionPreview {
       [sign*width/2,.021,(i<2?-1:1)*length/2]),3));
     this.probe.add(outline);this.update(0);
   }
+  height(x){return bridgeRise(this.segment.grade,this.segment.center[0]+x);}
   update(dt){
     if(!this.active||!this.routes.length)return;
     this.elapsed+=dt;
@@ -50,7 +52,7 @@ export class JunctionPreview {
     const a=samples[i-1],b=samples[i],t=(distance-a.distance)/(b.distance-a.distance);
     const interpolate=(from,to)=>from.map((n,k)=>T.MathUtils.lerp(n,to[k],t));
     const [x,z]=interpolate(a.point,b.point),[dx,dz]=interpolate(a.direction,b.direction);
-    this.probe.position.set(x,0,z);this.probe.rotation.y=Math.atan2(dx,dz);
+    this.probe.position.set(x,this.height(x),z);this.probe.rotation.y=Math.atan2(dx,dz);
     Object.assign(this.active,{turn:route.kind,distance});
   }
 }

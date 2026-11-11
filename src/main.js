@@ -9,7 +9,9 @@ import { CityAOPass } from './ambient-occlusion.js';
 import { City, createDemo, footprintBounds, gridLine } from './core.js';
 import { CELL, BY_ID, snapStep } from './catalog.js';
 import { legacySnap } from './space.js';
-import { PROTOTYPE_RADIUS, navigableSpan, riverBanks } from './river.js';
+import { PROTOTYPE_RADIUS, WATER_Y, navigableSpan, riverBanks } from './river.js';
+import { bridgeRise, buildBridges, REQUIRED_UNDERSIDE } from './bridges.js';
+import { ROAD_PROFILES, hasTraffic } from './road-network.js';
 import { placementOf, usesParcel } from './parcel.js';
 import { ParcelEditor } from './parcel-editor.js';
 import { RoadEditor } from './road-editor.js';
@@ -111,6 +113,7 @@ class App {
     const river=this.baseline?.id==='T04'?{
       waterY:this.environment.water.position.y,quaySections:this.city.waterfront.length,radius:PROTOTYPE_RADIUS,
       sections:[-55,0,35].map(z=>({z,banks:riverBanks(z,this.city.terrain),navigable:navigableSpan(z,this.city.terrain,PROTOTYPE_RADIUS)})),
+      requiredUnderside:REQUIRED_UNDERSIDE,bridges:this.city.roadNetwork.bridges.crossings,
       reaches:this.world.traffic.reaches,boats:this.world.traffic.boats.map(({mesh})=>mesh.position.toArray()),
     }:undefined;
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
@@ -124,9 +127,9 @@ class App {
   bind(){
     window.addEventListener('resize',()=>{this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();this.renderer.setSize(innerWidth,innerHeight);this.composer.setSize(innerWidth,innerHeight);});
     this.canvas.addEventListener('contextmenu',e=>e.preventDefault());
-    this.canvas.addEventListener('pointermove',e=>{this.updatePointer(e);if(this.drawing&&this.cursor){const cell=[this.cursor.x,this.cursor.z];this.dragCells.push(...gridLine(this.lastCell,cell));this.lastCell=cell;}if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else if(this.roadEditor.active&&this.cursor)this.roadEditor.pointer(...this.roadPointer());else this.preview();});
+    this.canvas.addEventListener('pointermove',e=>{this.updatePointer(e);this.extendStroke();if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else if(this.roadEditor.active&&this.cursor)this.roadEditor.pointer(...this.roadPointer());else this.preview();});
     this.canvas.addEventListener('pointerdown',e=>{if(e.button!==0||this.ui.modalOpen||this.replacing)return;this.updatePointer(e);this.pointerDown={x:e.clientX,y:e.clientY};if(this.buildType&&['road','bridge','path','tree'].includes(this.buildType)&&!this.moving&&this.cursor){this.drawing=true;this.dragCells=[[this.cursor.x,this.cursor.z]];this.lastCell=this.dragCells[0];this.canvas.setPointerCapture(e.pointerId);}});
-    this.canvas.addEventListener('pointerup',e=>{if(e.button!==0)return;if(this.replacing){this.drawing=false;this.dragCells=[];this.pointerDown=null;return;}this.updatePointer(e);if(this.drawing){this.drawing=false;const painted=this.city.paint(this.buildType,this.dragCells);if(painted)this.changed();else this.ui.toast('没有可放置的位置，请检查占地或切换桥梁',true);this.dragCells=[];this.pointerDown=null;return;}if(!this.pointerDown)return;const distance=Math.hypot(e.clientX-this.pointerDown.x,e.clientY-this.pointerDown.y);this.pointerDown=null;if(distance<7)this.click();});
+    this.canvas.addEventListener('pointerup',e=>{if(e.button!==0)return;if(this.replacing){this.drawing=false;this.dragCells=[];this.pointerDown=null;return;}this.updatePointer(e);if(this.drawing){this.extendStroke();this.drawing=false;const painted=this.city.paint(this.buildType,this.dragCells);if(painted)this.changed();else this.ui.toast('没有可放置的位置，请检查占地或切换桥梁',true);this.world.clearPreview();this.dragCells=[];this.pointerDown=null;return;}if(!this.pointerDown)return;const distance=Math.hypot(e.clientX-this.pointerDown.x,e.clientY-this.pointerDown.y);this.pointerDown=null;if(distance<7)this.click();});
     this.canvas.addEventListener('pointercancel',()=>{this.drawing=false;this.dragCells=[];this.pointerDown=null;});
     this.canvas.addEventListener('pointerleave',()=>{if(!this.drawing){if(this.roadEditor.active)this.roadEditor.render();else if(!this.editor.active)this.world.clearPreview();this.cursor=null;}});
     this.canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';this.updatePointer(e);if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else this.preview();});
@@ -136,6 +139,12 @@ class App {
     this.controls.addEventListener('start',()=>{this.follow=false;});this.controls.addEventListener('end',()=>this.scheduleSave());
     this.autosaveInterval=setInterval(()=>{if(!document.hidden)this.persist();},45000);
   }
+  extendStroke(){
+    if(!this.drawing||!this.cursor)return;
+    const cell=[this.cursor.x,this.cursor.z];
+    if(cell[0]===this.lastCell[0]&&cell[1]===this.lastCell[1])return;
+    this.dragCells.push(...gridLine(this.lastCell,cell).slice(1));this.lastCell=cell;
+  }
   updatePointer(event){const r=this.canvas.getBoundingClientRect();this.pointer.set((event.clientX-r.left)/r.width*2-1,-(event.clientY-r.top)/r.height*2+1);this.raycaster.setFromCamera(this.pointer,this.camera);if(this.raycaster.ray.intersectPlane(this.plane,this.point)){const step=snapStep(this.buildType);this.cursor={x:legacySnap(this.point.x,step),z:legacySnap(this.point.z,step)};}else this.cursor=null;}
   roadPointer(){
     const hit=this.raycaster.intersectObjects(this.world.pickables.filter(o=>o.userData.alignment),true)[0];
@@ -143,7 +152,35 @@ class App {
     return [p.x,p.z];
   }
   candidate(){return this.cursor&&this.buildType?{id:-1,type:this.buildType,x:this.cursor.x,z:this.cursor.z,rotation:this.rotation,color:this.buildColor,...(this.moving&&this.city.entities.get(this.moving)?.lot?{lot:this.city.entities.get(this.moving).lot}:{})}:null;}
-  preview(){if(this.editor.active){this.editor.render();return;}if(this.roadEditor.active){this.roadEditor.render();return;}const e=this.candidate();if(e)this.world.showPreview(e,!this.city.canPlace(e,this.moving));}
+  preview(){
+    if(this.editor.active){this.editor.render();return;}
+    if(this.roadEditor.active){this.roadEditor.render();return;}
+    const e=this.candidate();
+    if(!e)return;
+    const error=this.city.canPlace(e,this.moving);
+    if(e.type==='bridge')this.previewBridge(e,error);
+    else this.world.showPreview(e,!error);
+  }
+  previewBridge(entity,placementError){
+    const placements=this.drawing?this.city.paintPlan('bridge',this.dragCells):placementError?[]:[{...entity,id:this.moving??entity.id}];
+    if(!placements.length){this.world.showPreview(entity,false);this.ui.hint(placementError??'没有可放置的位置');return;}
+    const grid=[...this.city.entities.values()].filter(e=>e.id!==this.moving&&!e.alignment&&hasTraffic(e.type)).concat(placements);
+    const {vehicleY,bedY}=ROAD_PROFILES.road;
+    const previous=this.city.roadNetwork;
+    const {grades,crossings:plans}=buildBridges(grid,previous.alignmentMasks,this.city.terrain,vehicleY);
+    const ids=new Set(placements.map(e=>e.id));
+    const crossings=plans.filter(({deckIds,approachIds,passable})=>deckIds.some(id=>ids.has(id)||!passable&&previous.bridges.byTile.get(id)?.passable)||approachIds.some(id=>ids.has(id)));
+    const issue=crossings.find(bridge=>!bridge.passable)?.reason;
+    const hints={approach:'净空不足 · 需要连续跨河桥面，两岸各接 3 格直线引桥',channel:'净空不足 · 桥孔横向空间不足',height:'净空不足 · 桥底低于船体安全高度'};
+    for(const bridge of crossings)for(const id of [...bridge.deckIds,...bridge.approachIds])ids.add(id);
+    const profiles=grid.filter(e=>ids.has(e.id)).map(e=>[-CELL/2,CELL/2].map(offset=>{
+      const x=e.x*CELL+offset;
+      return {point:[x,bedY+bridgeRise(grades.get(e.id),x),e.z*CELL],direction:[1,0]};
+    }));
+    this.world.showRoadPreviews(profiles,!!issue);
+    this.ui.hint(issue?hints[issue]:crossings.length?`桥下净空 ${(Math.min(...crossings.map(bridge=>bridge.bottomY))-WATER_Y).toFixed(2)} 米 · 可容纳原型船`:
+      '按住左键跨河绘制 · 两岸各接 3 格直线引桥 · Esc 取消');
+  }
   startBuild(type,color=0,legacy=false){
     if(!legacy&&usesParcel(type)){
       const parcel=!this.selected&&this.city.parcels.get(this.selectedParcel);
@@ -194,7 +231,7 @@ class App {
   setEnvironment(values){if(this.replacing)return;Object.assign(this.city.environment,values);if(values.quality)this.setQuality();this.ui.refresh();this.scheduleSave();}
   setQuality(){const high=this.city.environment.quality==='high';this.renderer.setPixelRatio(Math.min(devicePixelRatio,high?1.5:1));this.composer.setPixelRatio(this.renderer.getPixelRatio());this.bloom.enabled=high;this.ao.enabled=high;this.environment.sun.castShadow=true;}
   cameraState(){return {position:this.camera.position.toArray(),target:this.controls.target.toArray()};}
-  restoreCamera(c){if(!c||![c.position,c.target].every(v=>Array.isArray(v)&&v.length===3&&v.every(n=>Number.isFinite(n)&&Math.abs(n)<50000)))return;this.camera.position.fromArray(c.position);this.controls.target.fromArray(c.target);this.controls.update();}
+  restoreCamera(c){if(!c||![c.position,c.target].every(v=>Array.isArray(v)&&v.length===3&&v.every(n=>Number.isFinite(n)&&Math.abs(n)<50000)))return;this.camera.position.fromArray(c.position);this.controls.target.fromArray(c.target);this.controls.update();this.camera.updateMatrixWorld();}
   scheduleSave(){clearTimeout(this.saveTimer);this.ui.saved('正在记下你的灵感…');this.saveTimer=setTimeout(()=>this.persist(),1100);}
   async persist(id){
     if(this.replacing)return false;clearTimeout(this.saveTimer);

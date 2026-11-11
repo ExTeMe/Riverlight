@@ -189,7 +189,7 @@ test('road segments expose shared ports, usable profiles and matching bridge gra
   const network=city.roadNetwork,segment=network.segments.get(corner.id),bridge=network.segments.get(east.id);
   const seam=segment.ports.find(port=>port.neighborId===east.id),back=bridge.ports.find(port=>port.neighborId===corner.id);
   assert.deepEqual(seam.point,back.point);
-  assert.deepEqual(seam.point,[-62,.245,0]);
+  assert.deepEqual(seam.point,[-62,.04,0]);
   assert.equal(seam.walkY,back.walkY);
   assert.deepEqual(segment.centerlines[0][0],seam.point);
   assert.deepEqual(segment.centerlines[0].at(-1),segment.ports.find(port=>port.neighborId===south.id).point);

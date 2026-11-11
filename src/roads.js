@@ -1,6 +1,72 @@
 import * as T from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { ROAD_PROFILES, gridRoadSurface, roadCorner } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
+import { bridgeRise, DECK_DEPTH, PIER_BASE } from './bridges.js';
+
+function tileSurface(polygons,point){
+  const vertices=[];
+  for(const [first,...rest] of polygons)for(let i=1;i<rest.length;i++){
+    vertices.push(...point(...first),...point(...rest[i]),...point(...rest[i-1]));
+  }
+  if(!vertices.length)return null;
+  const buffer=new T.BufferGeometry();
+  buffer.setAttribute('position',new T.Float32BufferAttribute(vertices,3));buffer.computeVertexNormals();
+  return buffer;
+}
+
+export function createBridgeRoad(segment,rotation,material){
+  const {kind,center:[x,,z],profile:{width,carriageway,vehicleY,walkY},surface,grade,bridge,mask}=segment;
+  const group=new T.Group(),batches=new Map(),paving=material('#c9c9bd','ground'),structure=material('#9ca3a0','ground');
+  const rise=px=>bridgeRise(grade,px);
+  const add=(geometry,mat)=>{
+    if(!batches.has(mat))batches.set(mat,[]);
+    batches.get(mat).push(geometry);
+  };
+  const box=(px,pz,w,d,bottom,top,mat)=>{
+    const indexed=new T.BoxGeometry(w,1,d),geometry=indexed.toNonIndexed(),position=geometry.attributes.position;
+    indexed.dispose();geometry.deleteAttribute('uv');
+    for(let i=0;i<position.count;i++){
+      const u=px+position.getX(i),y=position.getY(i)<0?bottom(u):top(u);
+      position.setXYZ(i,u,y,pz+position.getZ(i));
+    }
+    geometry.computeVertexNormals();add(geometry,mat);
+  };
+  const slabTop=u=>vehicleY+rise(u)-.002;
+  const slabBottom=bridge?()=>bridge.bottomY:()=>kind==='bridge'?vehicleY-DECK_DEPTH:-.08;
+  box(x,z,width,width,slabBottom,slabTop,structure);
+  for(const [polygons,height,mat] of [[surface.asphalt,vehicleY,material('#677378','road')],
+    [surface.pavement,walkY,paving],[surface.paint,vehicleY+.006,material('#e8dfbc','road')]]){
+    const geometry=tileSurface(polygons,(u,v)=>[x+u,height+rise(x+u),z+v]);
+    if(geometry)add(geometry,mat);
+  }
+  const alongX=mask?!!(mask&3):rotation%2===0;
+  if(mask===3||mask===12){
+    const curb=(width-carriageway)/2;
+    for(const side of [-1,1]){
+      const offset=side*(width-curb)/2;
+      box(x+(alongX?0:offset),z+(alongX?offset:0),alongX?width:curb,alongX?curb:width,slabTop,u=>walkY+rise(u)-.002,paving);
+    }
+  }
+  if(kind==='bridge'){
+    for(const side of [-1,1]){
+      const exit=alongX?(side>0?4:8):(side>0?1:2);
+      if(mask&exit)continue;
+      const offset=side*(width/2-.06),railX=alongX?x:x+offset,railZ=alongX?z+offset:z;
+      const height=u=>walkY+rise(u);
+      box(railX,railZ,alongX?width:.12,alongX?.12:width,u=>height(u)+.8,u=>height(u)+.92,paving);
+      for(const post of [-1.6,0,1.6])box(railX+(alongX?post:0),railZ+(alongX?0:post),.09,.09,height,u=>height(u)+.8,paving);
+    }
+    const pier=bridge?.piers.find(p=>p.x===x&&p.z===z);
+    if(pier)box(x,z,pier.width,pier.width,()=>PIER_BASE,slabBottom,structure);
+  }
+  for(const [mat,parts] of batches){
+    const geometry=parts.length===1?parts[0]:mergeGeometries(parts);
+    if(parts.length>1)for(const part of parts)part.dispose();
+    const mesh=new T.Mesh(geometry,mat);mesh.receiveShadow=true;mesh.castShadow=mat===structure;group.add(mesh);
+  }
+  return group;
+}
 
 export function createAlignmentMesh(geometry,ports,material){
   const group=new T.Group(),asphalt=[],paving=[],marks=[];
@@ -52,12 +118,8 @@ export function createRoad(type,mask,{Builder,material}){
   const corner=!bridge&&roadCorner(mask),layout=gridRoadSurface(type,mask);
   if(!corner)b.box(width,.14,width,0,y-.07,0,paving);
   for(const [polygons,height,m] of [[layout.asphalt,vehicleY,asphalt],[layout.pavement,walkY,paving],[layout.paint,vehicleY+.006,paint]]){
-    const vertices=[];
-    for(const [first,...rest] of polygons)for(let i=1;i<rest.length;i++){
-      for(const [x,z] of [first,rest[i],rest[i-1]])vertices.push(x,height,z);
-    }
-    if(!vertices.length)continue;
-    const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(vertices,3));buffer.computeVertexNormals();b.geo(buffer,m);
+    const buffer=tileSurface(polygons,(x,z)=>[x,height,z]);
+    if(buffer)b.geo(buffer,m);
   }
   if(bridge){const horizontal=mask!==12;for(const side of [-1,1]){
       b.box(horizontal?4:.12,.12,horizontal?.12:4,horizontal?0:side*1.8,y+1,horizontal?side*1.8:0,paving);

@@ -59,7 +59,7 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await observe('rain-stopped', 15);
         expect(samples.at(-1).stats.environment.weather).toBe('clear');
       } else {
-        // T04 observes movement in the two reaches around its unverified bridge.
+        // T04 observes the bridge deck and the two independent boat reaches.
         await observe('continuous', id === 'T04' ? 120 : 15);
       }
       // Centers of the target road cells in the fixed 1280×800 near camera.
@@ -107,6 +107,10 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await page.keyboard.press('h');
       }
       if (id === 'T04') {
+        await page.locator('[data-view="walk"]').click();
+        await page.keyboard.press('h');
+        await observe('bridge-approaches', 4);
+        await page.keyboard.press('h');
         await page.locator('[data-view="river"]').click();
         await page.locator('[data-weather-id="day"]').click();
         await page.keyboard.press('h');

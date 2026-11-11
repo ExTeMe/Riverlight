@@ -1,15 +1,16 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
-import { GROUND_Y, QUAY, WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, navigableSpan, sailingCenter, sailingReaches, quayCenter, riverSections, waterOverlaps } from './river.js';
+import { GROUND_Y, QUAY, WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, navigableSpan, sailingCenter, sailingReaches, quayCenter, riverSections } from './river.js';
 import { footprintOutline, parcelOutline, placementOf } from './parcel.js';
-import { footprintBounds, key } from './core.js';
+import { key } from './core.js';
 import { boxOutline, outlineBounds, transformOutline } from './outline.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
 import { hasTraffic } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
-import { createAlignmentMesh } from './roads.js';
+import { createAlignmentMesh, createBridgeRoad } from './roads.js';
+import { bridgeRise } from './bridges.js';
 import { JunctionPreview } from './junction-preview.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
@@ -157,6 +158,11 @@ export class World {
         for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
         c.buildings.add(model);continue;
       }
+      if(road?.grade||e.type==='bridge'){
+        const model=createBridgeRoad(road,e.rotation,material);
+        for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;mesh.castShadow&&=detail;}
+        c.buildings.add(model);continue;
+      }
       const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),p=placementOf(e);
       if(road){
         p.x=road.center[0];p.z=road.center[2];
@@ -192,7 +198,8 @@ export class World {
       updateLines(this.selection,alignmentLines(road.geometry.samples,[-road.profile.width/2,road.profile.width/2]));
       this.selection.visible=true;return;
     }
-    const outline=footprintOutline(e),height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3;
+    const road=this.city.roadNetwork.segments.get(id),outline=footprintOutline(e);
+    const height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3+bridgeRise(road?.grade,road?.center[0]);
     const lines=[];
     for(let i=0;i<outline.length;i++){
       const [x,z]=outline[i],[u,v]=outline[(i+1)%outline.length];
@@ -213,13 +220,20 @@ export class World {
     }
   }
   showRoadPreview(geometry,error){
+    this.showRoadPreviews(geometry?.samples?[geometry.samples]:[],error);
+  }
+  showRoadPreviews(profiles,error){
     this.clearPreview();
-    if(!geometry?.samples)return;
-    const points=[],{samples}=geometry;
+    if(!profiles.length)return;
+    const points=[],lines=[];
     const edge=(sample,side)=>offsetRoadSample(sample,side*CELL/2,.1);
-    for(let i=1;i<samples.length;i++){
-      const a=samples[i-1],b=samples[i];
-      quad(points,edge(a,-1),edge(b,-1),edge(b,1),edge(a,1));
+    for(const samples of profiles){
+      for(let i=1;i<samples.length;i++){
+        const a=samples[i-1],b=samples[i];
+        quad(points,edge(a,-1),edge(b,-1),edge(b,1),edge(a,1));
+      }
+      lines.push(...alignmentLines(samples,[-CELL/2,0,CELL/2]));
+      for(const sample of [samples[0],samples.at(-1)])lines.push(...edge(sample,-1),...edge(sample,1));
     }
     const buffer=new T.BufferGeometry();buffer.setAttribute('position',new T.Float32BufferAttribute(points,3));
     const tint=new T.MeshBasicMaterial({color:error?'#cb6856':'#5a9f79',transparent:true,opacity:.55,depthWrite:false,depthTest:false});
@@ -227,8 +241,6 @@ export class World {
     this.scene.add(this.preview);
     this.previewFootprint.material.color.set(error?'#f3a289':'#daffe0');
     this.previewFootprint.material.depthTest=false;this.previewFootprint.renderOrder=5;
-    const lines=alignmentLines(samples,[-CELL/2,0,CELL/2]);
-    for(const sample of [samples[0],samples.at(-1)])lines.push(...edge(sample,-1),...edge(sample,1));
     updateLines(this.previewFootprint,lines);
     this.previewFootprint.visible=true;
   }
@@ -277,16 +289,13 @@ class Traffic {
     this.network=this.city.roadNetwork;
     const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&!s.geometry&&this.gridPorts(s).length);
     for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
-      const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);this.scene.add(mesh);
+      const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);
+      mesh.rotation.order='YXZ';this.scene.add(mesh);
       this.cars.push({mesh,from:e,to:this.network.segments.get(this.gridPorts(e)[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
     }
     const paths=[...this.network.segments.values()].some(s=>s.kind==='path');
     this.people.rebuild(this.city);
-    const obstacles=[];
-    for(const entity of this.city.entities.values())if(entity.type==='bridge'){
-      const bounds=footprintBounds(entity);
-      if(waterOverlaps(footprintOutline(entity),bounds,this.city.terrain))obstacles.push(bounds);
-    }
+    const obstacles=this.network.bridges.crossings.map(({bounds})=>bounds);
     this.reaches=sailingReaches(this.city.worldBounds(),obstacles);
     if(paths)for(const [i,[from,to]] of this.reaches.slice(0,3).entries()){
       const mesh=boat(),vessel={mesh,center:(from+to)/2,range:(to-from)/2,phase:i%2===0?.85:-.65};
@@ -302,7 +311,7 @@ class Traffic {
     const direction=Math.cos(t)>=0?1:-1,next=sailingCenter(z+direction,this.city.terrain,PROTOTYPE_RADIUS)??x;
     const target=Math.atan2(next-x,direction),delta=T.MathUtils.euclideanModulo(target-mesh.rotation.y+Math.PI,2*Math.PI)-Math.PI;
     mesh.rotation.y+=dt?T.MathUtils.clamp(delta,-dt*1.2,dt*1.2):delta;
-    mesh.position.set(x,WATER_Y+PROTOTYPE_HULL.originAboveWater+Math.sin(time+phase)*.035,z);
+    mesh.position.set(x,WATER_Y+PROTOTYPE_HULL.originAboveWater+Math.sin(time+phase)*PROTOTYPE_HULL.bob,z);
   }
   update(dt,time,focus,hideCars){
     for(const c of this.cars){
@@ -312,8 +321,11 @@ class Traffic {
       const [bx,,bz]=c.from.center,[tx,,tz]=c.to.center,[px,,pz]=prev?.center??[2*bx-tx,0,2*bz-tz];
       const ax=(px+bx)/2,az=(pz+bz)/2,cx=(bx+tx)/2,cz=(bz+tz)/2;
       const vx=2*u*(bx-ax)+2*t*(cx-bx),vz=2*u*(bz-az)+2*t*(cz-bz),len=Math.hypot(vx,vz)||1,dx=vx/len,dz=vz/len;
-      const y=c.from.profile.vehicleY,py=prev?.profile.vehicleY??y,ty=c.to.profile.vehicleY,lane=c.from.profile.lanes[1].offset;
-      c.mesh.position.set(u*u*ax+2*u*t*bx+t*t*cx-dz*lane,u*u*(py+y)/2+2*u*t*y+t*t*(y+ty)/2,u*u*az+2*u*t*bz+t*t*cz+dx*lane);
+      const y=c.from.profile.vehicleY,lane=c.from.profile.lanes[1].offset;
+      const x=u*u*ax+2*u*t*bx+t*t*cx-dz*lane,z=u*u*az+2*u*t*bz+t*t*cz+dx*lane;
+      c.mesh.position.set(x,y+bridgeRise(c.from.grade,x),z);
+      const grade=c.from.grade??c.to.grade??prev?.grade;
+      c.mesh.rotation.x=-Math.atan2(bridgeRise(grade,x+dx)-bridgeRise(grade,x-dx),2);
       const target=Math.atan2(dx,dz),delta=T.MathUtils.euclideanModulo(target-c.mesh.rotation.y+Math.PI,Math.PI*2)-Math.PI;c.mesh.rotation.y+=delta*Math.min(1,dt*9);
       c.mesh.visible=!hideCars&&c.mesh.position.distanceTo(focus)<200;
     }

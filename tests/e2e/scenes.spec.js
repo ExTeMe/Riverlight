@@ -374,6 +374,9 @@ test('T04 renders shore and navigable spans and keeps moving hulls outside the b
   const {river}=await report();
   expect(river.waterY).toBe(-.4);
   expect(river.quaySections).toBeGreaterThan(0);
+  expect(river.bridges).toHaveLength(1);
+  expect(river.bridges[0]).toMatchObject({passable:true,bottomY:1.23});
+  expect(river.bridges[0].bottomY).toBeGreaterThan(river.requiredUnderside);
   expect(river.reaches).toHaveLength(2);
   expect(river.boats).toHaveLength(2);
   const widths=river.sections.map(({banks:[west,east]})=>east-west);
@@ -386,6 +389,42 @@ test('T04 renders shore and navigable spans and keeps moving hulls outside the b
   await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
   const later=(await report()).river.boats;
   expect(later.some((point,i)=>Math.abs(point[2]-river.boats[i][2])>.02)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('T04 bridge drag previews insufficient clearance, then raises the connected crossing',async({page},info)=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  const width=1280,height=900;
+  await page.setViewportSize({width,height});
+  await page.goto('/?scene=T04');await ready(page);
+  await page.getByRole('button',{name:'步行连接',exact:true}).click();
+  await page.locator('[data-category="road"]').click();
+  await page.getByRole('button',{name:'建造跨河桥梁',exact:true}).click();
+  const {position,target}=createScene('T04').cameras.walk,camera=new PerspectiveCamera(39,width/height,.5,4500);
+  camera.position.fromArray(position);camera.lookAt(...target);camera.updateMatrixWorld();
+  const move=async x=>{
+    const point=new Vector3(x,0,8).project(camera);
+    await page.mouse.move(width/2*(1+point.x),height/2*(1-point.y));
+  };
+  await move(0);
+  await expect(page.locator('#mode-hint')).toContainText('净空不足');
+  await page.screenshot({path:info.outputPath('bridge-clearance-warning.png')});
+  await move(36);
+  await expect(page.locator('#mode-hint')).toContainText('按住左键跨河绘制');
+  await page.mouse.down();await move(0);
+  await expect(page.locator('#mode-hint')).toContainText('净空不足');
+  await move(-28);
+  await expect(page.locator('#mode-hint')).toHaveText('桥下净空 1.63 米 · 可容纳原型船');
+  await page.screenshot({path:info.outputPath('bridge-clearance-preview.png')});
+  await page.mouse.up();
+  await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().entities)).toBe(77);
+  await page.keyboard.press('Escape');
+  await page.getByText('观察与记录',{exact:true}).click();
+  const snapshot=async()=>JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}))).toString());
+  const {river}=await snapshot();
+  expect(river.bridges.find(bridge=>bridge.bounds.minZ===6)).toMatchObject({passable:true,bottomY:1.23});
+  await page.keyboard.press('Control+z');
+  expect((await snapshot()).river.bridges).toHaveLength(1);
   expect(errors).toEqual([]);
 });
 
