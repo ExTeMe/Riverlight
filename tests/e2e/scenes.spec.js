@@ -360,6 +360,35 @@ test('T02 and T03 show road markings, allowed vehicle movements and topology cha
   expect(errors).toEqual([]);
 });
 
+test('T04 renders shore and navigable spans and keeps moving hulls outside the bridge zone',async({page},info)=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T04');await ready(page);
+  await page.getByRole('button',{name:'河岸与航域',exact:true}).click();
+  await page.getByRole('button',{name:'白天',exact:true}).click();
+  await page.keyboard.press('h');
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  await page.screenshot({path:info.outputPath('t04-banks-and-reaches.png')});
+  await page.keyboard.press('h');
+  await page.getByText('观察与记录',{exact:true}).click();
+  const report=async()=>JSON.parse((await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}))).toString());
+  const {river}=await report();
+  expect(river.waterY).toBe(-.4);
+  expect(river.quaySections).toBeGreaterThan(0);
+  expect(river.reaches).toHaveLength(2);
+  expect(river.boats).toHaveLength(2);
+  const widths=river.sections.map(({banks:[west,east]})=>east-west);
+  expect(Math.max(...widths)-Math.min(...widths)).toBeGreaterThan(5);
+  for(const [i,[,y,z]] of river.boats.entries()){
+    expect(z).toBeGreaterThanOrEqual(river.reaches[i][0]);expect(z).toBeLessThanOrEqual(river.reaches[i][1]);
+    expect(Math.abs(z)).toBeGreaterThan(2+river.radius-1e-8);
+    expect(y-river.waterY).toBeGreaterThanOrEqual(0);expect(y-river.waterY).toBeLessThan(.075);
+  }
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  const later=(await report()).river.boats;
+  expect(later.some((point,i)=>Math.abs(point[2]-river.boats[i][2])>.02)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
 test('T05 connects authored rotated entrances to the quay and rebuilds after a path edit',async({page},info)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));

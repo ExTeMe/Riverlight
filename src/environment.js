@@ -2,10 +2,19 @@ import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 import { getTemplate, updateMaterials } from './models.js';
 import { CELL, entityDimensions } from './catalog.js';
-import { WATER_Y } from './space.js';
+import { WATER_Y, QUAY, quayCenter, riverBanks, riverSections } from './river.js';
 import { placementAnchor, placementOf } from './parcel.js';
-import { riverCenter, riverWidth } from './core.js';
 import { Puddles } from './puddles.js';
+
+export function riverWaterGeometry(terrain,center=0){
+  const positions=[];
+  for(const {from,to,a:[west,east],b:[nextWest,nextEast]} of riverSections(center-4000,center+4000,terrain)){
+    positions.push(west,-from,0,nextWest,-to,0,east,-from,0,east,-from,0,nextWest,-to,0,nextEast,-to,0);
+  }
+  const geometry=new T.BufferGeometry();
+  geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();
+  return geometry;
+}
 
 export const PRESETS = [
   {id:'riverside',name:'河畔晴日',caption:'微风 · 日光 · 慢生活',hour:15.5,season:'summer',weather:'clear',wind:.35,color:'#c9ddc2'},
@@ -44,7 +53,8 @@ export class Environment {
     scene.fog=new T.FogExp2('#dce0cc',.0016);
     this.skyUniforms={topColor:{value:new T.Color('#86b6c2')},bottomColor:{value:new T.Color('#e7e6d3')},sunDirection:{value:new T.Vector3()},uTime:{value:0},clouds:{value:.2},night:{value:0}};
     this.sky=new T.Mesh(new T.SphereGeometry(2200,24,16),new T.ShaderMaterial({vertexShader:skyVertex,fragmentShader:skyFragment,uniforms:this.skyUniforms,side:T.BackSide,depthWrite:false}));scene.add(this.sky);
-    this.water=new Water(new T.PlaneGeometry(8000,8000),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=WATER_Y;scene.add(this.water);
+    this.water=new Water(riverWaterGeometry(city.terrain),{textureWidth:512,textureHeight:512,waterNormals:normalTexture(),sunDirection:new T.Vector3(.3,1,.4),sunColor:0xfff5d7,waterColor:0x528f82,distortionScale:1.4,fog:true,alpha:1});this.water.rotation.x=-Math.PI/2;this.water.position.y=WATER_Y;scene.add(this.water);
+    this.waterTerrain=city.terrain;this.waterCenter=0;
     this.particles={};
     for(const kind of ['rain','snow']){const count=kind==='rain'?2500:1500;const positions=new Float32Array(count*3);for(let i=0;i<count;i++){positions[i*3]=(Math.random()-.5)*210;positions[i*3+1]=Math.random()*100;positions[i*3+2]=(Math.random()-.5)*210;}const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(positions,3));const m=new T.PointsMaterial({color:kind==='rain'?'#c9dcdd':'#fff9e9',size:kind==='rain'?1.6:.55,map:spriteTexture(kind),transparent:true,opacity:.7,depthWrite:false,sizeAttenuation:true});const mesh=new T.Points(g,m);mesh.frustumCulled=false;mesh.visible=false;scene.add(mesh);this.particles[kind]={mesh,positions};}
     const leafGeo=new T.PlaneGeometry(.28,.15);this.leaves=new T.InstancedMesh(leafGeo,new T.MeshStandardMaterial({color:'#c79145',side:T.DoubleSide,roughness:1}),100);this.leaves.instanceMatrix.setUsage(T.DynamicDrawUsage);this.leaves.frustumCulled=false;scene.add(this.leaves);
@@ -75,10 +85,15 @@ export class Environment {
         }else addLight(new T.Vector3((e.x+(w-1)/2)*CELL,3.2,(e.z+d-1)*CELL));
       }
     }
-    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])addLight(new T.Vector3(riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+2),2.8,z));
+    for(let z=-96;z<=96;z+=24)for(const side of [-1,1])addLight(new T.Vector3(quayCenter(z,side,this.city.terrain)[0]+side*QUAY.width,2.8,z));
   }
   update(dt,camera,focus){
-    this.time+=dt;const e=this.city.environment;this.water.position.x=focus.x;this.water.position.z=focus.z;
+    this.time+=dt;const e=this.city.environment;
+    const waterCenter=Math.round(focus.z/512)*512;
+    if(this.waterTerrain!==this.city.terrain||this.waterCenter!==waterCenter){
+      this.water.geometry.dispose();this.water.geometry=riverWaterGeometry(this.city.terrain,waterCenter);
+      this.waterTerrain=this.city.terrain;this.waterCenter=waterCenter;
+    }
     if(e.playing)e.hour=(e.hour+dt*.018*e.speed)%24;
     const hourDelta=T.MathUtils.euclideanModulo(e.hour-this.visualHour+12,24)-12;this.visualHour=T.MathUtils.euclideanModulo(this.visualHour+hourDelta*(1-Math.exp(-dt*1.8)),24);
     const h=this.visualHour,daylight=T.MathUtils.smoothstep(Math.sin((h-6)/24*Math.PI*2),-.12,.35),night=1-daylight;
@@ -114,7 +129,9 @@ export class Environment {
     this.leaves.visible=e.season==='autumn'&&this.leafSources.length>0;
     if(this.leaves.visible)for(let i=0;i<100;i++){const src=this.leafSources[i%this.leafSources.length],phase=(this.time*.22+i*.613)%1;pos.set(src.x+Math.sin(i+this.time*.7)*1.7+phase*e.wind*3,4.4*(1-phase)+.05,src.z+Math.cos(i+this.time*.6));q.setFromEuler(new T.Euler(this.time+i,phase*5,i));matrix.compose(pos,q,scale.setScalar(1));this.leaves.setMatrixAt(i,matrix);}this.leaves.instanceMatrix.needsUpdate=true;
     this.ripples.visible=storm;
-    if(storm)for(let i=0;i<85;i++){const phase=(this.time*.9+i*.347)%1;const z=focus.z+Math.sin(i*71.1)*70,x=Math.sin(i*23.7)*(riverWidth(z,this.city.terrain)-2)+riverCenter(z,this.city.terrain);pos.set(x,-.39,z);q.setFromEuler(new T.Euler(-Math.PI/2,0,0));matrix.compose(pos,q,scale.setScalar(phase*.5));this.ripples.setMatrixAt(i,matrix);}this.ripples.instanceMatrix.needsUpdate=true;
+    if(storm)for(let i=0;i<85;i++){const phase=(this.time*.9+i*.347)%1,z=focus.z+Math.sin(i*71.1)*70;
+      const [west,east]=riverBanks(z,this.city.terrain),x=T.MathUtils.lerp(west+2,east-2,(Math.sin(i*23.7)+1)/2);
+      pos.set(x,WATER_Y+.01,z);q.setFromEuler(new T.Euler(-Math.PI/2,0,0));matrix.compose(pos,q,scale.setScalar(phase*.5));this.ripples.setMatrixAt(i,matrix);}this.ripples.instanceMatrix.needsUpdate=true;
     const envKey=`${Math.floor(h/2)}-${e.weather}`;
     if(this.lastEnvHour!==envKey){this.lastEnvHour=envKey;const result=this.pmrem.fromScene(this.envScene,.04,.01,10);this.scene.environment=result.texture;this.envTexture?.dispose();this.envTexture=result;}
   }

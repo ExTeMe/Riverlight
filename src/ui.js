@@ -49,7 +49,7 @@ export class UI {
       this.root.querySelector('[data-action=environment]').classList.remove('active');
       const panel=document.createElement('aside');panel.className='scene-panel glass';panel.setAttribute('aria-label','场景实验室');
       panel.innerHTML=`<div class="scene-kicker">RIVERLIGHT / ${app.baseline.id}</div><h2>${escape(app.baseline.name)}</h2><p>${escape(app.baseline.caption)}</p>
-        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度'],['alignment','线形'],['ramp','坡道'],['walk','步行连接']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
+        <div class="scene-buttons">${[['near','近景'],['medium','街区'],['far','全景'],['scale','尺度'],['alignment','线形'],['ramp','坡道'],['walk','步行连接'],['river','河岸与航域']].filter(([id])=>app.baseline.cameras[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
         ${app.baseline.junctionViews?`<div class="scene-buttons">${[['tee','T 字路口'],['terminal','断头路'],['junction','十字路口']].filter(([id])=>app.baseline.junctionViews[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
           <div class="scene-buttons" id="junction-controls" hidden><button data-action="junction-vehicle" data-vehicle="car">小车</button><button data-action="junction-vehicle" data-vehicle="bus">公交</button><button data-action="hide-junction">关闭轨迹</button></div><p id="junction-summary" hidden></p>`:''}
         <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>

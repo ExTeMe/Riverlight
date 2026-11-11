@@ -1,34 +1,5 @@
 import { BY_ID, CELL, entityDimensions } from './catalog.js';
-
-export const GROUND_Y = 0;
-export const WATER_Y = -.4;
-export const BANK_STEP = CELL/2;
-export const QUAY = Object.freeze({width:3.4,minZ:-110,maxZ:112,y:.025});
-
-export const riverCenter = (z, terrain = 'meander') => terrain === 'legacy'
-  ? Math.sin(z*.016)*11 + Math.sin(z*.004)*9
-  : Math.sin(z*.025)*23 + Math.sin(z*.009)*10;
-export const riverWidth = (z, terrain = 'meander') => terrain === 'legacy'
-  ? 11.9 : 11.3 + 1.8*Math.sin(z*.033+.6) + 5*Math.exp(-(((z-30)/26)**2));
-
-export function riverBanks(z,terrain) {
-  const centre=riverCenter(z,terrain),width=riverWidth(z,terrain);
-  return [centre-width,centre+width];
-}
-
-export function quayCenter(z,side,terrain){
-  return [riverBanks(z,terrain)[side<0?0:1]+side*QUAY.width/2,QUAY.y,z];
-}
-
-export function terrainSurfaceAt(x, z, terrain) {
-  const water = Math.abs(x-riverCenter(z,terrain)) < riverWidth(z,terrain);
-  return { groundY: water ? null : GROUND_Y, waterY: water ? WATER_Y : null };
-}
-
-// Legacy placement retains its original setback and grid sampling.
-export function waterAt(x, z, terrain) {
-  return Math.abs(x*CELL-riverCenter(z*CELL,terrain)) < riverWidth(z*CELL,terrain)-1.4;
-}
+export { GROUND_Y, WATER_Y, BANK_STEP, QUAY, riverBanks, riverCenter, riverWidth, quayCenter, terrainSurfaceAt, waterAt } from './river.js';
 
 export function legacyFootprintBounds(entity) {
   const [width, depth] = entityDimensions(entity);

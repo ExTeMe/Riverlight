@@ -1,7 +1,7 @@
 import { CELL, BY_ID } from './catalog.js';
 import { footprintOutline, parcelOnLand, placementAnchor, placementOf } from './parcel.js';
 import { boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
-import { BANK_STEP, QUAY, quayCenter, SpatialIndex } from './space.js';
+import { SpatialIndex } from './space.js';
 import { getTemplate } from './models.js';
 import { hasTraffic, roadCarriageway } from './road-network.js';
 
@@ -77,15 +77,13 @@ export function buildWalkNetwork(city){
   };
   const roads=searchNodes([...roadNodes]),paths=searchNodes([...pathNodes]);
   for(const a of pathNodes)connect(a,roads,4.8);
-  const quays=[];
-  if(roadNodes.size||pathNodes.size)for(const side of [-1,1]){
-    let previous;
-    for(let z=QUAY.minZ+BANK_STEP;z<QUAY.maxZ;z+=BANK_STEP){
-      const p=quayCenter(z,side,city.terrain),current=node(...p,'quay');
-      if(previous&&clear(previous,current))link(previous,current);
-      previous=current;quays.push(current);
-      connect(current,roads,2.7);if(z%4===0)connect(current,paths,4);
-    }
+  const quays=new Set();
+  if(roadNodes.size||pathNodes.size)for(const {points} of city.waterfront){
+    const [a,b]=points.map(p=>node(...p,'quay'));
+    link(a,b);quays.add(a);quays.add(b);
+  }
+  for(const current of quays){
+    connect(current,roads,2.7);if(current.z%4===0)connect(current,paths,4);
   }
   const walking=searchNodes([...roadNodes,...pathNodes,...quays].filter(n=>n.edges.size));
   for(const entity of city.entities.values())if(BY_ID[entity.type].floors||publicPlaces.has(entity.type)){

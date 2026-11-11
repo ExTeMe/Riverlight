@@ -9,6 +9,7 @@ import { CityAOPass } from './ambient-occlusion.js';
 import { City, createDemo, footprintBounds, gridLine } from './core.js';
 import { CELL, BY_ID, snapStep } from './catalog.js';
 import { legacySnap } from './space.js';
+import { PROTOTYPE_RADIUS, navigableSpan, riverBanks } from './river.js';
 import { placementOf, usesParcel } from './parcel.js';
 import { ParcelEditor } from './parcel-editor.js';
 import { RoadEditor } from './road-editor.js';
@@ -107,10 +108,15 @@ class App {
         return entity?.pose?[{id:entity.id,type:entity.type,parcel:entity.pose.parcel.id,point:[node.x,node.y,node.z],reachable:byNode.get(node.id)??[]}]:[];
       });
     }
+    const river=this.baseline?.id==='T04'?{
+      waterY:this.environment.water.position.y,quaySections:this.city.waterfront.length,radius:PROTOTYPE_RADIUS,
+      sections:[-55,0,35].map(z=>({z,banks:riverBanks(z,this.city.terrain),navigable:navigableSpan(z,this.city.terrain,PROTOTYPE_RADIUS)})),
+      reaches:this.world.traffic.reaches,boats:this.world.traffic.boats.map(({mesh})=>mesh.position.toArray()),
+    }:undefined;
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
       capturedAt:new Date().toISOString(),scene:this.baseline?{id:this.baseline.id,version:this.baseline.sceneVersion,seed:this.baseline.seed,density:this.baseline.density}:null,
       browser:navigator.userAgent,viewport:[innerWidth,innerHeight],pixelRatio:this.renderer.getPixelRatio(),camera:this.cameraState(),
-      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,boats:this.world.traffic.boats.length,mobility,
+      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,boats:this.world.traffic.boats.length,mobility,river,
       detailedChunks:[...this.world.loaded.values()].filter(chunk=>chunk.detail).length,
       rendererMemory:{...this.renderer.info.memory},method:'最近一帧累计渲染调用（含反射与后处理）；几何/纹理为 WebGL 资源数量，不是字节数',
       frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[],spatial};
@@ -218,7 +224,7 @@ class App {
     const actions={v:'select',b:'road',t:'trees',x:'erase',c:'camera',h:'quiet',home:'home',delete:'delete',backspace:'delete'};
     if(actions[key]){e.preventDefault();this.action(actions[key]);}
     if(key==='r'){if(this.editor.active)this.editor.rotate();else if(this.buildType){this.rotation=(this.rotation+1)%4;this.preview();}else this.action('rotate');}
-    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.world.junctionPreview.clear();this.world.showMobility(false);this.ui.refresh();}
+    if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.selected=null;this.selectedParcel=null;this.world.select(null);this.world.junctionPreview.clear();this.world.showMobility(false);this.world.showRiver(false);this.ui.refresh();}
     if(key===' ')this.action('play');
   }
   async action(action,el){
@@ -272,6 +278,7 @@ class App {
         const view=el.dataset.view,cell=this.baseline.junctionViews?.[view];
         this.follow=false;this.controls.autoRotate=false;this.restoreCamera(this.baseline.cameras[view]);
         this.world.showJunction(cell&&this.city.at(...cell)?.id,'car');this.world.showMobility(view==='walk',this.controls.target);
+        this.world.showRiver(view==='river');
         this.ui.refreshJunction();this.scheduleSave();
       }break;
       case 'scene-weather':{const preset=SCENE_WEATHER.find(p=>p.id===el.dataset.weatherId);if(preset){const {hour,season,weather}=preset;this.setEnvironment({hour,season,weather,playing:false});}break;}
