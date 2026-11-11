@@ -1,4 +1,5 @@
 import { City, waterAt, gridLine, createDemo } from './core.js';
+import { usesParcel } from './parcel.js';
 
 export const BASELINE = Object.freeze({
   id: 'BASE-02',
@@ -45,9 +46,8 @@ export function createLegacyBaseline() {
 }
 
 export const SCENES = [
-  {id:'T01',sceneVersion:4,name:'河畔编辑院',caption:'从小屋到商场，沿街比较尺度与留白',purpose:'用「尺度」镜头观察小屋、咖啡馆、图书馆、办公楼和商场。导出快照可对照占地、模型高度与楼间留白。',limitations:['旧格网建筑沿用原有编辑；本场景用于尺度和编辑验收，美术风格另行确认'],target:[-76,0,-16],position:[-30,62,70],
-    scaleView:{target:[-70,0,-12],position:[-70,43,78]},scaleTypes:['cottage','cafe','library','office','mall'],spatialProbe:[
-    {minX:-72,minZ:-24,maxX:-64,maxZ:-6},{minX:-64,minZ:-24,maxX:-24,maxZ:-6},
+  {id:'T01',sceneVersion:5,name:'河畔编辑院',caption:'比较小屋和图书馆的尺度，练习地块编辑',purpose:'用「尺度」镜头观察两栋示范建筑。可拖动地块单边、移动整块，或单独调整建筑。',limitations:['本场景用于尺度和编辑验收，美术风格另行确认'],target:[-76,0,-16],position:[-30,62,70],
+    scaleView:{target:[-68,0,-43],position:[-68,28,9]},scaleTypes:['cottage','library'],spatialProbe:[
     {minX:-75,minZ:-58,maxX:-64,maxZ:-40},{minX:-64,minZ:-58,maxX:-50,maxZ:-40}
   ]},
   {id:'T02',sceneVersion:3,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'比较线形、坡道、T 字和断头路。打开路口镜头查看车辆允许的转向与停车位置。',limitations:['紧邻弯道的路口可能限制部分转向'],target:[-94,0,-8],position:[-40,90,95],junctionViews:{tee:[-27,-14],terminal:[-24,13]}},
@@ -71,7 +71,9 @@ export function createScene(id, density='standard') {
   const spec=SCENES.find(scene=>scene.id===id);
   if(!spec)throw new Error(`未知场景：${id}；请选择 T01～T07`);
   if(!['sparse','standard','dense'].includes(density))throw new Error('未知场景密度');
-  let city=id==='T01'?new City(createBaseline().city):id==='T07'&&density!=='sparse'?createDemo():new City();
+  const editingBase=id==='T01'?createBaseline().city:null;
+  const city=editingBase?new City({...editingBase,entities:editingBase.entities.filter(e=>!usesParcel(e.type))}):
+    id==='T07'&&density!=='sparse'?createDemo():new City();
   const add=(type,x,z,rotation=0,color=0)=>{
     if(!city.place(type,x,z,rotation,color))throw new Error(`${id} 场景位置无效：${type} (${x}, ${z})`);
   };
@@ -90,16 +92,18 @@ export function createScene(id, density='standard') {
     add('bench',-18,6);add('flowers',-16,6);
   };
   if(id==='T01'){
-    add('cafe',-23,-4.5);add('library',-17,-3.5);add('office',-14,-4);add('mall',-11.5,-5);
-    const data=city.snapshot(),angle=32,radians=angle*Math.PI/180;
+    const angle=32,radians=angle*Math.PI/180;
     const houseLot={id:'t01-cottage',x:-75,z:-39,width:14,depth:12,angle};
     const libraryLot={id:'t01-library',x:houseLot.x+16*Math.cos(radians),z:houseLot.z-16*Math.sin(radians),width:18,depth:17,angle};
-    data.parcels.push(houseLot,libraryLot);
-    data.entities.push(
-      {id:data.nextId++,type:'cottage',color:2,parcelId:houseLot.id,offsetX:.75,offsetZ:-1.25,angle:17},
-      {id:data.nextId++,type:'library',color:1,parcelId:libraryLot.id,offsetX:.5,offsetZ:.75,angle:349},
-    );
-    city=new City(data);
+    // Preserve the IDs of the two editable samples from T01 v4.
+    city.nextId=82;
+    for(const [parcel,building] of [
+      [houseLot,{type:'cottage',color:2,offsetX:.75,offsetZ:-1.25,angle:17}],
+      [libraryLot,{type:'library',color:1,offsetX:.5,offsetZ:.75,angle:349}],
+    ]){
+      const result=city.editParcel(parcel,building);
+      if(!result.changed)throw new Error(`T01 场景地块无效：${result.error}`);
+    }
   }
   if(id==='T02'){
     road([[-34,-14],[-25,-14],[-25,-6],[-15,-6],[-15,4],[-9,4]]);
@@ -166,8 +170,8 @@ export function createScene(id, density='standard') {
   const scene={...structuredClone(spec),sceneVersion:spec.sceneVersion??1,seed:20261103,density,city:city.snapshot(),camera:cameras.medium,cameras};
   if(spec.scaleView){
     cameras.scale=structuredClone(spec.scaleView);
-    const westStreet=[...city.entities.values()].filter(e=>!e.pose&&e.x<0);
-    scene.scaleIds=spec.scaleTypes.map(type=>westStreet.find(e=>e.type===type).id);
+    const samples=[...city.entities.values()].filter(e=>e.pose);
+    scene.scaleIds=spec.scaleTypes.map(type=>samples.find(e=>e.type===type).id);
   }
   return scene;
 }
