@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createBaseline, createLegacyBaseline, createScene, SCENES } from '../src/baseline.js';
 import { City } from '../src/core.js';
+import { usesParcel } from '../src/parcel.js';
 
 test('fixed baseline fixtures match their versioned generators and survive editing/save roundtrips', async () => {
   for (const [file, fixture] of [['base-02-v2.json', createBaseline()], ['base-02-v1.json', createLegacyBaseline()]]) {
@@ -41,4 +42,17 @@ test('seven scene layouts are deterministic, valid, distinct and save compatible
   assert.ok(counts[0]<counts[1]&&counts[1]<counts[2]);
   assert.throws(()=>createScene('T08'),/未知场景/);
   assert.throws(()=>createScene('T07','huge'),/未知场景密度/);
+});
+
+test('T01 includes only its two editable parcel samples and the original street layout',()=>{
+  const scene=createScene('T01'),city=new City(scene.city);
+  const buildings=[...city.entities.values()].filter(e=>usesParcel(e.type));
+  assert.deepEqual(buildings.map(e=>[e.id,e.type,e.pose?.parcel.id]),[
+    [82,'cottage','t01-cottage'],[83,'library','t01-library'],
+  ]);
+  assert.deepEqual(scene.scaleIds,buildings.map(e=>e.id));
+  assert.equal(scene.city.parcels.length,2);
+  assert.ok(scene.city.parcels.every(parcel=>!parcel.grid));
+  const streets=snapshot=>snapshot.entities.filter(e=>!usesParcel(e.type));
+  assert.deepEqual(streets(scene.city),streets(new City(createBaseline().city).snapshot()));
 });

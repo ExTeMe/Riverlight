@@ -51,6 +51,9 @@ test.describe('T01 canvas handles at native screenshot resolution',()=>{
     test.setTimeout(120000);
     const errors=[];page.on('pageerror',e=>errors.push(e.message));
     await page.goto('/?scene=T01');await ready(page);
+    await page.getByRole('button',{name:'尺度',exact:true}).click();
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.screenshot({path:info.outputPath('t01-editable-buildings.png'),scale:'device'});
     const editor=page.getByRole('form',{name:'地块与建筑编辑'}),field=name=>editor.getByLabel(name,{exact:true});
     const confirm=editor.getByRole('button',{name:'确认',exact:true}),selection=page.locator('.selection-panel');
     const record=()=>page.evaluate(async()=>{
@@ -624,7 +627,7 @@ test('scene exploration preserves the original city and supports weather, views,
   expect(errors).toEqual([]);
 });
 
-for(const [id,count] of [['T01',83],['T02',81],['T03',61],['T04',60],['T05',90],['T06',135],['T07',841]])
+for(const [id,count] of [['T01',74],['T02',81],['T03',61],['T04',60],['T05',90],['T06',135],['T07',841]])
 test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
   test.setTimeout(120000);
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
@@ -637,23 +640,21 @@ test(`${id} renders its fixed scene`, async ({page},testInfo)=>{
       const snapshot=await downloadFile(page,page.getByRole('button',{name:'导出资源快照',exact:true}));
       await testInfo.attach('T01 尺度快照',{body:snapshot,contentType:'application/json'});
       const evidence=JSON.parse(snapshot.toString());
-      expect(evidence.scene).toMatchObject({id:'T01',version:4});
-      for(const [i,value] of [-70,0,-12].entries())expect(evidence.camera.target[i]).toBeCloseTo(value,8);
-      const [west,east,slantedWest,slantedEast]=evidence.spatial.samples;
-      expect(west.objects).toHaveLength(1);
-      expect(west.objects[0]).toMatchObject({type:'library',bounds:{minX:-70,maxX:-58,minZ:-16,maxZ:-6}});
-      expect(east.objects.map(e=>e.type)).toEqual(['library','office','mall']);
-      expect(east.objects[0]).toEqual(west.objects[0]);
+      expect(evidence.scene).toMatchObject({id:'T01',version:5});
+      expect(evidence.buildings).toBe(2);
+      for(const [i,value] of [-68,0,-43].entries())expect(evidence.camera.target[i]).toBeCloseTo(value,8);
+      const [slantedWest,slantedEast]=evidence.spatial.samples;
+      expect(slantedWest.objects.map(e=>e.type)).toEqual(['cottage','library']);
       const angledLibrary=slantedWest.objects.find(e=>e.type==='library');
       expect(angledLibrary).toBeDefined();
       expect(slantedEast.objects).toContainEqual(angledLibrary);
       expect(evidence.spatial).toMatchObject({land:{groundY:0,waterY:null},river:{groundY:null,waterY:-.4}});
       const scale=evidence.spatial.scale;
-      expect(scale.map(({type,width,depth,gapX})=>[type,width,depth,gapX])).toEqual([
-        ['cottage',6,8,null],['cafe',8,6,8],['library',12,10,16],['office',10,12,0],['mall',20,16,0],
-      ]);
+      expect(scale.map(sample=>sample.type)).toEqual(['cottage','library']);
       expect(scale.every(sample=>sample.authored&&sample.height>0)).toBe(true);
-      expect(scale[3].height).toBeGreaterThan(2*scale[0].height);
+      expect(scale[1].width).toBeGreaterThan(scale[0].width);
+      expect(scale[1].depth).toBeGreaterThan(scale[0].depth);
+      expect(scale[1].gapX).toBeCloseTo(2.036,3);
       await page.getByRole('button',{name:'静静欣赏'}).click();
       await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
       await page.screenshot({path:testInfo.outputPath('t01-street-scale.png')});
