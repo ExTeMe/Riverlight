@@ -57,6 +57,10 @@ export class UI {
         <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>
         <div class="scene-footer"><button data-action="reset-baseline">重置场景</button><button data-action="resume-scene">保存并重载</button><button data-action="return-city">返回我的城市</button></div>`;
       this.root.append(panel);
+      if(app.baseline.id==='T04'){
+        this.sailingStatus=document.createElement('p');this.sailingStatus.hidden=true;this.sailingStatus.setAttribute('aria-live','polite');
+        panel.querySelector('.scene-buttons').after(this.sailingStatus);
+      }
     }
     this.showCategory('home');this.refresh();
   }
@@ -103,6 +107,15 @@ export class UI {
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}
   hint(text){const el=this.root.querySelector('#mode-hint');el.textContent=text;el.hidden=!text;}
+  sailing(boat){
+    const el=this.sailingStatus;
+    if(!el)return;
+    el.hidden=!boat;
+    if(!boat)return;
+    const text=boat.state==='waiting'?(boat.blocked?'航道受阻 · 船只正在等待':'航段终点 · 船只正在等待'):
+      boat.state==='turning'?'船只正在掉头':boat.blocked?'船只驶向候航点':'船只航行中';
+    if(el.textContent!==text)el.textContent=text;
+  }
   toast(text,error=false){const el=this.root.querySelector('.toast');el.textContent=text;el.className=`toast visible ${error?'error':''}`;clearTimeout(this.toastTimer);this.toastTimer=setTimeout(()=>el.classList.remove('visible'),3000);}
   saved(text){this.root.querySelector('#save-state').textContent=text;}
   modal(title,content){this.app.keys.clear();this.app.cancel();const el=this.root.querySelector('.modal');el.innerHTML=`<div class="modal-heading"><h2>${title}</h2>${ib('close-modal','close','关闭窗口')}</div>${content}`;this.root.querySelector('.modal-backdrop').hidden=false;setTimeout(()=>el.querySelector('input,button')?.focus(),0);}

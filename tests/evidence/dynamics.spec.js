@@ -59,7 +59,7 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await observe('rain-stopped', 15);
         expect(samples.at(-1).stats.environment.weather).toBe('clear');
       } else {
-        // T04 observes the bridge deck and the two independent boat reaches.
+        // T04 observes the bridge deck and boat motion along the verified route.
         await observe('continuous', id === 'T04' ? 120 : 15);
       }
       // Centers of the target road cells in the fixed 1280×800 near camera.

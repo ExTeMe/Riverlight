@@ -52,7 +52,7 @@ export const SCENES = [
   ]},
   {id:'T02',sceneVersion:3,name:'转角街道',caption:'沿着街角，走过不同的路',purpose:'比较线形、坡道、T 字和断头路。打开路口镜头查看车辆允许的转向与停车位置。',limitations:['紧邻弯道的路口可能限制部分转向'],target:[-94,0,-8],position:[-40,90,95],junctionViews:{tee:[-27,-14],terminal:[-24,13]}},
   {id:'T03',sceneVersion:2,name:'十字路口',caption:'四条来路，一处相逢',purpose:'打开「十字路口」镜头比较小车和公交包络，再删除路口中心 (-24,0) 检查拓扑重建。',limitations:['信号相位、跟车队列与冲突权限在交通阶段实现'],target:[-96,0,0],position:[-45,65,70],junctionViews:{junction:[-24,0]}},
-  {id:'T04',sceneVersion:3,name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'在「河岸与航域」观察滨水步道和船体中心可行边界，打开「步行连接」检查桥头坡道。',limitations:['桥孔已校验当前原型船的净空。船仍在桥两侧各自往返，过桥航行由 WATER-03 接入。'],target:[0,0,0],position:[55,35,60]},
+  {id:'T04',sceneVersion:4,name:'桥与河湾',caption:'从桥头到水面，换个角度看',purpose:'在「河岸与航域」观察金色航线与船只状态，打开「步行连接」检查桥头坡道。',limitations:['单船沿参考航线往返，码头靠泊尚待实现。'],target:[0,0,0],position:[55,35,60]},
   {id:'T05',sceneVersion:2,name:'街坊的一天',caption:'从家门口，到商店与公园',purpose:'切换「步行连接」，检查旋转入口、公共场所和滨水步道是否属于同一可达路网。',limitations:['目的地调度、信号过街、可达屋檐与雨伞在行人阶段实现'],target:[-75,0,4],position:[-35,42,65]},
   {id:'T06',sceneVersion:3,name:'河光小街',caption:'店铺的暖光，河畔的四季',purpose:'保持同一镜头切换白天、黄昏、雨夜、秋景与雪景；比较近中远景。',limitations:['六类样板同场展示，待整组画面确认；码头停靠和桥船净空另由水系任务验收'],target:[-65,0,0],position:[-10,55,85]},
   {id:'T07',name:'城市的尺度',caption:'从一条小街，到整座城市',purpose:'选择疏密布局，扩区后移向边缘再返回；保存、重载并采集实际资源快照。',limitations:['帧时间、GPU 内存和长期增长需专项采样，单帧快照不是性能验收'],target:[0,0,0],position:[183,180,230]},

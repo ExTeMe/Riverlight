@@ -1,17 +1,18 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
-import { GROUND_Y, QUAY, WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, navigableSpan, sailingCenter, sailingReaches, quayCenter, riverSections } from './river.js';
+import { GROUND_Y, QUAY, WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, quayCenter, riverSections, waterOverlaps } from './river.js';
 import { footprintOutline, parcelOutline, placementOf } from './parcel.js';
-import { key } from './core.js';
+import { footprintBounds, key } from './core.js';
 import { boxOutline, outlineBounds, transformOutline } from './outline.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
-import { hasTraffic } from './road-network.js';
+import { buildRoadNetwork, hasTraffic } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
 import { createAlignmentMesh, createBridgeRoad } from './roads.js';
 import { bridgeRise } from './bridges.js';
 import { JunctionPreview } from './junction-preview.js';
+import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function clipX(polygon,edge,side){
@@ -100,7 +101,7 @@ export class World {
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
-  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
+  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.setCity(city);this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -260,9 +261,15 @@ export class World {
     this.riverOverlay.visible=visible;
     if(!visible)return;
     const positions=[];
-    for(const [start,end] of this.traffic.reaches)for(const {from,to} of riverSections(start,end,this.city.terrain)){
-      const a=navigableSpan(from,this.city.terrain,PROTOTYPE_RADIUS),b=navigableSpan(to,this.city.terrain,PROTOTYPE_RADIUS);
-      if(a&&b)for(const i of [0,1])positions.push(a[i],WATER_Y+.055,from,b[i],WATER_Y+.055,to);
+    const {track,routes}=this.traffic;
+    const point=({x,z})=>[x,WATER_Y+.055,z];
+    for(const route of routes){
+      const ends=[pointOnTrack(track,route.from),pointOnTrack(track,route.to)];
+      const points=[ends[0],...track.points.filter(p=>p.distance>route.from&&p.distance<route.to),ends[1]];
+      for(let i=1;i<points.length;i++)positions.push(...point(points[i-1]),...point(points[i]));
+      for(const [i,blocked] of [route.blockedStart,route.blockedEnd].entries())if(blocked){
+        const {x,z}=ends[i];positions.push(...point({x:x-1,z}),...point({x:x+1,z}));
+      }
     }
     updateLines(this.riverOverlay,positions);
   }
@@ -282,10 +289,58 @@ export class World {
   update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus,!!this.junctionPreview.active);this.junctionPreview.update(dt);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {
-  constructor(scene,city){this.scene=scene;this.city=city;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.sailingTime=0;this.followTarget=null;}
+  constructor(scene,city){this.scene=scene;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.sailingTime=0;this.setCity(city);}
+  setCity(city){
+    if(this.city)this.city.editGuard=null;
+    for(const vessel of this.boats)this.disposeActor(vessel);
+    this.boats=[];this.city=city;
+    this.track=navigationTrack(city.worldBounds(),city.terrain);
+    city.editGuard=(changes,to)=>this.navigationEditError(changes,to);
+  }
+  disposeActor({mesh}){this.scene.remove(mesh);mesh.traverse(o=>o.geometry?.dispose());}
+  get boatStatus(){
+    const [vessel]=this.boats;
+    if(!vessel)return null;
+    const {mesh,state,speed,direction}=vessel,route=routeAt(this.routes,vessel.distance);
+    return {point:mesh.position.toArray(),state,speed,direction,blocked:!route||(direction>0?route.blockedEnd:route.blockedStart)};
+  }
+  planRoutes(crossings,entities){
+    const obstacles=bridgeObstacles(crossings);
+    for(const entity of entities)if(entity.type!=='bridge'&&!entity.alignment){
+      const bounds=footprintBounds(entity);
+      if(waterOverlaps(footprintOutline(entity),bounds,this.city.terrain))obstacles.push(bounds);
+    }
+    return navigationRoutes(this.track,obstacles);
+  }
+  navigationEditError(changes,to){
+    const [vessel]=this.boats;
+    if(!vessel)return null;
+    const {z}=pointOnTrack(this.track,vessel.distance),padding=CELL+PROTOTYPE_RADIUS+.1+BOAT_SPEED**2/(2*BOAT_BRAKE);
+    const near=entity=>{
+      if(!entity||(!hasTraffic(entity.type)&&entity.type!=='pier'))return false;
+      const {minZ,maxZ}=footprintBounds(entity);
+      return minZ<=z+padding&&maxZ>=z-padding;
+    };
+    if(!changes.some(c=>!c.parcel&&(near(c.before)||near(c.after))))return null;
+    const proposed=new Map(this.city.entities);
+    for(const c of changes)if(!c.parcel){
+      const entity=c[to];
+      if(entity)proposed.set(entity.id,entity);
+      else proposed.delete((c.before??c.after).id);
+    }
+    const {terrain,roadRevision}=this.city,network=buildRoadNetwork(proposed.values(),roadRevision,terrain);
+    const {minZ,maxZ,minX,maxX}=this.track.area;
+    const candidates=[...proposed.values()].filter(entity=>{
+      if(entity.type==='bridge'||entity.alignment)return false;
+      const bounds=footprintBounds(entity);
+      return bounds.minZ<=maxZ&&bounds.maxZ>=minZ&&bounds.minX<=maxX&&bounds.maxX>=minX;
+    });
+    const routes=this.planRoutes(network.bridges.crossings,candidates);
+    return canKeepSailing(vessel,routes,routeAt(this.routes,vessel.distance))?null:'船只正在经过这里，请等船驶离后再修改航道';
+  }
   rebuild(){
-    for(const a of [...this.cars,...this.boats]){this.scene.remove(a.mesh);a.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
-    this.cars=[];this.boats=[];
+    for(const car of this.cars)this.disposeActor(car);
+    this.cars=[];
     this.network=this.city.roadNetwork;
     const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&!s.geometry&&this.gridPorts(s).length);
     for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
@@ -293,25 +348,21 @@ class Traffic {
       mesh.rotation.order='YXZ';this.scene.add(mesh);
       this.cars.push({mesh,from:e,to:this.network.segments.get(this.gridPorts(e)[0].neighborId),last:null,t:Math.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5});
     }
-    const paths=[...this.network.segments.values()].some(s=>s.kind==='path');
     this.people.rebuild(this.city);
-    const obstacles=this.network.bridges.crossings.map(({bounds})=>bounds);
-    this.reaches=sailingReaches(this.city.worldBounds(),obstacles);
-    if(paths)for(const [i,[from,to]] of this.reaches.slice(0,3).entries()){
-      const mesh=boat(),vessel={mesh,center:(from+to)/2,range:(to-from)/2,phase:i%2===0?.85:-.65};
-      this.scene.add(mesh);this.boats.push(vessel);this.positionBoat(vessel,this.sailingTime,0);
+    this.routes=this.planRoutes(this.network.bridges.crossings,this.city.queryFootprints(this.track.area));
+    const active=[...this.city.entities.values()].some(e=>e.type==='path'||e.type==='pier');
+    if(active&&!this.boats.length){
+      const vessel=launchVessel(this.track,this.routes);
+      if(vessel){vessel.mesh=boat();this.scene.add(vessel.mesh);this.boats.push(vessel);this.positionBoat(vessel,this.sailingTime,0);}
     }
     this.followTarget=this.cars[0]?.mesh;
   }
   gridPorts(segment){return segment.ports.filter(port=>!this.network.segments.get(port.neighborId).geometry);}
   positionBoat(vessel,time,dt){
-    const {mesh,center,range,phase}=vessel,t=time*1.8/range+phase,z=center+range*Math.sin(t);
-    const x=sailingCenter(z,this.city.terrain,PROTOTYPE_RADIUS);
-    if(x===null)return;
-    const direction=Math.cos(t)>=0?1:-1,next=sailingCenter(z+direction,this.city.terrain,PROTOTYPE_RADIUS)??x;
-    const target=Math.atan2(next-x,direction),delta=T.MathUtils.euclideanModulo(target-mesh.rotation.y+Math.PI,2*Math.PI)-Math.PI;
-    mesh.rotation.y+=dt?T.MathUtils.clamp(delta,-dt*1.2,dt*1.2):delta;
-    mesh.position.set(x,WATER_Y+PROTOTYPE_HULL.originAboveWater+Math.sin(time+phase)*PROTOTYPE_HULL.bob,z);
+    if(dt)advanceVessel(vessel,this.track,routeAt(this.routes,vessel.distance),dt);
+    const {x,z}=pointOnTrack(this.track,vessel.distance);
+    vessel.mesh.rotation.y=vessel.yaw;
+    vessel.mesh.position.set(x,WATER_Y+PROTOTYPE_HULL.originAboveWater+Math.sin(time)*PROTOTYPE_HULL.bob,z);
   }
   update(dt,time,focus,hideCars){
     for(const c of this.cars){

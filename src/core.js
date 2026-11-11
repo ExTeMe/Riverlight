@@ -162,15 +162,21 @@ export class City {
     this.parcels.set(parcel.id,parcel);
     this.parcelSpatial.insert(parcel.id,bounds);
   }
+  guardEdit(changes,to){
+    this.editError=changes?.length?this.editGuard?.(changes,to):null;
+    return !!changes?.length&&!this.editError;
+  }
   commit(changes) {
-    if (!changes.length) return false;
+    if (!this.guardEdit(changes,'after')) return false;
     this.applyChanges(changes,'before','after');
     this.undoStack.push(changes); if (this.undoStack.length > 80) this.undoStack.shift(); this.redoStack = []; return true;
   }
   place(type,x,z,rotation=0,color=0) {
+    this.editError=null;
     const e = { id: this.nextId, type, x, z, rotation, color };
     if (this.canPlace(e)) return false;
-    this.nextId++; this.commit([{before:null,after:e}]); return e;
+    if(!this.commit([{before:null,after:e}]))return false;
+    this.nextId++;return e;
   }
   paintPlan(type,cells) {
     if(!BY_ID[type]||BY_ID[type].w!==1||BY_ID[type].d!==1)return [];
@@ -188,10 +194,12 @@ export class City {
   }
   paint(type,cells) {
     const placements=this.paintPlan(type,cells);
+    if(!this.commit(placements.map(after=>({before:null,after}))))return false;
     this.nextId+=placements.length;
-    return this.commit(placements.map(after=>({before:null,after})));
+    return true;
   }
   move(id,x,z,rotation) {
+    this.editError=null;
     const old = this.entities.get(id); if (!old||old.pose||old.alignment) return false;
     const e = {...old,x,z,rotation}; if (this.canPlace(e,id)) return false;
     return this.commit([{before:{...old},after:e}]);
@@ -209,8 +217,9 @@ export class City {
     const {entity,before,error}=this.planRoadAlignment(raw,id);
     if(error)return {error,changed:false};
     if(before&&['start','end'].every(key=>before.alignment[key].every((n,i)=>n===entity.alignment[key][i])))return {entity:before,changed:false};
-    if(!before)this.nextId++;
-    return {entity,changed:this.commit([{before,after:entity}])};
+    const changed=this.commit([{before,after:entity}]);
+    if(changed&&!before)this.nextId++;
+    return {entity,changed,error:this.editError};
   }
   resizeParcel(id,width,depth) {
     const parcel=this.parcels.get(id);
@@ -257,12 +266,14 @@ export class City {
   remove(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:null}]); }
   recolor(id) { const e=this.entities.get(id); return e && this.commit([{before:{...e},after:{...e,color:(e.color+1)%4}}]); }
   undo() {
-    const changes=this.undoStack.pop(); if (!changes) return false;
+    const changes=this.undoStack.at(-1); if (!this.guardEdit(changes,'before')) return false;
+    this.undoStack.pop();
     this.applyChanges(changes,'after','before');
     this.redoStack.push(changes); return true;
   }
   redo() {
-    const changes=this.redoStack.pop(); if(!changes) return false;
+    const changes=this.redoStack.at(-1); if(!this.guardEdit(changes,'after')) return false;
+    this.redoStack.pop();
     this.applyChanges(changes,'before','after');
     this.undoStack.push(changes); return true;
   }
