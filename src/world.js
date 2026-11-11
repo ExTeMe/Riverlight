@@ -1,8 +1,9 @@
 import * as T from 'three';
 import { CELL, CHUNK, entityDimensions } from './catalog.js';
-import { BANK_STEP, GROUND_Y, QUAY, riverBanks } from './space.js';
+import { GROUND_Y, QUAY, WATER_Y, PROTOTYPE_HULL, PROTOTYPE_RADIUS, navigableSpan, sailingCenter, sailingReaches, quayCenter, riverSections, waterOverlaps } from './river.js';
 import { footprintOutline, parcelOutline, placementOf } from './parcel.js';
-import { riverCenter, riverWidth, key, waterAt } from './core.js';
+import { footprintBounds, key } from './core.js';
+import { boxOutline, outlineBounds, transformOutline } from './outline.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
@@ -12,6 +13,28 @@ import { createAlignmentMesh } from './roads.js';
 import { JunctionPreview } from './junction-preview.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
+function clipX(polygon,edge,side){
+  const out=[];let a=polygon.at(-1);
+  for(const b of polygon){
+    const inside=side*(b[0]-edge)>=0;
+    if(inside!==(side*(a[0]-edge)>=0)){
+      const t=(edge-a[0])/(b[0]-a[0]);
+      out.push([edge,a[1]+(b[1]-a[1])*t,a[2]+(b[2]-a[2])*t]);
+    }
+    if(inside)out.push(b);
+    a=b;
+  }
+  return out;
+}
+function clippedFace(out,polygon,minX,maxX){
+  if(polygon.every(p=>p[0]<=minX)||polygon.every(p=>p[0]>=maxX))return;
+  const points=clipX(clipX(polygon,minX,1),maxX,-1);
+  for(let i=1;i+1<points.length;i++)out.push(...points[0],...points[i+1],...points[i]);
+}
+function surfaceGeometry(points){
+  const geometry=new T.BufferGeometry();
+  geometry.setAttribute('position',new T.Float32BufferAttribute(points,3));geometry.computeVertexNormals();return geometry;
+}
 function outlineLines(outline,y){
   return outline.flatMap(([x,z],i)=>{const [u,v]=outline[(i+1)%outline.length];return [x,y,z,u,y,v];});
 }
@@ -34,48 +57,49 @@ function lineLayer(scene,color,opacity=1){
   layer.visible=false;scene.add(layer);return layer;
 }
 function landGeometry(cx,cz,terrain) {
-  const grass=[],bank=[],edge=[],quay=[];const x0=(cx*CHUNK-.5)*CELL,x1=x0+CHUNK*CELL,z0=(cz*CHUNK-.5)*CELL;
-  for(let i=0;i<CHUNK*2;i++){
-    const za=z0+i*BANK_STEP,zb=za+BANK_STEP,a=riverBanks(za,terrain),b=riverBanks(zb,terrain);
-    for(const side of [-1,1]){
-      const sideIndex=side<0?0:1,aa=a[sideIndex],ab=b[sideIndex];
-      const clamp=x=>Math.max(x0,Math.min(x1,x));
-      const la=side<0?x0:clamp(aa),lb=side<0?x0:clamp(ab),ha=side<0?clamp(aa):x1,hb=side<0?clamp(ab):x1;
-      if(ha>la || hb>lb)quad(grass,[la,GROUND_Y,za],[ha,GROUND_Y,za],[hb,GROUND_Y,zb],[lb,GROUND_Y,zb]);
-      if(za>=QUAY.minZ&&zb<=QUAY.maxZ){const a0=clamp(Math.min(aa,aa+side*QUAY.width)),a1=clamp(Math.max(aa,aa+side*QUAY.width)),b0=clamp(Math.min(ab,ab+side*QUAY.width)),b1=clamp(Math.max(ab,ab+side*QUAY.width));if(a1>a0||b1>b0)quad(quay,[a0,QUAY.y,za],[a1,QUAY.y,za],[b1,QUAY.y,zb],[b0,QUAY.y,zb]);}
-      if(aa>=x0&&aa<x1 && ab>=x0&&ab<x1){
-        quad(bank,[aa,0,za],[aa-side*.25,-.8,za],[ab-side*.25,-.8,zb],[ab,0,zb]);
-        quad(edge,[aa,0.012,za],[aa+side*.25,.012,za],[ab+side*.25,.012,zb],[ab,.012,zb]);
-      }
-    }
+  const grass=[],bank=[],edge=[],x0=(cx*CHUNK-.5)*CELL,x1=x0+CHUNK*CELL,z0=(cz*CHUNK-.5)*CELL;
+  for(const {from:za,to:zb,a,b} of riverSections(z0,z0+CHUNK*CELL,terrain))for(const side of [-1,1]){
+    const index=side<0?0:1,aa=a[index],ab=b[index];
+    const outer=side<0?Math.min(x0,aa,ab):Math.max(x1,aa,ab);
+    const land=[[outer,GROUND_Y,za],[aa,GROUND_Y,za],[ab,GROUND_Y,zb],[outer,GROUND_Y,zb]];
+    clippedFace(grass,side<0?land:land.reverse(),x0,x1);
+    const slope=[[aa,GROUND_Y,za],[aa-side*.25,WATER_Y-.4,za],[ab-side*.25,WATER_Y-.4,zb],[ab,GROUND_Y,zb]];
+    clippedFace(bank,side<0?slope:slope.reverse(),x0,x1);
+    const rim=[[aa,.012,za],[aa+side*.25,.012,za],[ab+side*.25,.012,zb],[ab,.012,zb]];
+    clippedFace(edge,side>0?rim:rim.reverse(),x0,x1);
   }
   const group=new T.Group();
-  for(const [p,m] of [[grass,material('#839e79','ground')],[bank,material('#8c9a99')],[edge,material('#d7cebb')],[quay,material('#c2b9a5','ground')]]){
+  for(const [p,m] of [[grass,material('#839e79','ground')],[bank,material('#8c9a99')],[edge,material('#d7cebb')]]){
     if(!p.length)continue;
-    const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(p,3));g.computeVertexNormals();
-    const mesh=new T.Mesh(g,m);mesh.receiveShadow=true;group.add(mesh);
+    const mesh=new T.Mesh(surfaceGeometry(p),m);mesh.receiveShadow=true;group.add(mesh);
   }
   return group;
 }
 function horizonGeometry(focus,terrain){
-  const points=[],x0=focus.x-4000,x1=focus.x+4000,z0=Math.floor((focus.z-4000)/16)*16;
-  for(let z=z0;z<focus.z+4000;z+=16){const a=riverCenter(z,terrain),b=riverCenter(z+16,terrain),wa=riverWidth(z,terrain),wb=riverWidth(z+16,terrain);quad(points,[x0,-.06,z],[a-wa,-.06,z],[b-wb,-.06,z+16],[x0,-.06,z+16]);quad(points,[a+wa,-.06,z],[x1,-.06,z],[x1,-.06,z+16],[b+wb,-.06,z+16]);}
-  const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(points,3));geometry.computeVertexNormals();return geometry;
+  const points=[],x0=focus.x-4000,x1=focus.x+4000;
+  for(const {from,to,a,b} of riverSections(focus.z-4000,focus.z+4000,terrain)){
+    const [aw,ae]=a.map(x=>Math.max(x0,Math.min(x1,x))),[bw,be]=b.map(x=>Math.max(x0,Math.min(x1,x)));
+    if(aw>x0||bw>x0)quad(points,[x0,-.06,from],[aw,-.06,from],[bw,-.06,to],[x0,-.06,to]);
+    if(ae<x1||be<x1)quad(points,[ae,-.06,from],[x1,-.06,from],[x1,-.06,to],[be,-.06,to]);
+  }
+  return surfaceGeometry(points);
 }
 export class World {
   constructor(scene,city){
     this.scene=scene;this.city=city;this.loaded=new Map();this.pickables=[];this.lastRegion='';this.activeCenter=new T.Vector3();
     this.horizon=new T.Mesh(horizonGeometry(this.activeCenter,city.terrain),material('#839e79','ground'));this.horizonCenter=new T.Vector3();scene.add(this.horizon);
+    this.quay=new T.Mesh(new T.BufferGeometry(),material('#c2b9a5','ground'));this.quay.receiveShadow=true;scene.add(this.quay);
     this.grid=new T.GridHelper(128,64,'#839785','#839785');this.grid.position.y=.055;this.grid.material.transparent=true;this.grid.material.opacity=.18;this.grid.visible=false;scene.add(this.grid);
     this.selection=lineLayer(scene,0xf2d38c);this.parcelSelection=lineLayer(scene,0x94e2d1);
     this.previewParcel=lineLayer(scene,0x94e2d1);this.previewFootprint=lineLayer(scene,0xffdc94);
     this.emptyParcels=lineLayer(scene,0xb7ded2,.65);
     this.laneOverlay=lineLayer(scene,0xffd68a);this.walkOverlay=lineLayer(scene,0x89e5d5);
+    this.riverOverlay=lineLayer(scene,0xffd68a);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
     this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
-  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
+  setCity(city){this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.city=city;this.clear();this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
   unload(ck){const c=this.loaded.get(ck);if(!c)return;this.scene.remove(c.land,c.buildings);c.land.traverse(o=>{if(o.geometry)o.geometry.dispose();});disposeChunkMeshes(c.buildings);this.loaded.delete(ck);}
   sync(force=false,focus=this.activeCenter,distance=180){
@@ -104,7 +128,13 @@ export class World {
     this.emptyParcels.visible=!!lines.length;
     if(lines.length)updateLines(this.emptyParcels,lines);
     if(force){
+      if(this.quaySections!==this.city.waterfront){
+        this.quaySections=this.city.waterfront;
+        const points=[];for(const {outline} of this.quaySections)quad(points,...outline.map(([x,z])=>[x,QUAY.y,z]));
+        this.quay.geometry.dispose();this.quay.geometry=surfaceGeometry(points);
+      }
       this.traffic.rebuild();
+      if(this.riverOverlay.visible)this.showRiver(true);
       const guide=this.junctionPreview;
       if(guide.id)this.showJunction(guide.id,guide.kind);
       if(this.walkOverlay.visible)this.showMobility(true,this.mobilityFocus);
@@ -139,9 +169,14 @@ export class World {
     }
     const [cx,cz]=ck.split(',').map(Number);
     if(detail)for(let z=Math.ceil(cz*CHUNK*CELL/12)*12;z<(cz+1)*CHUNK*CELL;z+=12){if(Math.abs(z)>105)continue;for(const side of [-1,1]){
-      const x=riverCenter(z,this.city.terrain)+side*(riverWidth(z,this.city.terrain)+1.7);if(Math.floor(x/(CHUNK*CELL))!==cx)continue;
-      const gx=Math.round(x/CELL),gz=Math.round(z/CELL);let blocked=false;for(let dx=-1;dx<=1;dx++)for(let dz=-1;dz<=1;dz++){const e=this.city.at(gx+dx,gz+dz);if(e&&!['tree','lamp','path','bench'].includes(e.type))blocked=true;}
-      if(!blocked)append(getQuayTemplate(),new T.Matrix4().compose(new T.Vector3(x,0,z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),side<0?Math.PI:0),new T.Vector3(1,1,1)),null);
+      const [center]=quayCenter(z,side,this.city.terrain),x=center+side*QUAY.width;
+      if(Math.floor((x+CELL/2)/(CHUNK*CELL))!==cx)continue;
+      if(!this.city.waterfront.some(section=>section.side===side&&section.from<=z&&z<section.to))continue;
+      const angle=Math.atan2(quayCenter(z+1,side,this.city.terrain)[0]-quayCenter(z-1,side,this.city.terrain)[0],2)+(side<0?Math.PI:0);
+      const model=getQuayTemplate(),{min,max}=new T.Box3().setFromObject(model);
+      const outline=transformOutline(boxOutline({minX:min.x,maxX:max.x,minZ:min.z,maxZ:max.z}),x,z,angle);
+      if(this.city.queryFootprints(outlineBounds(outline)).length||outline.some(([px,pz])=>side*(px-quayCenter(pz,side,this.city.terrain)[0])<QUAY.width/2))continue;
+      append(model,new T.Matrix4().compose(new T.Vector3(x,0,z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),angle),new T.Vector3(1,1,1)),null);
     }}
     for(const {mesh,matrices,ids} of batches.values()){
       const inst=new T.InstancedMesh(mesh.geometry,mesh.material,matrices.length);matrices.forEach((m,i)=>inst.setMatrixAt(i,m));inst.userData.entityIds=ids;inst.castShadow=detail&&mesh.castShadow;inst.receiveShadow=true;inst.computeBoundingSphere();c.buildings.add(inst);
@@ -209,6 +244,16 @@ export class World {
   }
   clearPreview(){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;}
   showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
+  showRiver(visible){
+    this.riverOverlay.visible=visible;
+    if(!visible)return;
+    const positions=[];
+    for(const [start,end] of this.traffic.reaches)for(const {from,to} of riverSections(start,end,this.city.terrain)){
+      const a=navigableSpan(from,this.city.terrain,PROTOTYPE_RADIUS),b=navigableSpan(to,this.city.terrain,PROTOTYPE_RADIUS);
+      if(a&&b)for(const i of [0,1])positions.push(a[i],WATER_Y+.055,from,b[i],WATER_Y+.055,to);
+    }
+    updateLines(this.riverOverlay,positions);
+  }
   showMobility(visible,focus=this.activeCenter){
     this.laneOverlay.visible=this.walkOverlay.visible=visible;
     if(!visible)return;
@@ -225,7 +270,7 @@ export class World {
   update(dt,time,focus,distance){this.sync(false,focus,distance);this.traffic.update(dt,time,focus,!!this.junctionPreview.active);this.junctionPreview.update(dt);for(const chunk of this.loaded.values())if(chunk.detail)for(const object of chunk.animations||[]){animateArchitecture(object,time);animateImportedAssets(object,time);}}
 }
 class Traffic {
-  constructor(scene,city){this.scene=scene;this.city=city;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.followTarget=null;}
+  constructor(scene,city){this.scene=scene;this.city=city;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.sailingTime=0;this.followTarget=null;}
   rebuild(){
     for(const a of [...this.cars,...this.boats]){this.scene.remove(a.mesh);a.mesh.traverse(o=>{if(o.geometry)o.geometry.dispose();});}
     this.cars=[];this.boats=[];
@@ -237,10 +282,28 @@ class Traffic {
     }
     const paths=[...this.network.segments.values()].some(s=>s.kind==='path');
     this.people.rebuild(this.city);
-    if(paths)for(let i=0;i<3;i++){const mesh=boat();this.scene.add(mesh);this.boats.push({mesh,phase:i*60});}
+    const obstacles=[];
+    for(const entity of this.city.entities.values())if(entity.type==='bridge'){
+      const bounds=footprintBounds(entity);
+      if(waterOverlaps(footprintOutline(entity),bounds,this.city.terrain))obstacles.push(bounds);
+    }
+    this.reaches=sailingReaches(this.city.worldBounds(),obstacles);
+    if(paths)for(const [i,[from,to]] of this.reaches.slice(0,3).entries()){
+      const mesh=boat(),vessel={mesh,center:(from+to)/2,range:(to-from)/2,phase:i%2===0?.85:-.65};
+      this.scene.add(mesh);this.boats.push(vessel);this.positionBoat(vessel,this.sailingTime,0);
+    }
     this.followTarget=this.cars[0]?.mesh;
   }
   gridPorts(segment){return segment.ports.filter(port=>!this.network.segments.get(port.neighborId).geometry);}
+  positionBoat(vessel,time,dt){
+    const {mesh,center,range,phase}=vessel,t=time*1.8/range+phase,z=center+range*Math.sin(t);
+    const x=sailingCenter(z,this.city.terrain,PROTOTYPE_RADIUS);
+    if(x===null)return;
+    const direction=Math.cos(t)>=0?1:-1,next=sailingCenter(z+direction,this.city.terrain,PROTOTYPE_RADIUS)??x;
+    const target=Math.atan2(next-x,direction),delta=T.MathUtils.euclideanModulo(target-mesh.rotation.y+Math.PI,2*Math.PI)-Math.PI;
+    mesh.rotation.y+=dt?T.MathUtils.clamp(delta,-dt*1.2,dt*1.2):delta;
+    mesh.position.set(x,WATER_Y+PROTOTYPE_HULL.originAboveWater+Math.sin(time+phase)*.035,z);
+  }
   update(dt,time,focus,hideCars){
     for(const c of this.cars){
       if(c.dwell>0)c.dwell-=dt;else c.t+=dt*c.speed/CELL;
@@ -255,6 +318,7 @@ class Traffic {
       c.mesh.visible=!hideCars&&c.mesh.position.distanceTo(focus)<200;
     }
     this.people.update(dt,time,focus,hideCars?[]:this.cars);
-    for(const b of this.boats){const z=((time*1.8+b.phase)%210)-105,x=riverCenter(z,this.city.terrain)+3;b.mesh.position.set(x,-.25+Math.sin(time+b.phase)*.035,z);b.mesh.rotation.y=Math.atan2(riverCenter(z+1,this.city.terrain)-riverCenter(z,this.city.terrain),1);}
+    this.sailingTime=time;
+    for(const vessel of this.boats)this.positionBoat(vessel,time,dt);
   }
 }

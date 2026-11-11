@@ -59,8 +59,7 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await observe('rain-stopped', 15);
         expect(samples.at(-1).stats.environment.weather).toBe('clear');
       } else {
-        // Three boats are offset along a 210-unit loop at 1.8 units/second.
-        // Observe long enough to include a complete nominal loop in T04.
+        // T04 observes movement in the two reaches around its unverified bridge.
         await observe('continuous', id === 'T04' ? 120 : 15);
       }
       // Centers of the target road cells in the fixed 1280×800 near camera.
@@ -105,6 +104,13 @@ for (const id of ['T02', 'T03', 'T04', 'T05']) {
         await observe('walking-connections', 5);
         expect(samples.at(-1).stats).toMatchObject({mobilityOverlay:true});
         expect(samples.at(-1).stats.visiblePedestrians).toBeGreaterThan(0);
+        await page.keyboard.press('h');
+      }
+      if (id === 'T04') {
+        await page.locator('[data-view="river"]').click();
+        await page.locator('[data-weather-id="day"]').click();
+        await page.keyboard.press('h');
+        await observe('river-banks-and-reaches', 5);
         await page.keyboard.press('h');
       }
       record.stage = 'resource-snapshot';

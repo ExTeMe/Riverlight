@@ -1,5 +1,6 @@
 import { BY_ID, CELL } from './catalog.js';
-import { BANK_STEP, legacyFootprintBounds, legacyPlacement, riverBanks } from './space.js';
+import { legacyFootprintBounds, legacyPlacement } from './space.js';
+import { waterOverlaps } from './river.js';
 import { EDGE_EPSILON, boundsContain, boxOutline, outlineBounds, outlinesOverlap, transformOutline } from './outline.js';
 
 export const usesParcel = type => ['home','city','civic','park'].includes(BY_ID[type]?.category);
@@ -82,13 +83,5 @@ export function readParcelEntity(raw,parcel) {
 
 // Water between two sampled cross sections is a convex trapezoid.
 export function parcelOnLand(outline,bounds,terrain) {
-  let z=Math.floor(bounds.minZ/BANK_STEP)*BANK_STEP;
-  let [west,east]=riverBanks(z,terrain);
-  for(;z<bounds.maxZ;z+=BANK_STEP){
-    const end=z+BANK_STEP,[nextWest,nextEast]=riverBanks(end,terrain);
-    if(bounds.maxX>Math.min(west,nextWest)&&bounds.minX<Math.max(east,nextEast)
-      &&outlinesOverlap(outline,[[west,z],[east,z],[nextEast,end],[nextWest,end]]))return false;
-    west=nextWest;east=nextEast;
-  }
-  return true;
+  return !waterOverlaps(outline,bounds,terrain);
 }
