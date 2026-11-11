@@ -11,6 +11,44 @@ import { getTemplate } from '../src/models.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { CITY_VERSION } from '../src/city-format.js';
 
+test('moving previews suppress only the source mesh and restore it on cancel or copy',()=>{
+  const city=new City(),lot={id:'moving-lot',x:-120,z:44,width:12,depth:12,angle:0};
+  const cottage={type:'cottage',color:0,offsetX:0,offsetZ:0,angle:0};
+  const source=city.editParcel(lot,cottage).entity;
+  const neighbor=city.editParcel({...lot,id:'neighbor',x:-104},cottage).entity;
+  const legacy=city.place('cottage',-36,11);
+  const world=new World(new Scene(),city),before=city.snapshot();
+  const drawn=id=>world.pickables.some(object=>object.userData.entityIds?.includes(id)||
+    object.children.some(child=>child.userData.entityId===id));
+  assert.ok(drawn(source.id)&&drawn(neighbor.id)&&drawn(legacy.id));
+  world.select(source.id,lot.id);
+  const valid=city.planParcelEdit({...lot,z:60},cottage);
+  assert.equal(valid.error,undefined);
+  world.showParcelPreview(valid,source.id);
+  assert.ok(!drawn(source.id)&&drawn(neighbor.id));
+  assert.equal(world.selection.visible,false);assert.equal(world.parcelSelection.visible,false);
+  assert.equal(world.preview.position.z,60);
+  const invalid=city.planParcelEdit({...lot,x:0},cottage);
+  assert.ok(invalid.error);
+  world.showParcelPreview(invalid,source.id);
+  assert.ok(!drawn(source.id)&&drawn(neighbor.id));
+  world.sync(false,new Vector3(0,0,0),440);
+  assert.ok(!drawn(source.id)&&drawn(neighbor.id));
+  assert.deepEqual(city.snapshot(),before);
+  world.clearPreview();
+  assert.ok(drawn(source.id)&&world.selection.visible&&world.parcelSelection.visible);
+  const copy=city.planParcelEdit({...lot,id:'copy',z:60},cottage);
+  world.showParcelPreview(copy);
+  assert.ok(drawn(source.id)&&drawn(neighbor.id));
+  world.select(legacy.id);
+  world.showPreview({...legacy,x:-32},true,legacy.id);
+  assert.ok(!drawn(legacy.id)&&drawn(source.id));assert.equal(world.selection.visible,false);
+  world.clearPreview();
+  assert.ok(drawn(legacy.id)&&world.selection.visible);
+  assert.deepEqual(city.snapshot(),before);
+  world.clear();
+});
+
 test('each edge of a rotated lot moves independently and preserves an occupied lot building pose',()=>{
   const city=new City(createScene('T01').city),lot=city.parcels.get('t01-cottage'),building=city.parcelOwner(lot);
   const compare=(a,b)=>assert.ok(Math.hypot(a[0]-b[0],a[1]-b[1])<1e-8,`${a} differs from ${b}`);
