@@ -136,5 +136,6 @@ BASE-02 是 R0 最小编辑、道路、水系和保存基线。T01～T07 提供�
 2. 选择「跨河桥梁」，把光标放在空旷河段上，单格预览应显示「净空不足」。按住左键，从岸上沿 X 横跨河道并在两岸各留三格。完整预览应沿坡道抬高并显示实际净空。
 3. 运行 `node --test tests/river.test.js`，用实际渲染网格检查桥底、桥墩、引桥与车人路径高度，用原型船模型验证转向及浮动极值。拆除一侧引桥后，桥孔应标为不通航。撤销或读档后应重建判定。
 4. 运行 `npx playwright test --grep T04` 检查建桥预览、船过桥及前方出现低桥时的等待与掉头。低桥可在隔离的 T04 里放在航线中央 `(12, 20)` 米附近。运行 `npx playwright test --config playwright.evidence.config.js --grep T04` 记录桥与船动态。
+5. Chromium 实录包含[船只过桥 GIF](evidence/t04-boat-passage.gif)和[低桥前等待截图](evidence/t04-boat-waiting.png)。过桥 GIF 压缩了播放时长。
 
 资源与性能证据需注明提交、场景版本、浏览器、设备、分辨率、画质及实际活动量；未测项留空。现有 `getStats()` 的绘制统计不能代替完整帧 CPU/GPU 测量。
