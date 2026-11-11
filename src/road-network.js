@@ -2,6 +2,7 @@ import { CELL } from './catalog.js';
 import { alignmentGeometry, matchingRoadEnds, offsetRoadSample } from './road-alignment.js';
 import { ROAD_DIRECTIONS, arcSurface, buildJunction, junctionLayout } from './road-junction.js';
 import { buildLaneGraph, buildRoadPaths } from './road-paths.js';
+import { bridgeRise, buildBridges } from './bridges.js';
 export { ROAD_DIRECTIONS };
 
 export const ROAD_LAYOUT = 'grid-v1';
@@ -104,20 +105,19 @@ function approachSurface(neighbor,junctionId,center){
 
 // The old tile layer is projected once into a metre-based network. Road and
 // bridge tiles share vehicle ports. Standalone paths have pedestrian ports only.
-export function buildRoadNetwork(entities,revision){
+export function buildRoadNetwork(entities,revision,terrain){
   const roads=[...entities].filter(e=>isRoad(e.type));
   const grid=roads.filter(e=>!e.alignment);
   const at=new Map(grid.map(e=>[`${e.x},${e.z}`,e]));
-  const segments=new Map(),ends=new Map();
+  const segments=new Map(),ends=new Map(),alignmentMasks=new Map();
   for(const e of grid){
-    const center=roadCenter(e),profile=ROAD_PROFILES[e.type],ports=[];
+    const profile=ROAD_PROFILES[e.type==='bridge'?'road':e.type],center=[e.x*CELL,profile.bedY,e.z*CELL],ports=[];
     let mask=0;
     for(const [side,[dx,dz]] of ROAD_DIRECTIONS.entries()){
       const neighbor=at.get(`${e.x+dx},${e.z+dz}`);
       if(!neighbor||hasTraffic(e.type)!==hasTraffic(neighbor.type))continue;
-      const other=ROAD_PROFILES[neighbor.type];
-      ports.push({side,neighborId:neighbor.id,point:[center[0]+dx*CELL/2,(profile.bedY+other.bedY)/2,center[2]+dz*CELL/2],
-        walkY:(profile.walkY+other.walkY)/2,vehicleY:(profile.vehicleY+other.vehicleY)/2});
+      ports.push({side,neighborId:neighbor.id,point:[center[0]+dx*CELL/2,profile.bedY,center[2]+dz*CELL/2],
+        walkY:profile.walkY,vehicleY:profile.vehicleY});
       mask|=1<<side;
     }
     segments.set(e.id,{id:e.id,kind:e.type,center,profile,ports,mask});
@@ -148,13 +148,25 @@ export function buildRoadNetwork(entities,revision){
           const port={point:sample.point,walkY:y+(profile.walkY-profile.bedY),vehicleY:y+(profile.vehicleY-profile.bedY)};
           segment.ports.push({...port,end:index,neighborId:neighbor.id});
           neighbor.ports.push({...port,side,neighborId:e.id});neighbor.mask|=1<<side;
+          alignmentMasks.set(neighbor.id,(alignmentMasks.get(neighbor.id)??0)|(1<<side));
           ends.delete(key);break;
         }
       }
     }
   }
+  const bridges=buildBridges(grid.filter(e=>hasTraffic(e.type)),alignmentMasks,terrain,ROAD_PROFILES.road.vehicleY);
   for(const e of grid){
     const segment=segments.get(e.id),{center,ports,mask}=segment;
+    segment.grade=bridges.grades.get(e.id);
+    segment.bridge=bridges.byTile.get(e.id);
+    if(segment.grade){
+      center[1]+=bridgeRise(segment.grade,center[0]);
+      for(const port of ports){
+        const rise=bridgeRise(segment.grade,port.point[0]);
+        port.point=[port.point[0],port.point[1]+rise,port.point[2]];
+        port.vehicleY+=rise;port.walkY+=rise;
+      }
+    }
     segment.corner=e.type==='road'?roadCorner(mask):null;
     segment.centerlines=centerlines(center,ports,segment.corner,e.rotation);
     if(hasTraffic(e.type))segment.surface=gridRoadSurface(e.type,mask);
@@ -172,6 +184,14 @@ export function buildRoadNetwork(entities,revision){
       if(key)junctions.set(key,segment.junction);
     }
   }
-  for(const segment of segments.values())Object.assign(segment,buildRoadPaths(segment,cornerPoint,cornerHeight));
-  return {revision,segments,laneGraph:buildLaneGraph(segments,revision)};
+  for(const segment of segments.values()){
+    const paths=buildRoadPaths(segment,cornerPoint,cornerHeight);
+    if(segment.grade){
+      const lift=(path,height)=>{path.points=path.points.map(([x,,z])=>[x,height+bridgeRise(segment.grade,x),z]);};
+      for(const path of paths.lanePaths)lift(path,segment.profile.vehicleY);
+      for(const path of paths.walkways)lift(path,segment.profile.walkY);
+    }
+    Object.assign(segment,paths);
+  }
+  return {revision,segments,alignmentMasks,bridges,laneGraph:buildLaneGraph(segments,revision)};
 }

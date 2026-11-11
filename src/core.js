@@ -172,19 +172,24 @@ export class City {
     if (this.canPlace(e)) return false;
     this.nextId++; this.commit([{before:null,after:e}]); return e;
   }
-  paint(type,cells) {
-    if(!BY_ID[type]||BY_ID[type].w!==1||BY_ID[type].d!==1)return false;
-    const changes = [], visited = new Set();
+  paintPlan(type,cells) {
+    if(!BY_ID[type]||BY_ID[type].w!==1||BY_ID[type].d!==1)return [];
+    const placements = [], visited = new Set();
     for (const [x,z] of cells) {
-      if(this.entities.size+changes.length>=MAX_ENTITIES)break;
+      if(this.entities.size+placements.length>=MAX_ENTITIES)break;
       if (visited.has(key(x,z))) continue; visited.add(key(x,z));
       const old = this.at(x,z);
       if (old?.type === type) continue;
-      const e = {id:this.nextId,type,x,z,rotation:0,color:0};
+      const e = {id:this.nextId+placements.length,type,x,z,rotation:0,color:0};
       if (this.canPlace(e)) continue;
-      this.nextId++; changes.push({before:null,after:e});
+      placements.push(e);
     }
-    return this.commit(changes);
+    return placements;
+  }
+  paint(type,cells) {
+    const placements=this.paintPlan(type,cells);
+    this.nextId+=placements.length;
+    return this.commit(placements.map(after=>({before:null,after})));
   }
   move(id,x,z,rotation) {
     const old = this.entities.get(id); if (!old||old.pose||old.alignment) return false;
@@ -262,7 +267,7 @@ export class City {
     this.undoStack.push(changes); return true;
   }
   expand() { if(this.radius>=4096)return false;this.radius=Math.min(4096,this.radius+CHUNK);return true; }
-  get roadNetwork(){return this._roadNetwork??=buildRoadNetwork(this.entities.values(),this.roadRevision);}
+  get roadNetwork(){return this._roadNetwork??=buildRoadNetwork(this.entities.values(),this.roadRevision,this.terrain);}
   roadNeighbors(e) {
     if(!hasTraffic(e.type))return [];
     const segment=this.roadNetwork.segments.get(e.id);

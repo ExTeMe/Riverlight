@@ -5,7 +5,7 @@ export const GROUND_Y = 0;
 export const WATER_Y = -.4;
 export const BANK_STEP = CELL/2;
 export const QUAY = Object.freeze({width:3.4,minZ:-110,maxZ:112,y:.025});
-export const PROTOTYPE_HULL = Object.freeze({width:2,length:4,margin:.5,originAboveWater:.035});
+export const PROTOTYPE_HULL = Object.freeze({width:2,length:4,margin:.5,originAboveWater:.035,top:1.215,bob:.035});
 export const PROTOTYPE_RADIUS = Math.hypot(PROTOTYPE_HULL.width/2,PROTOTYPE_HULL.length/2)+PROTOTYPE_HULL.margin;
 
 const sourceCenter = (z,terrain) => terrain==='legacy'
