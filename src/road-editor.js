@@ -1,7 +1,10 @@
-import { MAX_ELEVATED_ROAD_HEIGHT, MAX_ROAD_GRADE, MAX_ROAD_HEIGHT, arcRoadBearings, maxRoadArc, maxRoadRise, normalBearing, roadBearing, signedRoadAngle } from './road-alignment.js';
+import { MAX_ELEVATED_ROAD_HEIGHT, MAX_ROAD_GRADE, MAX_ROAD_HEIGHT, alignmentGeometry, arcRoadBearings, maxRoadArc, maxRoadRise, normalBearing, roadBearing, signedRoadAngle } from './road-alignment.js';
 import { WATER_Y } from './river.js';
 import { RoadHeightHandles } from './road-height-handles.js';
 import { gridRoadEnd, ROAD_DIRECTIONS } from './road-network.js';
+import { Vector3, Plane } from 'three';
+import { REQUIRED_UNDERSIDE } from './bridges.js';
+import { ROAD_DECK_BOTTOM } from './elevated-roads.js';
 
 const fields=[['x','X 坐标（米）'],['y','高度（米）'],['z','Z 坐标（米）'],['bearing','方向（°）']];
 const presets={straight:[0,0],s:[30,30]};
@@ -13,6 +16,8 @@ export class RoadEditor {
     this.app=app;this.form=form;
     form.innerHTML=`<h3>道路线形</h3><p class="parcel-instructions road-instructions"></p>
       <div class="parcel-scroll">
+        <label class="angle-snap"><input type="checkbox" class="road-snap" checked>吸附现有道路（Shift 临时关闭）</label>
+        <label class="angle-snap"><input type="checkbox" class="road-clear-street">清理沿线小径与街景（应用后可撤销）</label>
         <div class="scene-buttons road-grades" aria-label="高架走势" hidden>
           <button type="button" data-grade="up">上升</button><button type="button" data-grade="level">水平</button><button type="button" data-grade="down">下降</button>
         </div>
@@ -21,7 +26,13 @@ export class RoadEditor {
           <p class="road-height-range"></p>
         </div>
         <p class="parcel-feedback" role="status" aria-live="polite"></p>
-        <div class="scene-buttons" aria-label="道路形状">${[['straight','直线'],['left','左圆弧'],['right','右圆弧'],['s','S 弯']].map(([id,name])=>
+        <div class="road-elevation">
+          <label>整体升降范围<select class="road-lift-scope"><option value="segment">本段 · 相邻道路自动衔接</option><option value="route">整条相连道路</option></select></label>
+          <div class="scene-buttons"><button type="button" data-lift="-.5">整体降低 0.5 米</button><button type="button" data-lift=".5">整体抬高 0.5 米</button></div>
+          <button type="button" class="road-clearance">自动桥坡 · 保持两端连接</button>
+          <div class="road-deck" hidden><label>桥面高度（米）<input type="number" class="road-deck-height" min="0" max="32" step="any"></label><input type="range" aria-label="调整桥面高度" class="range road-deck-slider" min="0" max="32" step="any"><button type="button" class="road-remove-deck">取消自动桥坡</button></div>
+        </div>
+        <div class="scene-buttons" aria-label="道路形状">${[['auto','自动顺接'],['straight','直线'],['left','左圆弧'],['right','右圆弧'],['s','S 弯']].map(([id,name])=>
           `<button type="button" data-shape="${id}">${name}</button>`).join('')}</div>
         <div class="road-arc" hidden>
           <label for="road-arc-angle">圆弧转角 <span></span></label>
@@ -42,23 +53,37 @@ export class RoadEditor {
     this.precision=form.querySelector('.road-precision');this.redraw=form.querySelector('.road-redraw');
     this.arcControls=form.querySelector('.road-arc');this.arcSlider=this.arcControls.querySelector('input');
     this.arcLabel=this.arcControls.querySelector('span');this.arcHint=this.arcControls.querySelector('p');
+    this.liftScope=form.querySelector('.road-lift-scope');
+    this.snap=form.querySelector('.road-snap');
+    this.clearStreet=form.querySelector('.road-clear-street');
+    this.clearance=form.querySelector('.road-clearance');
+    this.deckControls=form.querySelector('.road-deck');this.deckInput=form.querySelector('.road-deck-height');this.deckSlider=form.querySelector('.road-deck-slider');
+    form.querySelector('.road-remove-deck').addEventListener('click',()=>{this.deckHeight=undefined;this.render();});
+    this.clearance.addEventListener('click',()=>{
+      const points=this.values();if(!points.every(Boolean))return;
+      this.elevated=true;this.deckHeight=Math.max(...points.map(p=>p[1]),Math.ceil((REQUIRED_UNDERSIDE-ROAD_DECK_BOTTOM+.1)*10)/10);this.render();
+    });
     this.inputs=[0,1].map(i=>fields.map(([name])=>form.elements.namedItem(`${i}-${name}`)));
     this.handles=new RoadHeightHandles(this,form.parentElement);
     this.redraw.addEventListener('click',()=>this.resetPoints());
     form.addEventListener('input',event=>{
       if(event.target===this.arcSlider){
         const sweep=Math.round(this.arcSlider.valueAsNumber);
-        if(!sweep){this.applyShape('straight');return;}
-        this.arc=sweep;
+        this.shape='arc';this.setArc(sweep);
       }
+      if(event.target===this.deckInput||event.target===this.deckSlider){this.wholeRoute=false;this.deckHeight=event.target.valueAsNumber;}
+      const edited=this.inputs.flat().includes(event.target);
+      if(edited){this.wholeRoute=false;if(this.inputs.some(row=>row[3]===event.target))this.shape='custom';}
       this.render();
     });
     form.addEventListener('click',event=>{
-      const {shape,grade}=event.target.closest('button')?.dataset??{};
+      const {shape,grade,lift}=event.target.closest('button')?.dataset??{};
+      if(lift!==undefined){this.lift(Number(lift));return;}
       if(Object.hasOwn(grades,grade)){
         this.grade=grade;
+        if(this.anchor&&grade==='up')this.elevated=true;
         const [start,end]=this.values();
-        if(start&&end&&!this.isLocked(1,end))this.write(1,this.slopeEnd([start,end],this.arcDraft([start,end]).arc));
+        if(start&&end&&!this.heightLocked(1,end))this.write(1,this.slopeEnd([start,end],this.arcDraft([start,end]).arc));
         this.render();
         return;
       }
@@ -70,22 +95,25 @@ export class RoadEditor {
       const extend=event.submitter===this.continueButton;
       if(extend&&this.continueButton.disabled)return;
       const {points:[start,end],arc}=this.arcDraft(this.values());
-      const result=this.app.city.editRoadAlignment({start,end,arc,elevated:this.elevated},this.id);
+      const result=this.app.city.editRoadAlignment(this.raw(start,end,arc),this.id,this.editOptions());
       if(result.error){this.render();this.app.ui.toast(result.error,true);return;}
       this.app.finishRoadEdit(result,extend);
     });
   }
   get active(){return !this.form.hidden;}
   get maxHeight(){return this.elevated?MAX_ELEVATED_ROAD_HEIGHT:MAX_ROAD_HEIGHT;}
-  open(entity,{ramp=false,elevated=false,anchor=null,grade='up'}={}){
+  open(entity,{ramp=false,elevated=false,anchor=null,grade='level'}={}){
     this.id=entity?.id;this.ramp=ramp;this.elevated=elevated||!!entity?.alignment.elevated;
     this.arc=entity?.alignment.arc??0;
-    this.anchor=anchor;this.grade=grade;this.form.hidden=false;this.precision.open=!!entity||(!ramp&&!this.elevated);
+    this.deckHeight=entity?.alignment.deckHeight;
+    this.original=entity;this.wholeRoute=false;this.routeDelta=0;this.shape=entity?(this.arc?'arc':'custom'):'auto';
+    this.anchor=anchor;this.grade=ramp?'up':grade;this.form.hidden=false;this.precision.open=false;
+    this.liftScope.value='segment';this.liftScope.disabled=!entity;
     this.title.textContent=this.elevated?(entity?'调整高架道路':'铺设高架道路'):ramp?'铺设坡道':'道路线形';
     this.heightRule.textContent=`端点高度 0–${this.maxHeight} 米 · 坡度上限 ${MAX_ROAD_GRADE*100}%`;
-    this.gradeButtons.hidden=!this.elevated;this.continueButton.hidden=!this.elevated||!!entity;
+    this.gradeButtons.hidden=false;this.continueButton.hidden=!!entity;
     this.instructions.textContent=anchor?'已接续原路端点。点选下一段终点，可选上升、水平或下降。'
-      :entity?'拖动地图上的高度手柄，或在精细调整中输入坐标与高度。':'拖出一段道路，或依次点选两端。拖动地图上的高度手柄来升降端点。';
+      :entity?'拖动圆点移动端点，拖动高度标签升降。连接处高度联动，应用后可一次撤销。':'拖出道路或点选两端，再拖动圆点调整位置。高度标签可升降；Shift 暂停吸附。';
     if(!entity){this.resetPoints();return;}
     const {start,end}=entity.alignment;
     this.locks=[null,null];
@@ -96,7 +124,7 @@ export class RoadEditor {
     this.render();
   }
   resetPoints(){
-    this.arc=0;
+    this.wholeRoute=false;this.deckHeight=undefined;this.firstSource=null;
     this.locks=[this.anchor,null];
     this.write(0,this.anchor??['',0,'',0]);this.write(1,['',0,'',0]);this.render();
   }
@@ -107,13 +135,56 @@ export class RoadEditor {
     return values.every(Number.isFinite)?values:null;
   });}
   isLocked(index,point){
+    if(!point)return false;
     const lock=this.locks[index];
     return !!lock&&lock[0]===point[0]&&lock[2]===point[2];
   }
+  heightLocked(index,point){
+    if(!this.isLocked(index,point))return false;
+    if(this.id==null)return true;
+    const port=this.app.city.roadNetwork.segments.get(this.id).ports.find(p=>p.end===index);
+    return !this.app.city.entities.get(port?.neighborId)?.alignment;
+  }
+  editOptions(){return {connected:true,wholeRoute:this.wholeRoute,...(this.wholeRoute?{routeDelta:this.routeDelta}:{}),clearStreet:this.clearStreet.checked};}
+  raw(start,end,arc){return {start,end,arc,elevated:this.elevated,...(this.deckHeight!==undefined?{deckHeight:this.deckHeight}:{})};}
+  lift(delta){
+    let points=this.values();if(!points.every(Boolean))return;
+    const wasWhole=this.wholeRoute;this.wholeRoute=this.id!=null&&this.liftScope.value==='route';
+    if(this.wholeRoute){
+      const original=[this.original.alignment.start,this.original.alignment.end];
+      delta=(wasWhole?this.routeDelta:0)+delta;points=original;
+    }
+    if(!this.wholeRoute&&points.some((p,i)=>this.heightLocked(i,p))){this.app.ui.toast('连接地面的端点保持原高；可调整桥面高度，或选择整条相连道路升降',true);return;}
+    const heights=points.filter((p,i)=>!this.wholeRoute||!this.heightLocked(i,p)).map(p=>p[1]);
+    if(this.deckHeight!==undefined)heights.push(this.wholeRoute?(this.original.alignment.deckHeight??this.deckHeight):this.deckHeight);
+    if(!heights.length){this.app.ui.toast('两端都连接地面，可用自动桥坡单独升降桥面');return;}
+    const low=-Math.min(...heights),high=32-Math.max(...heights);
+    delta=Math.max(low,Math.min(high,delta));
+    this.routeDelta=delta;
+    this.elevated=true;
+    if(this.deckHeight!==undefined)this.deckHeight=(this.wholeRoute?(this.original.alignment.deckHeight??this.deckHeight):this.deckHeight)+delta;
+    points.forEach((p,i)=>this.write(i,[p[0],this.wholeRoute&&this.heightLocked(i,p)?p[1]:Math.round((p[1]+delta)*100)/100,p[2],p[3]]));this.render();
+  }
+  setArc(sweep){
+    const points=this.values();if(!points.every(Boolean))return;
+    const locked=points.map((p,i)=>this.isLocked(i,p));
+    if(locked.every(Boolean))return;
+    this.arc=sweep;
+    if(locked.some(Boolean)){
+      const index=locked[0]?0:1,anchor=points[index],free=points[1-index];
+      const chord=Math.hypot(free[0]-anchor[0],free[2]-anchor[2]);
+      const heading=(anchor[3]+(index===0?-sweep/2:sweep/2)+(index===1?180:0))*Math.PI/180;
+      this.write(1-index,[anchor[0]+chord*Math.cos(heading),free[1],anchor[2]+chord*Math.sin(heading),free[3]]);
+    }
+  }
   applyShape(shape){
-    const points=this.values();
-    if(!points.every(Boolean))return;
+    let points=this.values();
+    this.shape=shape;
+    if(!points.every(Boolean)){this.render();return;}
     this.arc=arcs[shape]??0;
+    if(this.arc)this.setArc(this.arc);
+    if(shape==='straight')this.setArc(0);
+    points=this.values();
     const preset=presets[shape];
     if(preset){
       const angle=roadBearing(...points);
@@ -122,15 +193,24 @@ export class RoadEditor {
     this.render();
   }
   arcDraft(points){
-    if(!this.arc||!points.every(Boolean))return {points,arc:0};
+    if(!points.every(Boolean))return {points,arc:0};
     const [start,end]=points,index=points.findIndex((point,i)=>this.isLocked(i,point));
     let arc=this.arc;
+    if(this.shape==='auto'){
+      if(index<0){const bearing=normalBearing(roadBearing(start,end));return {arc:0,points:points.map(p=>[...p.slice(0,3),bearing])};}
+      const sweep=(index===0?2:-2)*signedRoadAngle(points[index][3]-roadBearing(start,end));
+      const both=points.every((p,i)=>this.isLocked(i,p));
+      if(Math.abs(sweep)<=180&&(!both||Math.abs(signedRoadAngle(arcRoadBearings(start,end,sweep)[1]-end[3]))<1e-6))arc=sweep;
+      else return {arc:0,points:points.map((p,i)=>this.isLocked(i,p)?p:[...p.slice(0,3),normalBearing(roadBearing(start,end))])};
+    }
+    if(Math.abs(arc)<1e-6)return {points,arc:0};
     if(index<0){
       const limit=maxRoadArc(start,end);
       if(limit>0)arc=Math.sign(arc)*Math.min(Math.abs(arc),limit);
     }else{
       const lockedSweep=(index===0?2:-2)*signedRoadAngle(points[index][3]-roadBearing(start,end));
-      if(Math.abs(lockedSweep)>1e-8)arc=lockedSweep;
+      if(Math.abs(lockedSweep)>180)return {arc:0,points};
+      arc=lockedSweep;
     }
     const bearings=arcRoadBearings(start,end,arc);
     return {arc,points:points.map((p,i)=>this.isLocked(i,p)?p:[...p.slice(0,3),bearings[i]])};
@@ -142,51 +222,86 @@ export class RoadEditor {
   }
   heightRanges(points,arc){
     const rise=this.rise(points,arc);
-    if(rise===null)return null;
+    if(rise===null)return points.map((point,i)=>this.heightLocked(i,point)?[point[1],point[1]]:[0,this.maxHeight]);
     return points.map((point,i)=>{
-      if(this.isLocked(i,point))return [this.locks[i][1],this.locks[i][1]];
+      if(this.heightLocked(i,point))return [this.locks[i][1],this.locks[i][1]];
       const y=points[1-i][1];
       const low=Math.max(0,Math.ceil((y-rise-1e-9)*100)/100);
       const high=Math.min(this.maxHeight,Math.floor((y+rise+1e-9)*100)/100);
-      return low<=high?[low,high]:null;
+      let minimum=low,maximum=high;
+      if(this.id!=null&&!this.wholeRoute)for(const port of this.app.city.roadNetwork.segments.get(this.id).ports.filter(p=>p.end===i)){
+        const neighbor=this.app.city.entities.get(port.neighborId);if(!neighbor?.alignment)continue;
+        const a=neighbor.alignment,other= a.start[0]===point[0]&&a.start[2]===point[2]?a.end:a.start;
+        const rise=maxRoadRise(a.start,a.end,a.arc);
+        minimum=Math.max(minimum,other[1]-rise);maximum=Math.min(maximum,other[1]+rise);
+      }
+      return minimum<=maximum?[minimum,maximum]:null;
     });
   }
   writeHeight(index,y){
     if(this.inputs[index][1].valueAsNumber===y)return;
-    this.inputs[index][1].value=y;this.render();
+    this.wholeRoute=false;this.inputs[index][1].value=y;this.render();
   }
   setHeight(index,y){
     const {points,arc}=this.arcDraft(this.values());
     const range=points.every(Boolean)&&this.heightRanges(points,arc)?.[index];
-    if(!range||this.isLocked(index,points[index]))return;
+    if(!range||this.heightLocked(index,points[index]))return;
     this.writeHeight(index,Math.max(range[0],Math.min(range[1],Math.round(y*10)/10)));
   }
   point(x,z,index){
-    const radius=1.5,bounds={minX:x-radius,maxX:x+radius,minZ:z-radius,maxZ:z+radius};
-    let closest=null,distance=radius;
+    const radius=24,bounds={minX:x-radius,maxX:x+radius,minZ:z-radius,maxZ:z+radius};
+    let closest=null,distance=14,source=null;
+    const {camera,canvas,pointer,keys}=this.app,rect=canvas.getBoundingClientRect(),project=new Vector3();
+    const cursor=[(pointer.x+1)*rect.width/2,(1-pointer.y)*rect.height/2];
+    if(keys.has('shift')||!this.snap.checked)return {point:[x,0,z,0],snapped:false};
     for(const e of this.app.city.queryFootprints(bounds))if(e.type==='road'&&e.id!==this.id){
       const segment=this.app.city.roadNetwork.segments.get(e.id);
       const ends=e.alignment?[e.alignment.start,e.alignment.end]:ROAD_DIRECTIONS.map((_,side)=>gridRoadEnd(segment,side));
       for(const [end,point] of ends.entries()){
-        const d=Math.hypot(point[0]-x,point[2]-z);
+        project.set(point[0],point[1],point[2]).project(camera);
+        const d=Math.hypot((project.x+1)*rect.width/2-cursor[0],(1-project.y)*rect.height/2-cursor[1]);
         if(d>=distance||segment.ports.some(port=>(e.alignment?port.end:port.side)===end&&port.neighborId!==this.id))continue;
         const [px,y,pz,bearing]=point;
-        closest=[px,y,pz,normalBearing(bearing+((e.alignment?end:1)===index?180:0))];distance=d;
+        closest=[px,y,pz,normalBearing(bearing+((e.alignment?end:1)===index?180:0))];distance=d;source=e.alignment?null:e.id;
       }
     }
-    return {point:closest??[Math.round(x*2)/2,0,Math.round(z*2)/2,0],snapped:!!closest};
+    return {point:closest??[Math.round(x*10)/10,0,Math.round(z*10)/10,0],snapped:!!closest,source};
+  }
+  faceConnection(item,target,index){
+    // A grid road is selected as a road, rather than forcing the user to hit a
+    // two-metre side precisely. Choose the free exit facing the drawn route.
+    if(item.source){
+      const segment=this.app.city.roadNetwork.segments.get(item.source);
+      let best=null,score=Infinity;
+      for(let side=0;side<4;side++){
+        if(segment.ports.some(p=>p.side===side))continue;
+        const p=gridRoadEnd(segment,side),bearing=normalBearing(p[3]+(index?180:0));
+        const heading=index?roadBearing(target,p):roadBearing(p,target);
+        const angle=Math.abs(signedRoadAngle(bearing-heading));
+        if(angle<score){score=angle;best=[...p.slice(0,3),bearing];}
+      }
+      if(best)item.point=best;
+    }
+    return item;
   }
   candidate(start,end){
+    start={...start,point:[...start.point]};end={...end,point:[...end.point]};
+    this.faceConnection(start,end.point,0);this.faceConnection(end,start.point,1);
+    this.locks=[start,end].map(item=>item.snapped?item.point:null);
     const angle=normalBearing(roadBearing(start.point,end.point));
     const orient=({point,snapped})=>snapped?point:[...point.slice(0,3),angle];
-    const points=[orient(start),orient(end)];
-    if((this.ramp||this.elevated)&&!end.snapped)points[1]=this.slopeEnd(points);
+    let points=[orient(start),orient(end)];
+    const draft=this.arcDraft(points);points=draft.points;
+    if(!end.snapped){
+      points[1]=[points[1][0],start.point[1],...points[1].slice(2)];
+      if(this.ramp||this.elevated||this.grade!=='level')points[1]=this.slopeEnd(points,draft.arc);
+    }
     return points;
   }
   slopeEnd(points,arc){
     const [start,end]=points,range=this.heightRanges(points,arc)?.[1];
     if(!range)return end;
-    const delta=this.elevated?grades[this.grade]:start[1]===this.maxHeight?-2:2;
+    const delta=grades[this.grade];
     const target=Math.round((start[1]+delta)*100)/100;
     return [end[0],Math.max(range[0],Math.min(range[1],target)),end[2],end[3]];
   }
@@ -208,13 +323,15 @@ export class RoadEditor {
     const [start,end]=this.values();
     if(this.draw&&Math.hypot(event.clientX-this.draw.x,event.clientY-this.draw.y)<7)return;
     if(!this.draw&&(!start||end))return;
-    this.pendingHover=[this.draw?.first??{point:start,snapped:this.isLocked(0,start)},x,z];
+    this.pendingHover=[this.draw?.first??{point:start,snapped:this.isLocked(0,start),source:this.firstSource},x,z];
     if(this.hoverFrame)return;
     this.hoverFrame=requestAnimationFrame(()=>{
       this.hoverFrame=null;
       const [first,x,z]=this.pendingHover;
       this.pendingHover=null;
+      const locks=this.locks;
       this.render(this.candidate(first,this.point(x,z,1)),true);
+      this.locks=locks;
     });
   }
   cancelHover(){if(this.hoverFrame)cancelAnimationFrame(this.hoverFrame);this.hoverFrame=null;this.pendingHover=null;}
@@ -222,13 +339,13 @@ export class RoadEditor {
     const [start,end]=this.values();
     if(end&&this.id==null)return;
     if(!start||end){
-      this.arc=0;
       const first=this.point(x,z,0);
+      this.firstSource=first.source;
       this.locks=[first.snapped?first.point:null,null];
       this.write(0,first.point);this.write(1,['',0,'',0]);
       this.render();
     }else{
-      this.setEndpoints({point:start,snapped:this.isLocked(0,start)},this.point(x,z,1));
+      this.setEndpoints({point:start,snapped:this.isLocked(0,start),source:this.firstSource},this.point(x,z,1));
     }
   }
   setEndpoints(start,end){
@@ -236,15 +353,30 @@ export class RoadEditor {
     this.candidate(start,end).forEach((point,i)=>this.write(i,point));
     this.render();
   }
+  movePoint(index,clientX,clientY){
+    const points=this.values();if(!points.every(Boolean))return;
+    const {canvas,pointer,raycaster,camera}=this.app,rect=canvas.getBoundingClientRect();
+    pointer.set((clientX-rect.left)/rect.width*2-1,-(clientY-rect.top)/rect.height*2+1);
+    raycaster.setFromCamera(pointer,camera);
+    const point=new Vector3();
+    if(!raycaster.ray.intersectPlane(new Plane(new Vector3(0,1,0),-points[index][1]),point))return;
+    const target=this.faceConnection(this.point(point.x,point.z,index),points[1-index],index);
+    const p=target.snapped?target.point:[target.point[0],points[index][1],target.point[2],points[index][3]];
+    this.locks[index]=target.snapped?p:null;this.write(index,p);this.render();
+  }
   render(values=this.values(),hover=false){
     if(!hover)this.cancelHover();
     const {points:[start,end],arc}=this.arcDraft(values);
     if(!hover)for(const [i,point] of [start,end].entries()){
-      this.inputs[i][3].readOnly=!!arc;
-      if(arc&&point)this.inputs[i][3].value=point[3];
+      const connected=this.id!=null&&this.locks[i];
+      for(const field of [0,2])this.inputs[i][field].readOnly=!!connected;
+      this.inputs[i][3].readOnly=!!arc||!!connected;
+      if(point)this.inputs[i][3].value=point[3];
     }
-    const plan=start&&end?this.app.city.planRoadAlignment({start,end,arc,elevated:this.elevated},this.id):null;
-    this.app.world.showRoadPreview(plan?.geometry,plan?.error,this.id);
+    const plan=start&&end?this.app.city.planRoadAlignment(this.raw(start,end,arc),this.id,this.editOptions()):null;
+    const profiles=plan?.changes?.filter(c=>c.after).map(c=>alignmentGeometry(c.after.alignment).samples).filter(Boolean);
+    const fallback=start&&end?[{point:start.slice(0,3),direction:[1,0]},{point:end.slice(0,3),direction:[1,0]}]:null;
+    this.app.world.showRoadPreviews(profiles?.length?profiles:plan?.geometry?.samples?[plan.geometry.samples]:fallback?[fallback]:[],plan?.error,this.id,[...plan?.obstacles??[],...plan?.removed??[]]);
     this.submit.disabled=hover||!plan||!!plan.error;
     this.continueButton.disabled=this.submit.disabled||this.isLocked(1,end);
     this.feedback.classList.toggle('invalid',!!plan?.error);
@@ -256,30 +388,36 @@ export class RoadEditor {
       plan.structure?.bottomY!=null?`水面净空 ${(plan.structure.bottomY-WATER_Y).toFixed(2)} 米`:'',
     ]:[];
     const message=plan?plan.error:start?'请选择终点':'请拖出道路或点选起点';
-    this.feedback.textContent=[message,...measurements].filter(Boolean).join(' · ');
+    const roadCount=plan?.changes?.filter(c=>c.after).length;
+    this.feedback.textContent=[message,...measurements,roadCount>1?`联动调整 ${roadCount} 段道路，保持连接`:null,plan?.removed?.length?`将清理 ${plan.removed.length} 个小径或街景，可一起撤销`:null].filter(Boolean).join(' · ');
+    this.heightRule.textContent=`端点高度 0–${this.maxHeight} 米 · 坡度上限 ${MAX_ROAD_GRADE*100}%${this.deckHeight!==undefined?' · 桥坡随桥高自动延长':''}`;
+    this.deckControls.hidden=this.deckHeight===undefined;
+    this.deckInput.disabled=this.deckSlider.disabled=this.deckHeight===undefined;
+    if(this.deckHeight!==undefined){this.deckInput.value=this.deckHeight;this.deckSlider.value=this.deckHeight;}
     const points=start&&end?[start,end]:null;
     const ranges=points&&this.heightRanges(points,arc);
     this.rangeText.textContent=ranges?.map((range,i)=>{
       const name=i?'终点':'起点';
       if(!range)return `${name}超出高度范围`;
-      if(this.isLocked(i,points[i]))return `${name}接路 ${range[0].toFixed(2)} 米`;
+      if(this.heightLocked(i,points[i]))return `${name}接路 ${range[0].toFixed(2)} 米`;
       return `${name}可调 ${range[0].toFixed(2)}–${range[1].toFixed(2)} 米`;
     }).join(' · ')??'';
-    this.handles.set(!hover&&ranges?points:null,ranges?.map((range,i)=>!range||this.isLocked(i,points[i])));
+    this.handles.set(!hover?points:null,points?.map((p,i)=>this.heightLocked(i,p)),points?.map((p,i)=>this.id!=null?this.isLocked(i,p):!!this.anchor&&i===0));
     this.redraw.hidden=hover||this.id!=null||!start;
     this.arcControls.hidden=hover||!points;
     if(points&&!hover){
       const limit=Math.floor(maxRoadArc(start,end)+1e-8);
-      const locked=points.some((p,i)=>this.isLocked(i,p));
+      const locked=points.every((p,i)=>this.isLocked(i,p));
       this.arcSlider.min=-limit;this.arcSlider.max=limit;this.arcSlider.value=arc;
       this.arcSlider.disabled=locked||!limit;
       this.arcLabel.textContent=arc?`${arc>0?'左':'右'} ${Number(Math.abs(arc).toFixed(1))}°`:'';
-      this.arcHint.textContent=locked?'接路方向固定圆弧。可在精细调整中移动另一端。':'拖动可改变转角与半径。';
+      this.arcHint.textContent=locked?'两端接路，方向随原路保持。':'拖动调整弯曲；已接路时自动移动自由端，保持相切。';
     }
     for(const button of this.gradeButtons.querySelectorAll('button')){
       button.setAttribute('aria-pressed',String(button.dataset.grade===this.grade));
-      button.disabled=!!end&&this.isLocked(1,end);
+      button.disabled=!!end&&this.heightLocked(1,end);
     }
-    for(const button of this.form.querySelectorAll('[data-shape]'))button.disabled=hover||!start||!end;
+    for(const button of this.form.querySelectorAll('[data-shape]'))button.setAttribute('aria-pressed',String(button.dataset.shape===this.shape));
+    for(const button of this.form.querySelectorAll('[data-lift],.road-clearance'))button.disabled=!points;
   }
 }

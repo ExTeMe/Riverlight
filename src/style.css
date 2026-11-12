@@ -32,6 +32,12 @@
 .road-arc label{display:flex;justify-content:space-between;font-size:12px;font-weight:600}
 .road-arc .range{width:100%;margin:8px 0 0}
 .road-continue{margin-top:7px;padding:7px 10px;border:1px solid #98ab94;border-radius:8px;color:#344f3b;font-size:12px;font-weight:600}
+.road-editor{max-height:calc(100vh - 135px)}
+#app:has(.road-editor:not([hidden]))>.catalog,#app:has(.road-editor:not([hidden]))>.scene-panel,#app:has(.road-editor:not([hidden]))>.intro{display:none}
+#app:has(.road-editor:not([hidden]))>.world-controls,#app:has(.road-editor:not([hidden]))>.view-controls{bottom:24px}
+.road-elevation{padding:7px 0}.road-clearance{font-size:12px;border:1px solid #98ab94;border-radius:8px;padding:6px 9px;width:100%}
+.road-position-handle{width:23px;height:23px;border:3px solid #f8fff5;background:#456b54}
+.road-position-handle:disabled{background:#839282;opacity:.8}
 .selection-panel{z-index:5}#app:has(.scene-panel)>.selection-panel{left:auto;right:24px;top:100px}
 @media(max-height:700px){.parcel-editor{top:78px;max-height:calc(100vh - 252px)}}@media(max-width:760px){.parcel-editor{right:12px}}
 @media(max-height:740px){

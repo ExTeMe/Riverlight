@@ -226,14 +226,15 @@ test('road height guidance uses placement grade limits and allows an 8 m rise in
   assert.equal(maxRoadRise(start,short),1.6);
   assert.match(city.planRoadAlignment({start,end:[-80,1.61,-53,90]}).error,/坡度超过 12%/);
   const curved=[-80,0,-43,60],rise=maxRoadRise(start,curved);
-  assert.equal(rise,2.47);
+  assert.equal(rise,2.49);
   assert.equal(city.planRoadAlignment({start,end:[-80,rise,-43,60]}).error,null);
   assert.match(city.planRoadAlignment({start,end:[-80,rise+.01,-43,60]}).error,/坡度超过 12%/);
   const end=[-80,8,27,90],result=city.editRoadAlignment({start,end});
   assert.ok(result.changed,result.error);
   assert.equal(maxRoadRise(start,end),8);
   assert.deepEqual(new City(city.snapshot()).entities.get(result.entity.id).alignment,{start,end});
-  assert.match(city.planRoadAlignment({start,end:[-80,8,48,90]},result.entity.id).error,/6–120 米/);
+  assert.equal(city.planRoadAlignment({start,end:[-80,8,48,90]},result.entity.id).error,null);
+  assert.match(city.planRoadAlignment({start,end:[-80,8,440,90]},result.entity.id).error,/6–512 米/);
 });
 
 test('circular roads keep a constant radius, share endpoint tangents and persist independently of Bézier roads',()=>{

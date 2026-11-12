@@ -1,6 +1,6 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { ALIGNMENT_ROAD_VERSION, CITY_VERSION, ELEVATED_ROAD_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
+import { ALIGNMENT_ROAD_VERSION, ARC_ROAD_VERSION, CITY_VERSION, ELEVATED_ROAD_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
 import { usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity } from './parcel.js';
 import { EDGE_EPSILON, boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
 import { buildRoadNetwork, hasTraffic, isRoad, nextRoadRevision, readGridRoad, readRoadHeader, roadCenter, roadHeader } from './road-network.js';
@@ -93,10 +93,16 @@ export class City {
     if(this.queryFootprints(bounds).some(e=>e.id!==ownerId&&reservesLand(e)&&overlapsEntity(outline,e,this.terrain)))return '地块与道路或建筑重叠';
     return null;
   }
-  canPlace(e, ignoreId, {allowHistoricBank=false}={}) {
+  canPlace(e, ignoreId, {allowHistoricBank=false,roadChanges=null,onRoadConflict=null,removedIds=new Set()}={}) {
     if (!BY_ID[e.type]) return '未知建筑';
     if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
     if(e.alignment){
+      const blocked=(other,message)=>{onRoadConflict?.(other);return message;};
+      // Validate the proposed transaction against its final state, never against
+      // the old neighbour at a shared node. Preview does not mutate the city.
+      const query=bounds=>roadChanges
+        ? [...this.queryFootprints(bounds).filter(other=>!roadChanges.has(other.id)&&!removedIds.has(other.id)),...roadChanges.values()]
+        : this.queryFootprints(bounds).filter(other=>!removedIds.has(other.id));
       const geometry=alignmentGeometry(e.alignment);
       if(geometry.error)return geometry.error;
       const {bounds,sections}=geometry;
@@ -109,7 +115,7 @@ export class City {
       }
       for(const [i,point] of [e.alignment.start,e.alignment.end].entries()){
         const [x,y,z]=point;
-        for(const other of this.queryFootprints(aroundPoint(x,z)))if(other.alignment&&other.id!==ignoreId){
+        for(const other of query(aroundPoint(x,z)))if(other.alignment&&other.id!==ignoreId){
           for(const [j,end] of [other.alignment.start,other.alignment.end].entries()){
             if(x===end[0]&&z===end[2]&&!matchingRoadEnds(point,i,end,j)&&!roadEndsSeparated(e.alignment,other.alignment,y,end[1])){
               return '相接端点须共用高度与切线，请在画布上吸附端点';
@@ -117,16 +123,16 @@ export class City {
           }
         }
       }
-      for(const other of this.queryFootprints(bounds)){
+      for(const other of query(bounds)){
         if(other.id===ignoreId)continue;
         if(other.alignment){
-          if(roadConflict(e.alignment,other.alignment,this.terrain))return structure?'桥底净空不足或桥墩占用下层道路':'道路与其他物件重叠';
+          if(roadConflict(e.alignment,other.alignment,this.terrain))return blocked(other,structure?'桥底净空不足或桥墩占用下层道路':'道路与其他物件重叠');
           continue;
         }
         const height=obstacleHeight(other),conflict=roadObstacleConflict(e.alignment,footprintOutline(other),height,this.terrain);
-        if(conflict==='pier')return `桥墩占用${BY_ID[other.type].name}，请调整走向`;
-        if(conflict==='height')return `${BY_ID[other.type].name}上方桥底净空不足，桥底须达到 ${height} 米`;
-        if(conflict)return '道路与其他物件重叠';
+        if(conflict==='pier')return blocked(other,`桥墩占用${BY_ID[other.type].name}（橙色标记），请调整走向`);
+        if(conflict==='height')return blocked(other,`${BY_ID[other.type].name}上方桥底净空不足，桥底须达到 ${height} 米${e.alignment.deckHeight!==undefined?'；请把落点移远，为桥坡留出长度':''}`);
+        if(conflict)return blocked(other,`${BY_ID[other.type].name}挡住道路（橙色标记），请拖动端点绕开`);
       }
       return null;
     }
@@ -235,21 +241,71 @@ export class City {
     const e = {...old,x,z,rotation}; if (this.canPlace(e,id)) return false;
     return this.commit([{before:{...old},after:e}]);
   }
-  planRoadAlignment(raw,id) {
+  planRoadAlignment(raw,id,{connected=false,wholeRoute=false,routeDelta,clearStreet=false}={}) {
     const before=id==null?null:this.entities.get(id);
     if(id!=null&&!before?.alignment)return {error:'请选择可编辑的曲线道路'};
     if(!before&&this.nextId>=Number.MAX_SAFE_INTEGER)return {error:'当前城市物件编号已达到上限'};
+    if(!before&&this.entities.size>=MAX_ENTITIES)return {error:'当前城市物件已达到存档容量上限'};
     let alignment;
     try{alignment=readAlignment(raw);}catch(error){return {error:error.message};}
     const entity={id:before?.id??this.nextId,type:'road',color:before?.color??0,alignment};
-    return {entity,before,geometry:alignmentGeometry(alignment),structure:elevatedStructure(alignment,this.terrain),error:this.canPlace(entity,before?.id)};
+    const result={entity,before,geometry:alignmentGeometry(alignment),structure:elevatedStructure(alignment,this.terrain)};
+    const changes=new Map([[entity.id,entity]]);
+    if(before&&connected){
+      const delta=routeDelta??alignment.start[1]-before.alignment.start[1];
+      if(!Number.isFinite(delta))return {...result,error:'整体升降高度无效'};
+      const queue=[id],visited=new Set();
+      while(queue.length){
+        const current=queue.shift();if(visited.has(current))continue;visited.add(current);
+        const source=this.entities.get(current),updated=changes.get(current);
+        for(const port of this.roadNetwork.segments.get(current).ports){
+          const key=port.end?'end':'start',oldPoint=source.alignment[key],point=updated.alignment[key];
+          if([0,2,3].some(i=>Math.abs(point[i]-oldPoint[i])>1e-7))return {...result,error:'已连接端点保持位置和方向；请拖动自由端或调整桥面高度'};
+          const neighbor=this.entities.get(port.neighborId);
+          if(!neighbor?.alignment){
+            if(point[1]!==oldPoint[1])return {...result,error:'连接地面路口的端点须保持地面高度；可调整另一端或中间桥段'};
+            continue;
+          }
+          const otherPort=this.roadNetwork.segments.get(neighbor.id).ports.find(p=>p.neighborId===current);
+          const otherKey=otherPort.end?'end':'start';
+          if(wholeRoute){
+            if(!changes.has(neighbor.id)){
+              const a=neighbor.alignment;
+              const raised=(point,end)=>{
+                const fixed=this.roadNetwork.segments.get(neighbor.id).ports.some(p=>p.end===end&&!this.entities.get(p.neighborId)?.alignment);
+                return [point[0],fixed?point[1]:Math.round((point[1]+delta)*1e6)/1e6,point[2],point[3]];
+              };
+              try{changes.set(neighbor.id,{...neighbor,alignment:readAlignment({...a,elevated:true,...(a.deckHeight!==undefined?{deckHeight:a.deckHeight+delta}:{}),
+                start:raised(a.start,0),end:raised(a.end,1)})});}
+              catch(error){return {...result,error:error.message};}
+              queue.push(neighbor.id);
+            }
+          }else if(point[1]!==oldPoint[1]){
+            const a=(changes.get(neighbor.id)??neighbor).alignment,p=a[otherKey];
+            changes.set(neighbor.id,{...neighbor,alignment:readAlignment({...a,elevated:a.elevated||point[1]>8,
+              [otherKey]:[p[0],point[1],p[2],p[3]]})});
+          }
+        }
+      }
+    }
+    const edits=[...changes.values()].map(after=>({before:this.entities.get(after.id)??null,after}));
+    const removedIds=new Set(),obstacles=[];
+    if(clearStreet)for(const {after} of edits){
+      const geometry=alignmentGeometry(after.alignment);if(geometry.error)continue;
+      for(const other of this.queryFootprints(geometry.bounds))if(other.type==='path'||BY_ID[other.type].category==='detail'&&other.type!=='pier'){
+        if(roadObstacleConflict(after.alignment,footprintOutline(other),obstacleHeight(other),this.terrain))removedIds.add(other.id);
+      }
+    }
+    const error=edits.map(({after})=>this.canPlace(after,after.id,{roadChanges:changes,removedIds,onRoadConflict:other=>obstacles.push(other)})).find(Boolean)??null;
+    const removed=[...removedIds].map(id=>this.entities.get(id));
+    return {...result,changes:[...edits,...removed.map(before=>({before,after:null}))],error,obstacles,removed};
   }
-  editRoadAlignment(raw,id) {
-    const {entity,before,error}=this.planRoadAlignment(raw,id);
+  editRoadAlignment(raw,id,options) {
+    const {entity,before,error,changes}=this.planRoadAlignment(raw,id,options);
     if(error)return {error,changed:false};
-    if(before&&before.alignment.elevated===entity.alignment.elevated&&before.alignment.arc===entity.alignment.arc
+    if(changes.length===1&&before&&before.alignment.elevated===entity.alignment.elevated&&before.alignment.arc===entity.alignment.arc&&before.alignment.deckHeight===entity.alignment.deckHeight
       &&['start','end'].every(key=>before.alignment[key].every((n,i)=>n===entity.alignment[key][i])))return {entity:before,changed:false};
-    const changed=this.commit([{before,after:entity}]);
+    const changed=this.commit(changes);
     if(changed&&!before)this.nextId++;
     return {entity,changed,error:this.editError};
   }
@@ -318,10 +374,11 @@ export class City {
   }
   snapshotHeader(version=VERSION) {
     const mixed=this.alignmentCount>0;
-    if(![2,PARCEL_VERSION,GRID_ROAD_VERSION,ALIGNMENT_ROAD_VERSION,ELEVATED_ROAD_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size)
+    if(![2,PARCEL_VERSION,GRID_ROAD_VERSION,ALIGNMENT_ROAD_VERSION,ELEVATED_ROAD_VERSION,ARC_ROAD_VERSION,VERSION].includes(version)||(version===2&&this.parcels.size)
       ||(version<ALIGNMENT_ROAD_VERSION&&mixed)
       ||(version<ELEVATED_ROAD_VERSION&&(this.terrain==='strait'||mixed&&[...this.entities.values()].some(e=>e.alignment?.elevated)))
-      ||(version<VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.arc)))throw new Error('无法导出为该存档格式');
+      ||(version<ARC_ROAD_VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.arc))
+      ||(version<VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.deckHeight!==undefined)))throw new Error('无法导出为该存档格式');
     return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
       ...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{})};
   }
@@ -379,7 +436,8 @@ export class City {
       if(e.alignment!==undefined){
         if(e.type!=='road'||['x','z','center','lot','rotation','parcelId'].some(key=>e[key]!==undefined))throw new Error('曲线道路记录无效');
         if(e.alignment?.elevated&&raw.version<ELEVATED_ROAD_VERSION)throw new Error('高架道路需要 v6 存档');
-        if(e.alignment?.arc&&raw.version<VERSION)throw new Error('圆弧道路需要 v7 存档');
+        if(e.alignment?.arc&&raw.version<ARC_ROAD_VERSION)throw new Error('圆弧道路需要 v7 存档');
+        if(e.alignment?.deckHeight!==undefined&&raw.version<VERSION)throw new Error('自动桥坡需要 v8 存档');
         e={id:e.id,type:e.type,color:e.color,alignment:readAlignment(e.alignment)};
       }else if(raw.version>=PARCEL_VERSION&&usesParcel(e.type)){
         if(used.has(e.parcelId))throw new Error('每个地块只能有一栋主建筑');

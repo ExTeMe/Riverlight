@@ -2,7 +2,7 @@ import { CELL } from './catalog.js';
 import { boundsContain, outlineBounds, outlineContains, outlinesOverlap } from './outline.js';
 
 const MIN_LENGTH = 6;
-const MAX_LENGTH = 120;
+const MAX_LENGTH = 512;
 const MIN_RADIUS = 6;
 const ARC_TOLERANCE = 1e-8;
 export const MAX_ROAD_HEIGHT = 8;
@@ -43,6 +43,7 @@ export function readAlignment(raw) {
   const arc=raw?.arc===undefined?0:raw.arc;
   if(!Number.isFinite(arc)||Math.abs(arc)>180)throw new Error('圆弧转角须为 -180° 至 180°');
   const maxHeight=raw?.elevated?MAX_ELEVATED_ROAD_HEIGHT:MAX_ROAD_HEIGHT;
+  if(raw?.deckHeight!==undefined&&(!raw.elevated||!Number.isFinite(raw.deckHeight)||raw.deckHeight<0||raw.deckHeight>MAX_ELEVATED_ROAD_HEIGHT))throw new Error('桥面高度须为 0–32 米');
   const read = point => {
     if(!Array.isArray(point)||point.length!==4||!point.every(Number.isFinite)
       ||Math.abs(point[0])>20000||Math.abs(point[2])>20000||point[1]<0||point[1]>maxHeight){
@@ -51,13 +52,23 @@ export function readAlignment(raw) {
     const [x,y,z,bearing]=point;
     return Object.freeze([x,y,z,normalBearing(bearing)]);
   };
-  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{}),...(arc?{arc}:{})});
+  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{}),...(arc?{arc}:{}),...(raw.deckHeight!==undefined?{deckHeight:raw.deckHeight}:{})});
 }
 
 // Bound curvature and grade over the whole cubic. The derivative is a
 // quadratic Bézier and its acceleration is linear on each subdivided interval.
 function limits(velocity,forward,rise,start=0,end=1,depth=0) {
-  const speed=Math.min(...velocity.map(v=>dot(v,forward)));
+  // The derivative lies in its Bézier control triangle. Distance from the
+  // origin bounds its speed even for right-angle junction approaches; a chord
+  // projection spuriously becomes zero at a valid perpendicular tangent.
+  const sides=velocity.map((a,i)=>[a,velocity[(i+1)%3]]);
+  const signs=sides.map(([a,b])=>cross(a,b));
+  const area=cross(velocity[1].map((v,i)=>v-velocity[0][i]),velocity[2].map((v,i)=>v-velocity[0][i]));
+  const containsOrigin=Math.abs(area)>1e-10&&(signs.every(s=>s>=0)||signs.every(s=>s<=0));
+  const speed=containsOrigin?0:Math.min(...sides.map(([a,b])=>{
+    const d=b.map((v,i)=>v-a[i]),square=dot(d,d),t=square?Math.max(0,Math.min(1,-dot(a,d)/square)):0;
+    return Math.hypot(...a.map((v,i)=>v+t*d[i]));
+  }));
   const acceleration=velocity.slice(1).map((v,i)=>v.map((n,k)=>2*(n-velocity[i][k])/(end-start)));
   const crossProducts=velocity.flatMap(v=>acceleration.map(a=>Math.abs(cross(v,a))));
   const curvature=Math.max(...crossProducts)/speed**3;
@@ -79,7 +90,6 @@ function horizontalAlignment([x,,z,a],[u,,w,b]){
   const length=Math.hypot(u-x,w-z);
   if(length<MIN_LENGTH||length>MAX_LENGTH)return {error:`端点距离须为 ${MIN_LENGTH}–${MAX_LENGTH} 米`};
   const forward=[(u-x)/length,(w-z)/length], first=unit(a),last=unit(b);
-  if(Math.min(dot(first,forward),dot(last,forward))<.5)return {error:'端点方向与连线最多可偏转 60°'};
   const velocity=[first,forward.map((n,i)=>3*n-first[i]-last[i]),last].map(p=>p.map(n=>n*length));
   return {length,first,last,forward,velocity};
 }
@@ -157,10 +167,28 @@ function sampleBezier(start,end){
 
 export function alignmentGeometry(alignment) {
   if(cache.has(alignment))return cache.get(alignment);
-  const {start,end,arc}=alignment;
-  const shape=arc?sampleArc(start,end,arc):sampleBezier(start,end);
+  const {start,end,arc,deckHeight}=alignment;
+  const flat=p=>[p[0],0,p[2],p[3]];
+  const a=deckHeight!==undefined?flat(start):start,b=deckHeight!==undefined?flat(end):end;
+  const shape=arc?sampleArc(a,b,arc):sampleBezier(a,b);
   const {samples}=shape;
   if(!samples)return shape;
+  if(deckHeight!==undefined){
+    const distances=[0];
+    for(let i=1;i<samples.length;i++){
+      const p=samples[i].point,q=samples[i-1].point;distances.push(distances.at(-1)+Math.hypot(p[0]-q[0],p[2]-q[2]));
+    }
+    const length=distances.at(-1),up=1.5*Math.abs(deckHeight-start[1])/MAX_ROAD_GRADE,down=1.5*Math.abs(deckHeight-end[1])/MAX_ROAD_GRADE;
+    const smooth=t=>t*t*(3-2*t);
+    if(deckHeight<Math.max(start[1],end[1]))shape.error='桥面高度不能低于接路端点';
+    else if(up+down>length)shape.error=`引桥长度不足，还需 ${(up+down-length).toFixed(1)} 米；请拉远端点或降低桥面`;
+    for(const [i,sample] of samples.entries()){
+      const d=distances[i];sample.point[1]=d<up?start[1]+(deckHeight-start[1])*smooth(d/up)
+        :d>length-down?end[1]+(deckHeight-end[1])*smooth((length-d)/down):deckHeight;
+    }
+    samples[0].point=start.slice(0,3);samples.at(-1).point=end.slice(0,3);
+    shape.maxGrade=up||down?MAX_ROAD_GRADE:0;shape.deckHeight=deckHeight;
+  }
   const edges=offset=>samples.map(sample=>{const [px,,pz]=offsetRoadSample(sample,offset);return [px,pz];});
   const left=edges(-HALF_WIDTH),right=edges(HALF_WIDTH);
   const sections=left.slice(1).map((p,i)=>{
