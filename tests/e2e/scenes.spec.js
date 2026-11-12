@@ -370,8 +370,9 @@ test('T02 previews and edits a continuous S ramp through history and reload',asy
   const ramp=new City(createScene('T02').city).entities.get(before.selected);
   expect(ramp?.alignment.end[1]).toBe(1.6);
   await page.getByRole('button',{name:'调整线形',exact:true}).click();
-  await expect(page.getByRole('button',{name:'调整起点高度',exact:true})).toBeDisabled();
+  await expect(page.getByRole('button',{name:'调整起点高度',exact:true})).toBeEnabled();
   const form=page.getByRole('form',{name:'道路编辑'}),apply=form.getByRole('button',{name:'应用道路'});
+  await form.locator('summary').filter({hasText:'精细调整'}).click();
   const height=form.getByLabel('终点 高度（米）');
   await height.fill('8');
   await expect(form.getByRole('status')).toContainText('坡度超过 12%');
@@ -394,6 +395,7 @@ test('T02 previews and edits a continuous S ramp through history and reload',asy
   expect(new City(exported.city).entities.get(ramp.id).alignment.end[1]).toBe(2);
   await page.locator('[data-action="close-modal"]').click();
   await page.getByRole('button',{name:'绘制曲线与坡道',exact:true}).click();
+  await form.locator('summary').filter({hasText:'精细调整'}).click();
   await form.getByLabel('起点 X 坐标（米）').fill('-155');
   await form.getByLabel('起点 Z 坐标（米）').fill('-118');
   await form.getByLabel('终点 X 坐标（米）').fill('-119');
@@ -551,6 +553,7 @@ test.describe('Elevated road construction at native screenshot resolution',()=>{
     await page.getByRole('button',{name:'延伸终点',exact:true}).click();
     const form=page.getByRole('form',{name:'道路编辑'}),status=form.getByRole('status');
     const next=form.getByRole('button',{name:'应用并延伸',exact:true});
+    await form.getByRole('button',{name:'上升',exact:true}).click();
     await click([-10,0,0]);
     await expect(status).toContainText('高差 1.92 米');
     await expect(form.getByText(/起点接路/)).toContainText('起点接路 7.20 米');

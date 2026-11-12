@@ -1,0 +1,57 @@
+import {test,expect} from '@playwright/test';
+import {readFile} from 'node:fs/promises';
+import {City} from '../../src/core.js';
+
+test.use({viewport:{width:1440,height:900},deviceScaleFactor:.5});
+test('T07 mouse-built turning bridge reconnects, changes height and survives history and reload',async({page},info)=>{
+  test.setTimeout(120000);
+  const errors=[];page.on('pageerror',e=>errors.push(e.message));
+  // Match the existing scene suite's software-rendered interaction setup.
+  await page.addInitScript(()=>{
+    window.requestAnimationFrame=callback=>setTimeout(()=>callback(performance.now()),1000);
+    window.cancelAnimationFrame=id=>clearTimeout(id);
+  });
+  await page.goto('/?scene=T07');
+  await expect(page.locator('#loading')).toHaveCount(0,{timeout:60000});
+  await expect(page.getByRole('button',{name:'白天',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'白天',exact:true}).click();
+  await page.getByRole('button',{name:'道路',exact:true}).click();
+  await page.getByRole('button',{name:'建造高架道路',exact:true}).click();
+  const form=page.getByRole('form',{name:'道路编辑'}),status=form.getByRole('status');
+  await page.locator('#scene').click({position:{x:917,y:488}});
+  await page.mouse.move(816,405);
+  await expect(status).toContainText('端点间距');
+  await page.locator('#scene').click({position:{x:816,y:405}});
+  await expect(form.locator('.road-height-range')).toContainText('起点接路');
+  await form.getByRole('button',{name:'上升',exact:true}).click();
+  await expect(status).toContainText('圆弧半径');
+  await form.getByRole('button',{name:'应用并延伸',exact:true}).click();
+  await page.locator('#scene').click({position:{x:621,y:419}});
+  await form.getByRole('button',{name:'自动桥坡 · 保持两端连接',exact:true}).click();
+  await form.getByLabel('清理沿线小径与街景（应用后可撤销）').check();
+  await expect(form.getByRole('button',{name:'应用道路',exact:true})).toBeEnabled();
+  await form.getByRole('button',{name:'应用道路',exact:true}).click();
+  await expect(form).toBeHidden();
+  await page.getByRole('button',{name:'调整线形',exact:true}).click();
+  await form.getByLabel('桥面高度（米）').fill('2.6');
+  await page.getByRole('button',{name:'调整起点高度',exact:true}).press('ArrowUp');
+  await expect(status).toContainText('联动调整 2 段道路');
+  await form.getByRole('button',{name:'应用道路',exact:true}).click();
+  await page.getByRole('button',{name:'撤销 Ctrl+Z',exact:true}).click();
+  await page.getByRole('button',{name:'重做 Ctrl+Y',exact:true}).click();
+  await Promise.all([page.waitForEvent('domcontentloaded'),page.getByRole('button',{name:'保存并重载',exact:true}).click()]);
+  await expect(page.locator('#loading')).toHaveCount(0,{timeout:60000});
+  await expect(page.getByRole('button',{name:'我的城市',exact:true})).toBeVisible();
+  await page.screenshot({path:info.outputPath('t07-manual-bridge.png')});
+  await page.getByRole('button',{name:'我的城市',exact:true}).click();
+  const downloadPromise=page.waitForEvent('download');
+  await page.getByRole('button',{name:'导出城市',exact:true}).click();
+  const file=await (await downloadPromise).path(),saved=JSON.parse(await readFile(file,'utf8'));
+  const city=new City(saved.city),roads=[...city.entities.values()].filter(e=>e.alignment);
+  expect(roads).toHaveLength(2);
+  for(const e of roads)expect(city.roadNetwork.segments.get(e.id).ports).toHaveLength(2);
+  expect(roads.find(e=>e.alignment.deckHeight)?.alignment.deckHeight).toBe(2.6);
+  const crossings=city.roadNetwork.bridges.crossings.filter(c=>c.deckIds.some(id=>roads.some(e=>e.id===id)));
+  expect(crossings).toHaveLength(1);expect(crossings[0].passable).toBe(true);
+  expect(errors).toEqual([]);
+});

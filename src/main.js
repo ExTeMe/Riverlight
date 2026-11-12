@@ -237,12 +237,12 @@ class App {
   startRoadEdit(entity,options){
     this.cancel();this.mode='alignment';this.world.select(null);this.roadEditor.open(entity,options);this.ui.refreshActive();this.ui.refreshSelection();
   }
-  extendRoad(entity,end,grade='up'){
+  extendRoad(entity,end,grade='level'){
     const segment=entity?.alignment&&this.city.roadNetwork.segments.get(entity.id);
     if(!segment||segment.ports.some(port=>port.end===end))return;
     const point=entity.alignment[end?'end':'start'];
     const anchor=end?point:[...point.slice(0,3),normalBearing(point[3]+180)];
-    this.startRoadEdit(undefined,{elevated:true,anchor,grade});
+    this.startRoadEdit(undefined,{elevated:!!entity.alignment.elevated,anchor,grade});
   }
   finishRoadEdit(result,extend=false){
     const grade=this.roadEditor.grade;
