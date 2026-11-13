@@ -38,6 +38,12 @@
 .road-elevation{padding:7px 0}.road-clearance{font-size:12px;border:1px solid #98ab94;border-radius:8px;padding:6px 9px;width:100%}
 .road-position-handle{width:23px;height:23px;border:3px solid #f8fff5;background:#456b54}
 .road-position-handle:disabled{background:#839282;opacity:.8}
+.road-middle{padding-bottom:8px}
+.road-point-controls label{display:block;font-size:12px;margin-top:7px}
+.road-point-controls input[type=range]{display:block;width:100%;margin:5px 0}
+.road-point-controls output{float:right}
+.road-middle-handle{width:26px;height:26px;font-size:12px;font-weight:700}
+.road-middle-handle[aria-pressed=true]{background:#e5c57d;color:#304e3d}
 .selection-panel{z-index:5}#app:has(.scene-panel)>.selection-panel{left:auto;right:24px;top:100px}
 @media(max-height:700px){.parcel-editor{top:78px;max-height:calc(100vh - 252px)}}@media(max-width:760px){.parcel-editor{right:12px}}
 @media(max-height:740px){

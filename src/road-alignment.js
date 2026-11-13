@@ -8,6 +8,7 @@ const ARC_TOLERANCE = 1e-8;
 export const MAX_ROAD_HEIGHT = 8;
 export const MAX_ELEVATED_ROAD_HEIGHT = 32;
 export const MAX_ROAD_GRADE = .12;
+export const MAX_ROAD_POINTS = 16;
 const HALF_WIDTH = CELL / 2;
 const cache = new WeakMap();
 const dot = ([x,z],[u,v]) => x*u+z*v;
@@ -52,7 +53,14 @@ export function readAlignment(raw) {
     const [x,y,z,bearing]=point;
     return Object.freeze([x,y,z,normalBearing(bearing)]);
   };
-  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{}),...(arc?{arc}:{}),...(raw.deckHeight!==undefined?{deckHeight:raw.deckHeight}:{})});
+  const via=raw?.via;
+  const bends=raw?.bends;
+  if (via!==undefined && (!Array.isArray(via)||!via.length||via.length>MAX_ROAD_POINTS||arc)) throw new Error('道路中间点无效');
+  if (bends!==undefined && (!via||!Array.isArray(bends)||bends.length!==via.length+1
+    ||!Array.from(bends).every(angle=>Number.isFinite(angle)&&Math.abs(angle)<=45))) throw new Error('分段弯向须为 -45° 至 45°');
+  return Object.freeze({start:read(raw?.start),end:read(raw?.end),...(raw.elevated?{elevated:true}:{}),...(arc?{arc}:{}),
+    ...(raw.deckHeight!==undefined?{deckHeight:raw.deckHeight}:{}),
+    ...(via?{via:Object.freeze(Array.from(via,read)),bends:Object.freeze([...(bends??Array(via.length+1).fill(0))])}:{})});
 }
 
 // Bound curvature and grade over the whole cubic. The derivative is a
@@ -86,9 +94,9 @@ export function offsetRoadSample(sample,offset,height=0) {
   return [x-dz*offset,y+height,z+dx*offset];
 }
 
-function horizontalAlignment([x,,z,a],[u,,w,b]){
+function horizontalAlignment([x,,z,a],[u,,w,b],minimum=MIN_LENGTH){
   const length=Math.hypot(u-x,w-z);
-  if(length<MIN_LENGTH||length>MAX_LENGTH)return {error:`端点距离须为 ${MIN_LENGTH}–${MAX_LENGTH} 米`};
+  if(length<minimum||length>MAX_LENGTH)return {error:`端点距离须为 ${minimum}–${MAX_LENGTH} 米`};
   const forward=[(u-x)/length,(w-z)/length], first=unit(a),last=unit(b);
   const velocity=[first,forward.map((n,i)=>3*n-first[i]-last[i]),last].map(p=>p.map(n=>n*length));
   return {length,first,last,forward,velocity};
@@ -143,9 +151,9 @@ function sampleArc(start,end,sweep){
   return {samples,minRadius:radius,maxGrade,error:maxGrade>MAX_ROAD_GRADE+1e-10?'坡度超过 12%，请拉长道路或减小高差':null};
 }
 
-function sampleBezier(start,end){
+function sampleBezier(start,end,minimum=MIN_LENGTH){
   const [x,y,z]=start,[u,v,w]=end;
-  const {length,first,last,forward,velocity,error}=horizontalAlignment(start,end);
+  const {length,first,last,forward,velocity,error}=horizontalAlignment(start,end,minimum);
   if(error)return {error};
   const [p,q,r]=velocity;
   const segments=Math.ceil(length/.5),samples=[];
@@ -165,12 +173,39 @@ function sampleBezier(start,end){
   return {samples,minRadius,maxGrade,error:limits(velocity,forward,Math.abs(v-y))};
 }
 
+function sampleRoadSpans(points,bends) {
+  let chordLength=0;
+  const samples=[], spans=[];
+  let minRadius=Infinity,maxGrade=0,error=null;
+  for (let i=0;i<points.length-1;i++) {
+    const a=points[i],b=points[i+1];
+    const dx=b[0]-a[0],dz=b[2]-a[2],length=Math.hypot(dx,dz);
+    chordLength+=length;
+    if(length<MIN_LENGTH)return {error:`第 ${i+1} 段端点间距至少为 ${MIN_LENGTH} 米`};
+    if(chordLength>MAX_LENGTH)return {error:`各段端点间距合计不能超过 ${MAX_LENGTH} 米`};
+    const offset=Math.tan((bends[i]??0)*Math.PI/180)/4;
+    const middle=[(a[0]+b[0])/2-dz*offset,(a[1]+b[1])/2,(a[2]+b[2])/2+dx*offset,roadBearing(a,b)];
+    const parts=offset?[sampleBezier(a,middle,MIN_LENGTH/2),sampleBezier(middle,b,MIN_LENGTH/2)]:[sampleBezier(a,b)];
+    spans.push(samples.length?samples.length-1:0);
+    for(const part of parts){
+      if(!part.samples)return part;
+      samples.push(...(samples.length?part.samples.slice(1):part.samples));
+      minRadius=Math.min(minRadius,part.minRadius);
+      maxGrade=Math.max(maxGrade,part.maxGrade);
+      if(part.error&&!error)error=`第 ${i+1} 段：${part.error}`;
+    }
+  }
+  spans.push(samples.length-1);
+  return {samples,spans,minRadius,maxGrade,error};
+}
+
 export function alignmentGeometry(alignment) {
   if(cache.has(alignment))return cache.get(alignment);
-  const {start,end,arc,deckHeight}=alignment;
+  const {start,end,arc,deckHeight,via,bends}=alignment;
   const flat=p=>[p[0],0,p[2],p[3]];
   const a=deckHeight!==undefined?flat(start):start,b=deckHeight!==undefined?flat(end):end;
-  const shape=arc?sampleArc(a,b,arc):sampleBezier(a,b);
+  const shape=via?sampleRoadSpans([a,...(deckHeight!==undefined?via.map(flat):via),b],bends)
+    :arc?sampleArc(a,b,arc):sampleBezier(a,b);
   const {samples}=shape;
   if(!samples)return shape;
   if(deckHeight!==undefined){

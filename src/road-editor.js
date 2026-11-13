@@ -1,4 +1,4 @@
-import { MAX_ELEVATED_ROAD_HEIGHT, MAX_ROAD_GRADE, MAX_ROAD_HEIGHT, alignmentGeometry, arcRoadBearings, maxRoadArc, maxRoadRise, normalBearing, roadBearing, signedRoadAngle } from './road-alignment.js';
+import { MAX_ELEVATED_ROAD_HEIGHT, MAX_ROAD_GRADE, MAX_ROAD_HEIGHT, MAX_ROAD_POINTS, alignmentGeometry, arcRoadBearings, maxRoadArc, maxRoadRise, normalBearing, roadBearing, signedRoadAngle } from './road-alignment.js';
 import { WATER_Y } from './river.js';
 import { RoadHeightHandles } from './road-height-handles.js';
 import { gridRoadEnd, ROAD_DIRECTIONS } from './road-network.js';
@@ -26,6 +26,17 @@ export class RoadEditor {
           <p class="road-height-range"></p>
         </div>
         <p class="parcel-feedback" role="status" aria-live="polite"></p>
+        <div class="road-middle">
+          <div class="scene-buttons">
+            <button type="button" class="road-add-point" aria-pressed="false">添加中间点</button>
+            <button type="button" class="road-remove-point">移除当前点</button>
+          </div>
+          <div class="road-point-controls" hidden>
+            <label>中间点<select class="road-point-choice"></select></label>
+            <label>前段转向 <output></output><input class="range" type="range" min="-45" max="45" step="1" data-bend="before"></label>
+            <label>后段转向 <output></output><input class="range" type="range" min="-45" max="45" step="1" data-bend="after"></label>
+          </div>
+        </div>
         <div class="road-elevation">
           <label>整体升降范围<select class="road-lift-scope"><option value="segment">本段 · 相邻道路自动衔接</option><option value="route">整条相连道路</option></select></label>
           <div class="scene-buttons"><button type="button" data-lift="-.5">整体降低 0.5 米</button><button type="button" data-lift=".5">整体抬高 0.5 米</button></div>
@@ -65,8 +76,27 @@ export class RoadEditor {
     });
     this.inputs=[0,1].map(i=>fields.map(([name])=>form.elements.namedItem(`${i}-${name}`)));
     this.handles=new RoadHeightHandles(this,form.parentElement);
+    this.addPointButton=form.querySelector('.road-add-point');
+    this.removePointButton=form.querySelector('.road-remove-point');
+    this.pointControls=form.querySelector('.road-point-controls');
+    this.pointChoice=form.querySelector('.road-point-choice');
+    this.pointHandles=document.createElement('div');
+    this.pointHandles.className='parcel-handles road-height-handles';
+    form.parentElement.append(this.pointHandles);
+    this.addPointButton.addEventListener('click',()=>{this.addingPoint=!this.addingPoint;this.render();});
+    this.removePointButton.addEventListener('click',()=>{
+      this.via.splice(this.activePoint,1);
+      this.bends.splice(this.activePoint,2,0);
+      this.activePoint=Math.max(0,Math.min(this.activePoint,this.via.length-1));
+      this.render();
+    });
     this.redraw.addEventListener('click',()=>this.resetPoints());
     form.addEventListener('input',event=>{
+      if(event.target===this.pointChoice)this.activePoint=+this.pointChoice.value;
+      if(event.target.dataset.bend){
+        const index=this.activePoint+(event.target.dataset.bend==='after'?1:0);
+        this.bends[index]=event.target.valueAsNumber;
+      }
       if(event.target===this.arcSlider){
         const sweep=Math.round(this.arcSlider.valueAsNumber);
         this.shape='arc';this.setArc(sweep);
@@ -106,6 +136,10 @@ export class RoadEditor {
     this.id=entity?.id;this.ramp=ramp;this.elevated=elevated||!!entity?.alignment.elevated;
     this.arc=entity?.alignment.arc??0;
     this.deckHeight=entity?.alignment.deckHeight;
+    this.via=entity?.alignment.via?.map(point=>[...point])??[];
+    this.bends=[...(entity?.alignment.bends??[0])];
+    this.activePoint=0;
+    this.addingPoint=false;
     this.original=entity;this.wholeRoute=false;this.routeDelta=0;this.shape=entity?(this.arc?'arc':'custom'):'auto';
     this.anchor=anchor;this.grade=ramp?'up':grade;this.form.hidden=false;this.precision.open=false;
     this.liftScope.value='segment';this.liftScope.disabled=!entity;
@@ -125,10 +159,11 @@ export class RoadEditor {
   }
   resetPoints(){
     this.wholeRoute=false;this.deckHeight=undefined;this.firstSource=null;
+    this.via=[];this.bends=[0];this.activePoint=0;this.addingPoint=false;
     this.locks=[this.anchor,null];
     this.write(0,this.anchor??['',0,'',0]);this.write(1,['',0,'',0]);this.render();
   }
-  close(){this.form.hidden=true;this.draw=null;this.cancelHover();this.handles.clear();}
+  close(){this.form.hidden=true;this.draw=null;this.cancelHover();this.handles.clear();this.pointHandles.hidden=true;}
   write(index,values){this.inputs[index].forEach((input,i)=>{input.value=values[i];});}
   values(){return this.inputs.map(inputs=>{
     const values=inputs.map(input=>input.valueAsNumber);
@@ -146,7 +181,8 @@ export class RoadEditor {
     return !this.app.city.entities.get(port?.neighborId)?.alignment;
   }
   editOptions(){return {connected:true,wholeRoute:this.wholeRoute,...(this.wholeRoute?{routeDelta:this.routeDelta}:{}),clearStreet:this.clearStreet.checked};}
-  raw(start,end,arc){return {start,end,arc,elevated:this.elevated,...(this.deckHeight!==undefined?{deckHeight:this.deckHeight}:{})};}
+  raw(start,end,arc){return {start,end,arc,elevated:this.elevated,...(this.deckHeight!==undefined?{deckHeight:this.deckHeight}:{}),
+    ...(this.via.length?{via:this.via,bends:this.bends}:{})};}
   lift(delta){
     let points=this.values();if(!points.every(Boolean))return;
     const wasWhole=this.wholeRoute;this.wholeRoute=this.id!=null&&this.liftScope.value==='route';
@@ -155,15 +191,17 @@ export class RoadEditor {
       delta=(wasWhole?this.routeDelta:0)+delta;points=original;
     }
     if(!this.wholeRoute&&points.some((p,i)=>this.heightLocked(i,p))){this.app.ui.toast('连接地面的端点保持原高；可调整桥面高度，或选择整条相连道路升降',true);return;}
-    const heights=points.filter((p,i)=>!this.wholeRoute||!this.heightLocked(i,p)).map(p=>p[1]);
+    const middle=this.wholeRoute?this.original.alignment.via??[]:this.via;
+    const heights=[...points.filter((p,i)=>!this.wholeRoute||!this.heightLocked(i,p)),...middle].map(p=>p[1]);
     if(this.deckHeight!==undefined)heights.push(this.wholeRoute?(this.original.alignment.deckHeight??this.deckHeight):this.deckHeight);
     if(!heights.length){this.app.ui.toast('两端都连接地面，可用自动桥坡单独升降桥面');return;}
     const low=-Math.min(...heights),high=32-Math.max(...heights);
     delta=Math.max(low,Math.min(high,delta));
     this.routeDelta=delta;
     this.elevated=true;
+    this.via=middle.map(([x,y,z,bearing])=>[x,Math.round((y+delta)*1e6)/1e6,z,bearing]);
     if(this.deckHeight!==undefined)this.deckHeight=(this.wholeRoute?(this.original.alignment.deckHeight??this.deckHeight):this.deckHeight)+delta;
-    points.forEach((p,i)=>this.write(i,[p[0],this.wholeRoute&&this.heightLocked(i,p)?p[1]:Math.round((p[1]+delta)*100)/100,p[2],p[3]]));this.render();
+    points.forEach((p,i)=>this.write(i,[p[0],this.wholeRoute&&this.heightLocked(i,p)?p[1]:Math.round((p[1]+delta)*1e6)/1e6,p[2],p[3]]));this.render();
   }
   setArc(sweep){
     const points=this.values();if(!points.every(Boolean))return;
@@ -193,6 +231,7 @@ export class RoadEditor {
     this.render();
   }
   arcDraft(points){
+    if(this.via.length)return {points,arc:0};
     if(!points.every(Boolean))return {points,arc:0};
     const [start,end]=points,index=points.findIndex((point,i)=>this.isLocked(i,point));
     let arc=this.arc;
@@ -221,11 +260,13 @@ export class RoadEditor {
     return this.maxRise;
   }
   heightRanges(points,arc){
-    const rise=this.rise(points,arc);
-    if(rise===null)return points.map((point,i)=>this.heightLocked(i,point)?[point[1],point[1]]:[0,this.maxHeight]);
+    const sharedRise=this.via.length?null:this.rise(points,arc);
     return points.map((point,i)=>{
       if(this.heightLocked(i,point))return [this.locks[i][1],this.locks[i][1]];
-      const y=points[1-i][1];
+      const adjacent=this.via.length?(i?this.via.at(-1):this.via[0]):points[1-i];
+      const rise=this.via.length?maxRoadRise(...(i?[adjacent,point]:[point,adjacent])):sharedRise;
+      if(rise===null)return [0,this.maxHeight];
+      const y=adjacent[1];
       const low=Math.max(0,Math.ceil((y-rise-1e-9)*100)/100);
       const high=Math.min(this.maxHeight,Math.floor((y+rise+1e-9)*100)/100);
       let minimum=low,maximum=high;
@@ -337,7 +378,7 @@ export class RoadEditor {
   cancelHover(){if(this.hoverFrame)cancelAnimationFrame(this.hoverFrame);this.hoverFrame=null;this.pendingHover=null;}
   click(x,z){
     const [start,end]=this.values();
-    if(end&&this.id==null)return;
+    if(start&&end){if(this.addingPoint)this.insertPoint();return;}
     if(!start||end){
       const first=this.point(x,z,0);
       this.firstSource=first.source;
@@ -364,6 +405,86 @@ export class RoadEditor {
     const p=target.snapped?target.point:[target.point[0],points[index][1],target.point[2],points[index][3]];
     this.locks[index]=target.snapped?p:null;this.write(index,p);this.render();
   }
+  insertPoint(){
+    const geometry=this.previewGeometry;
+    if(!geometry?.samples||this.via.length>=MAX_ROAD_POINTS)return;
+    const {camera,canvas,pointer}=this.app;
+    const samplePosition=new Vector3();
+    const points=[this.values()[0],...this.via,this.values()[1]];
+    const spans=geometry.spans??[0,geometry.samples.length-1];
+    let nearest=null, distance=20;
+    for(let span=0;span<spans.length-1;span++){
+      for(let i=spans[span]+1;i<spans[span+1];i++){
+        const {point,direction}=geometry.samples[i];
+        if([points[span],points[span+1]].some(p=>Math.hypot(p[0]-point[0],p[2]-point[2])<6))continue;
+        const screen=samplePosition.fromArray(point).project(camera);
+        const pixels=Math.hypot((screen.x-pointer.x)*canvas.clientWidth/2,(screen.y-pointer.y)*canvas.clientHeight/2);
+        if(pixels>=distance)continue;
+        distance=pixels;
+        nearest={span,point:[...point,normalBearing(Math.atan2(direction[1],direction[0])*180/Math.PI)]};
+      }
+    }
+    if(!nearest){this.app.ui.toast('请点预览道路上距相邻控制点至少 6 米的位置',true);return;}
+    this.activePoint=nearest.span;
+    this.via.splice(nearest.span,0,nearest.point);
+    this.bends.splice(nearest.span,1,0,0);
+    this.addingPoint=false;
+    this.render();
+  }
+  layoutPoints(){
+    if(!this.active||this.pointHandles.hidden)return;
+    const {camera,canvas}=this.app;
+    const rect=canvas.getBoundingClientRect(),projected=new Vector3();
+    [...this.pointHandles.children].forEach((button,i)=>{
+      const sample=this.previewGeometry?.samples?.[this.previewGeometry.spans?.[i+1]];
+      const p=projected.fromArray(sample?.point??this.via[i]).project(camera);
+      button.hidden=Math.abs(p.x)>1||Math.abs(p.y)>1||Math.abs(p.z)>1;
+      button.style.left=`${rect.left+(1+p.x)*rect.width/2}px`;
+      button.style.top=`${rect.top+(1-p.y)*rect.height/2}px`;
+    });
+  }
+  syncPointHandles(){
+    if(this.pointHandles.children.length!==this.via.length){
+      this.pointHandles.replaceChildren(...this.via.map((_,i)=>{
+        const button=document.createElement('button');
+        button.type='button';
+        button.className='parcel-handle road-position-handle road-middle-handle';
+        button.textContent=i+1;
+        button.setAttribute('aria-label',`道路中间点 ${i+1}`);
+        button.onclick=()=>{this.activePoint=i;this.render();};
+        let origin=null;
+        button.onpointerdown=event=>{
+          if(event.button!==0)return;
+          this.activePoint=i;
+          origin={point:this.via[i],x:event.clientX,y:event.clientY,height:this.previewGeometry?.samples?.[this.previewGeometry.spans?.[i+1]]?.point[1]??this.via[i][1]};
+          button.setPointerCapture(event.pointerId);
+          this.render();
+        };
+        button.onpointermove=event=>{
+          if(!origin||Math.hypot(event.clientX-origin.x,event.clientY-origin.y)<3)return;
+          const {canvas,camera,raycaster}=this.app,rect=canvas.getBoundingClientRect();
+          const mouse={x:(event.clientX-rect.left)/rect.width*2-1,y:1-(event.clientY-rect.top)/rect.height*2};
+          raycaster.setFromCamera(mouse,camera);
+          const position=new Vector3();
+          if(!raycaster.ray.intersectPlane(new Plane(new Vector3(0,1,0),-origin.height),position))return;
+          const [start,end]=this.values(),previous=this.via[i-1]??start,next=this.via[i+1]??end;
+          const bearing=normalBearing(roadBearing(previous,next));
+          this.via[i]=[position.x,origin.point[1],position.z,bearing];
+          this.render();
+        };
+        button.onpointerup=()=>{origin=null;};
+        button.onlostpointercapture=()=>{
+          if(!origin)return;
+          this.via[i]=origin.point;origin=null;this.render();
+        };
+        return button;
+      }));
+      this.pointChoice.replaceChildren(...this.via.map((_,i)=>new Option(`第 ${i+1} 点`,i)));
+    }
+    this.pointChoice.value=this.activePoint;
+    [...this.pointHandles.children].forEach((button,i)=>button.setAttribute('aria-pressed',String(i===this.activePoint)));
+    this.layoutPoints();
+  }
   render(values=this.values(),hover=false){
     if(!hover)this.cancelHover();
     const {points:[start,end],arc}=this.arcDraft(values);
@@ -375,19 +496,20 @@ export class RoadEditor {
     }
     const plan=start&&end?this.app.city.planRoadAlignment(this.raw(start,end,arc),this.id,this.editOptions()):null;
     const profiles=plan?.changes?.filter(c=>c.after).map(c=>alignmentGeometry(c.after.alignment).samples).filter(Boolean);
-    const fallback=start&&end?[{point:start.slice(0,3),direction:[1,0]},{point:end.slice(0,3),direction:[1,0]}]:null;
+    const fallback=start&&end?[start,...this.via,end].map(point=>({point:point.slice(0,3),direction:[1,0]})):null;
     this.app.world.showRoadPreviews(profiles?.length?profiles:plan?.geometry?.samples?[plan.geometry.samples]:fallback?[fallback]:[],plan?.error,this.id,[...plan?.obstacles??[],...plan?.removed??[]]);
     this.submit.disabled=hover||!plan||!!plan.error;
     this.continueButton.disabled=this.submit.disabled||this.isLocked(1,end);
     this.feedback.classList.toggle('invalid',!!plan?.error);
     const geometry=plan?.geometry;
+    this.previewGeometry=geometry;
     const length=start&&end?Math.hypot(end[0]-start[0],end[2]-start[2]):0;
     const measurements=geometry?.samples?[
       `端点间距 ${length.toFixed(1)} 米`,`高差 ${(end[1]-start[1]).toFixed(2)} 米`,`最大坡度 ${(geometry.maxGrade*100).toFixed(1)}%`,
       Number.isFinite(geometry.minRadius)?`${arc?'圆弧半径':'最小半径'} ${geometry.minRadius.toFixed(1)} 米`:'',
       plan.structure?.bottomY!=null?`水面净空 ${(plan.structure.bottomY-WATER_Y).toFixed(2)} 米`:'',
     ]:[];
-    const message=plan?plan.error:start?'请选择终点':'请拖出道路或点选起点';
+    const message=this.addingPoint?'点击预览道路放置中间点':plan?plan.error:start?'请选择终点':'请拖出道路或点选起点';
     const roadCount=plan?.changes?.filter(c=>c.after).length;
     this.feedback.textContent=[message,...measurements,roadCount>1?`联动调整 ${roadCount} 段道路，保持连接`:null,plan?.removed?.length?`将清理 ${plan.removed.length} 个小径或街景，可一起撤销`:null].filter(Boolean).join(' · ');
     this.heightRule.textContent=`端点高度 0–${this.maxHeight} 米 · 坡度上限 ${MAX_ROAD_GRADE*100}%${this.deckHeight!==undefined?' · 桥坡随桥高自动延长':''}`;
@@ -404,7 +526,16 @@ export class RoadEditor {
     }).join(' · ')??'';
     this.handles.set(!hover?points:null,points?.map((p,i)=>this.heightLocked(i,p)),points?.map((p,i)=>this.id!=null?this.isLocked(i,p):!!this.anchor&&i===0));
     this.redraw.hidden=hover||this.id!=null||!start;
-    this.arcControls.hidden=hover||!points;
+    this.arcControls.hidden=hover||!points||!!this.via.length;
+    this.addPointButton.disabled=hover||!geometry?.samples||this.via.length>=MAX_ROAD_POINTS;
+    this.addPointButton.setAttribute('aria-pressed',String(this.addingPoint));
+    this.removePointButton.hidden=this.pointControls.hidden=this.pointHandles.hidden=!this.via.length||hover;
+    this.syncPointHandles();
+    for(const slider of this.pointControls.querySelectorAll('[data-bend]')){
+      const bend=this.bends[this.activePoint+(slider.dataset.bend==='after'?1:0)]??0;
+      slider.value=bend;
+      slider.previousElementSibling.value=`${bend}°`;
+    }
     if(points&&!hover){
       const limit=Math.floor(maxRoadArc(start,end)+1e-8);
       const locked=points.every((p,i)=>this.isLocked(i,p));
@@ -417,7 +548,10 @@ export class RoadEditor {
       button.setAttribute('aria-pressed',String(button.dataset.grade===this.grade));
       button.disabled=!!end&&this.heightLocked(1,end);
     }
-    for(const button of this.form.querySelectorAll('[data-shape]'))button.setAttribute('aria-pressed',String(button.dataset.shape===this.shape));
+    for(const button of this.form.querySelectorAll('[data-shape]')){
+      button.parentElement.hidden=!!this.via.length;
+      button.setAttribute('aria-pressed',String(button.dataset.shape===this.shape));
+    }
     for(const button of this.form.querySelectorAll('[data-lift],.road-clearance'))button.disabled=!points;
   }
 }

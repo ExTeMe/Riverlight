@@ -5,6 +5,31 @@ import {alignmentGeometry,readAlignment} from '../src/road-alignment.js';
 import {REQUIRED_UNDERSIDE} from '../src/bridges.js';
 import {ROAD_DECK_BOTTOM} from '../src/elevated-roads.js';
 
+test('interior road points and independent turns preserve the external ports through edits and reload',()=>{
+  const {city,roads}=chain();
+  const segment=roads[1];
+  const raw={...segment.alignment,via:[[-100,2,-40,90]],bends:[10,-9]};
+  const added=city.editRoadAlignment(raw,segment.id,{connected:true});
+  assert.ok(added.changed,added.error);
+  const geometry=alignmentGeometry(added.entity.alignment);
+  assert.deepEqual(geometry.samples[geometry.spans[1]].point,raw.via[0].slice(0,3));
+  const changed=city.editRoadAlignment({...raw,bends:[-5,-9]},segment.id,{connected:true});
+  assert.ok(changed.changed,changed.error);
+  const updated=alignmentGeometry(changed.entity.alignment);
+  assert.notDeepEqual(updated.samples.slice(0,updated.spans[1]),geometry.samples.slice(0,geometry.spans[1]));
+  assert.deepEqual(updated.samples.slice(updated.spans[1]),geometry.samples.slice(geometry.spans[1]));
+  const invalid=city.editRoadAlignment({...raw,via:[[-100,2,-57,90]]},segment.id,{connected:true});
+  assert.match(invalid.error,/至少为 6 米/);
+  assert.ok(city.undo());
+  assert.deepEqual(city.entities.get(segment.id).alignment.bends,[10,-9]);
+  const saved=city.snapshot();
+  assert.throws(()=>city.snapshot(8),/无法导出/);
+  assert.throws(()=>new City({...saved,version:8}),/中间点需要 v9/);
+  const loaded=new City(saved);
+  assert.deepEqual(loaded.snapshot(),saved);
+  assert.equal(loaded.roadNetwork.segments.get(segment.id).ports.length,2);
+});
+
 function chain(){
   const city=new City();
   const points=[[-100,0,-100,90],[-100,2,-60,90],[-100,2,-20,90],[-100,0,20,90]];
@@ -49,7 +74,7 @@ test('automatic bridge slopes keep both ground ports and put the high plateau ab
     assert.ok(Math.abs(b[1]-a[1])/Math.hypot(b[0]-a[0],b[2]-a[2])<=.12+1e-9);
   }
   assert.ok(city.roadNetwork.bridges.crossings.every(c=>c.passable));
-  const saved=city.snapshot();assert.equal(saved.version,8);assert.deepEqual(new City(saved).snapshot(),saved);
+  const saved=city.snapshot(8);assert.equal(saved.version,8);assert.deepEqual(new City(saved).snapshot(8),saved);
   assert.throws(()=>city.snapshot(7),/无法导出/);
   assert.throws(()=>new City({...saved,version:7}),/自动桥坡需要 v8/);
   const higher=city.editRoadAlignment({...raw,deckHeight:height+.5},result.entity.id,{connected:true});
