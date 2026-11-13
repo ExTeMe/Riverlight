@@ -8,7 +8,7 @@ import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, bo
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
 import { buildRoadNetwork, hasTraffic } from './road-network.js';
-import { offsetRoadSample } from './road-alignment.js';
+import { alignmentGeometry, offsetRoadSample } from './road-alignment.js';
 import { createAlignmentMesh, createBridgeRoad } from './roads.js';
 import { bridgeRise } from './bridges.js';
 import { JunctionPreview } from './junction-preview.js';
@@ -160,7 +160,7 @@ export class World {
       if(ids?.has(id)||ids?.has(previous)){this.buildChunk(ck,chunk.detail);rebuilt=true;}
     }
     if(rebuilt)this.refreshPickables();
-    if(this.selectedId!=null&&(this.selectedId===id||this.selectedId===previous))this.select(this.selectedId,this.selectedParcelId);
+    if(this.selectedId!=null&&(this.selectedId===id||this.selectedId===previous))this.select(this.selectedId,this.selectedParcelId,this.selectedGroup);
   }
   buildChunk(ck,detail){
     const c=this.loaded.get(ck);c.detail=detail;c.revision=this.city.meshRevisions.get(ck);disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
@@ -210,26 +210,43 @@ export class World {
       const inst=new T.InstancedMesh(mesh.geometry,mesh.material,matrices.length);matrices.forEach((m,i)=>inst.setMatrixAt(i,m));inst.userData.entityIds=ids;inst.castShadow=detail&&mesh.castShadow;inst.receiveShadow=true;inst.computeBoundingSphere();c.buildings.add(inst);
     }
   }
-  select(id,parcelId){
-    this.selectedId=id;this.selectedParcelId=parcelId;
+  select(id,parcelId,group=null){
+    this.selectedId=id;this.selectedParcelId=parcelId;this.selectedGroup=group;
+    if(group){
+      const lines=[...group].flatMap(id=>this.entityOutline(this.city.entities.get(id)));
+      updateLines(this.selection,lines);
+      this.selection.visible=!!lines.length;this.parcelSelection.visible=false;
+      return;
+    }
     const e=this.city.entities.get(id),parcel=e?.pose?.parcel??this.city.parcels.get(parcelId);
     const hidden=id!=null&&id===this.previewSource;
     this.parcelSelection.visible=!!parcel&&!hidden;
     if(parcel)updateLines(this.parcelSelection,outlineLines(parcelOutline(parcel),.13));
     if(!e||hidden){this.selection.visible=false;return;}
+    updateLines(this.selection,this.entityOutline(e));this.selection.visible=true;
+  }
+  entityOutline(e,preview=false){
+    if(!e)return [];
     if(e.alignment){
-      const road=this.city.roadNetwork.segments.get(id);
-      updateLines(this.selection,alignmentLines(road.geometry.samples,[-road.profile.width/2,road.profile.width/2]));
-      this.selection.visible=true;return;
+      const samples=alignmentGeometry(e.alignment).samples;
+      return samples?alignmentLines(samples,[-CELL/2,CELL/2]):[];
     }
-    const road=this.city.roadNetwork.segments.get(id),outline=footprintOutline(e);
+    const road=preview?null:this.city.roadNetwork.segments.get(e.id),outline=footprintOutline(e);
     const height=new T.Box3().setFromObject(getTemplate(e.type,e.color)).max.y+.3+bridgeRise(road?.grade,road?.center[0]);
     const lines=[];
     for(let i=0;i<outline.length;i++){
       const [x,z]=outline[i],[u,v]=outline[(i+1)%outline.length];
       lines.push(x,.12,z,u,.12,v,x,height,z,u,height,v,x,.12,z,x,height,z);
     }
-    updateLines(this.selection,lines);this.selection.visible=true;
+    return lines;
+  }
+  showGroupPreview(entities,valid){
+    this.clearPreview();
+    updateLines(this.previewFootprint,entities.flatMap(e=>this.entityOutline(e,true)));
+    this.previewFootprint.material.color.set(valid?'#9ce9c4':'#fb8d76');
+    this.previewFootprint.material.depthTest=false;
+    this.previewFootprint.renderOrder=5;
+    this.previewFootprint.visible=!!entities.length;
   }
   showParcelPreview({parcel,entity,error},sourceId=null){
     if(!parcel){this.clearPreview();return;}
