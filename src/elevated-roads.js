@@ -21,14 +21,7 @@ const ROAD_HEADROOM=3.3;
 const PIER_WIDTH=.8;
 const structureCache=new WeakMap();
 
-export function elevatedStructure(alignment,terrain){
-  if(!alignment.elevated)return null;
-  const cached=structureCache.get(alignment);
-  if(cached?.terrain===terrain)return cached.structure;
-  const {bounds,samples,sections}=alignmentGeometry(alignment);
-  if(!samples)return null;
-  const wet=sections.filter(section=>waterOverlaps(section.outline,section.bounds,terrain));
-  const bottomY=wet.length?Math.min(...wet.map(section=>section.minY+ROAD_DECK_BOTTOM)):null;
+export function roadSupports(samples,terrain){
   const [x,,z]=samples[0].point,[u,,w]=samples.at(-1).point;
   const count=2*Math.ceil(Math.hypot(u-x,w-z)/36),piers=[];
   for(let i=0;i<count;i++){
@@ -43,7 +36,18 @@ export function elevatedStructure(alignment,terrain){
     }
     piers.push({x,z,width:PIER_WIDTH,base:wet?PIER_BASE:0,top,bounds,outline});
   }
-  const structure={bounds,bottomY,piers};
+  return piers;
+}
+
+export function elevatedStructure(alignment,terrain){
+  if(!alignment.elevated)return null;
+  const cached=structureCache.get(alignment);
+  if(cached?.terrain===terrain)return cached.structure;
+  const {bounds,samples,sections}=alignmentGeometry(alignment);
+  if(!samples)return null;
+  const wet=sections.filter(section=>waterOverlaps(section.outline,section.bounds,terrain));
+  const bottomY=wet.length?Math.min(...wet.map(section=>section.minY+ROAD_DECK_BOTTOM)):null;
+  const structure={bounds,bottomY,piers:roadSupports(samples,terrain)};
   structureCache.set(alignment,{terrain,structure});
   return structure;
 }
