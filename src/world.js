@@ -9,7 +9,7 @@ import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
 import { buildRoadNetwork, hasTraffic } from './road-network.js';
 import { alignmentGeometry, offsetRoadSample } from './road-alignment.js';
-import { createAlignmentMesh, createBridgeRoad } from './roads.js';
+import { createAlignmentMesh, createBridgeRoad, roadSelectionBands } from './roads.js';
 import { bridgeRise } from './bridges.js';
 import { JunctionPreview } from './junction-preview.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
@@ -93,6 +93,10 @@ export class World {
     this.quay=new T.Mesh(new T.BufferGeometry(),material('#c2b9a5','ground'));this.quay.receiveShadow=true;scene.add(this.quay);
     this.grid=new T.GridHelper(128,64,'#839785','#839785');this.grid.position.y=.055;this.grid.material.transparent=true;this.grid.material.opacity=.18;this.grid.visible=false;scene.add(this.grid);
     this.selection=lineLayer(scene,0xf2d38c);this.parcelSelection=lineLayer(scene,0x94e2d1);
+    this.roadSelection=new T.Mesh(new T.BufferGeometry(),new T.MeshBasicMaterial({
+      color:0xffbc53,side:T.DoubleSide,transparent:true,opacity:.9,depthTest:false,depthWrite:false,toneMapped:false,
+    }));
+    this.roadSelection.renderOrder=6;this.roadSelection.visible=false;scene.add(this.roadSelection);
     this.previewParcel=lineLayer(scene,0x94e2d1);this.previewFootprint=lineLayer(scene,0xffdc94);
     this.roadObstacles=lineLayer(scene,0xff9a38);this.roadObstacles.material.depthTest=false;this.roadObstacles.renderOrder=6;
     this.emptyParcels=lineLayer(scene,0xb7ded2,.65);
@@ -175,7 +179,7 @@ export class World {
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
       if(road?.geometry){
-        const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure);
+        const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure,this.city.terrain);
         model.userData.alignment=true;
         for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
         c.buildings.add(model);continue;
@@ -212,18 +216,29 @@ export class World {
   }
   select(id,parcelId,group=null){
     this.selectedId=id;this.selectedParcelId=parcelId;this.selectedGroup=group;
+    const roadBands=[],outlines=[];
+    for(const selectedId of group??[id]){
+      const entity=this.city.entities.get(selectedId);
+      if(!entity||selectedId===this.previewSource)continue;
+      const road=this.city.roadNetwork.segments.get(selectedId);
+      if(road?.geometry||road?.grade||entity.type==='bridge'){
+        for(const value of roadSelectionBands(road))roadBands.push(value);
+      }else{
+        for(const value of this.entityOutline(entity))outlines.push(value);
+      }
+    }
+    updateLines(this.roadSelection,roadBands);
+    this.roadSelection.visible=!!roadBands.length;
+    updateLines(this.selection,outlines);
+    this.selection.visible=!!outlines.length;
     if(group){
-      const lines=[...group].flatMap(id=>this.entityOutline(this.city.entities.get(id)));
-      updateLines(this.selection,lines);
-      this.selection.visible=!!lines.length;this.parcelSelection.visible=false;
+      this.parcelSelection.visible=false;
       return;
     }
     const e=this.city.entities.get(id),parcel=e?.pose?.parcel??this.city.parcels.get(parcelId);
     const hidden=id!=null&&id===this.previewSource;
     this.parcelSelection.visible=!!parcel&&!hidden;
     if(parcel)updateLines(this.parcelSelection,outlineLines(parcelOutline(parcel),.13));
-    if(!e||hidden){this.selection.visible=false;return;}
-    updateLines(this.selection,this.entityOutline(e));this.selection.visible=true;
   }
   entityOutline(e,preview=false){
     if(!e)return [];

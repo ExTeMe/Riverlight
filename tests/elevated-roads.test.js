@@ -8,12 +8,43 @@ import { CITY_VERSION } from '../src/city-format.js';
 import { CATALOG } from '../src/catalog.js';
 import { obstacleHeight } from '../src/elevated-roads.js';
 import { getTemplate, material } from '../src/models.js';
-import { createAlignmentMesh } from '../src/roads.js';
+import { createAlignmentMesh, createBridgeRoad, roadSelectionBands } from '../src/roads.js';
 import { bridgeObstacles, navigationRoutes, navigationTrack } from '../src/navigation.js';
 import { buildWalkNetwork } from '../src/walk-network.js';
 import { riverBanks } from '../src/river.js';
 
 const span=(start,end)=>({start,end,elevated:true});
+
+test('ordinary slopes leave open space below the deck and highlight the sloped surface',()=>{
+  const city=new City();
+  const {entity,error}=city.editRoadAlignment({start:[-150,0,-50,0],end:[-50,7,-50,0]});
+  assert.ok(entity,error);
+  const segment=city.roadNetwork.segments.get(entity.id);
+  const mesh=createAlignmentMesh(segment.geometry,segment.ports,material);
+  mesh.updateMatrixWorld(true);
+  const underDeck=new Raycaster(new Vector3(-100,1,-55),new Vector3(0,0,1),0,10);
+  assert.equal(underDeck.intersectObject(mesh,true).length,0);
+  const throughPier=new Raycaster(new Vector3(-75,1,-55),new Vector3(0,0,1),0,10);
+  assert.ok(throughPier.intersectObject(mesh,true).length);
+  const bands=roadSelectionBands(segment);
+  assert.ok(Math.min(...bands.filter((_,i)=>i%3===1))<.2);
+  assert.ok(Math.max(...bands.filter((_,i)=>i%3===1))>7);
+  for(const child of mesh.children)child.geometry.dispose();
+});
+
+test('a raised grid approach uses the same thin deck section as the crossing',()=>{
+  const city=new City();
+  const tile=city.place('road',-20,-10);
+  const segment=city.roadNetwork.segments.get(tile.id);
+  const x=segment.center[0],z=segment.center[2];
+  segment.grade={minX:x+2,maxX:x+20};
+  const mesh=createBridgeRoad(segment,0,material);
+  mesh.updateMatrixWorld(true);
+  const underDeck=new Raycaster(new Vector3(x,.35,z-5),new Vector3(0,0,1),0,10);
+  assert.equal(underDeck.intersectObject(mesh,true).length,0);
+  assert.ok(Math.min(...roadSelectionBands(segment).filter((_,i)=>i%3===1))>1);
+  for(const child of mesh.children)child.geometry.dispose();
+});
 
 test('elevated continuation shares 3D ports through ascent, water crossing and descent',()=>{
   const city=new City(),start=[-124,0,0,0],approach=[-34,7.2,0,0],up=[-10,9.12,0,0],level=[45,9.12,0,0],end=[165,0,0,0];
