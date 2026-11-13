@@ -90,6 +90,14 @@ function covered(outline,patches){
   return area(outline)-size<1e-7;
 }
 
+export function vehiclePathFits(samples,envelope,surfaces){
+  return pathCovered(samples,envelope,surfaces.map(polygon=>({polygon,bounds:bounds(polygon)})));
+}
+
+function pathCovered(samples,envelope,patches){
+  return samples.every(sample=>covered(vehicleOutline(sample,envelope,.02),patches));
+}
+
 function movement(from,to,offset){
   const a=sidePoint(from,edge,-offset),d=sidePoint(to,edge,offset);
   const entry=sidePoint(from,-1),exit=sidePoint(to,1),angle=cross(entry,exit);
@@ -123,14 +131,14 @@ export function buildJunction(mask,profile,approaches){
       const start=sidePoint(from,edge,-offset),end=sidePoint(from,envelope.length/2-profile.carriageway/2+.22,-offset);
       const length=Math.hypot(...minus(end,start));
       const samples=[{point:start,direction,distance:0},{point:end,direction,distance:length}];
-      if(envelope.width<=width&&samples.every(sample=>covered(vehicleOutline(sample,envelope,.02),patches))){
+      if(envelope.width<=width&&pathCovered(samples,envelope,patches)){
         movements.push({from,to:null,kind:'stop',samples,length,vehicles:[vehicle]});
       }
     }
   }else for(const from of sides)for(const to of sides)if(from!==to){
     const route=movement(from,to,offset);
     const vehicles=Object.entries(VEHICLE_ENVELOPES).filter(([,size])=>size.width<=width&&
-      route.samples.every(sample=>covered(vehicleOutline(sample,size,.02),patches))).map(([name])=>name);
+      pathCovered(route.samples,size,patches)).map(([name])=>name);
     if(vehicles.length)movements.push({...route,vehicles});
   }
   return {...layout,movements};
