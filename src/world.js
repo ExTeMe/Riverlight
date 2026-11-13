@@ -7,11 +7,12 @@ import { boxOutline, outlineBounds, transformOutline } from './outline.js';
 import { getTemplate, getDistantTemplate, getQuayTemplate, material, vehicle, boat, person, animateImportedAssets } from './models.js';
 import { animateArchitecture } from './architecture.js';
 import { Pedestrians } from './pedestrians.js';
-import { buildRoadNetwork, hasTraffic } from './road-network.js';
+import { buildRoadNetwork, hasTraffic, ROAD_PROFILES } from './road-network.js';
 import { alignmentGeometry, offsetRoadSample } from './road-alignment.js';
 import { createAlignmentMesh, createBridgeRoad, roadSelectionBands } from './roads.js';
 import { bridgeRise } from './bridges.js';
 import { bridgeAppearances } from './bridge-styles.js';
+import { addBridgeDetails } from './bridge-mesh.js';
 import { JunctionPreview } from './junction-preview.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
@@ -105,6 +106,7 @@ export class World {
     this.riverOverlay=lineLayer(scene,0xffd68a);
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
+    this.bridgePreview=new T.Group();scene.add(this.bridgePreview);
     this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
   setCity(city){this.clear();this.clearPreview();this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.setCity(city);this.sync(true);}
@@ -287,7 +289,7 @@ export class World {
   showRoadPreview(geometry,error,sourceId=null){
     this.showRoadPreviews(geometry?.samples?[geometry.samples]:[],error,sourceId);
   }
-  showRoadPreviews(profiles,error,sourceId=null,obstacles=[]){
+  showRoadPreviews(profiles,error,sourceId=null,obstacles=[],bridges=[]){
     if(!profiles.length){this.clearPreview();return;}
     if(!this.preview?.userData.roadPreview){
       this.clearPreview(sourceId);
@@ -313,6 +315,25 @@ export class World {
     this.previewFootprint.material.depthTest=false;this.previewFootprint.renderOrder=5;
     updateLines(this.previewFootprint,lines);
     this.previewFootprint.visible=true;
+    this.clearBridgePreview();
+    if(!error){
+      const {walkY,bedY,width}=ROAD_PROFILES.road;
+      const materials=new Map();
+      const tint=color=>{
+        if(!materials.has(color))materials.set(color,new T.MeshBasicMaterial({
+          color,transparent:true,opacity:.96,depthWrite:false,toneMapped:false,
+        }));
+        return materials.get(color);
+      };
+      for(const {appearance,samples} of bridges){
+        const deck=samples.map(({point:[x,y,z],direction})=>({point:[x,y+walkY-bedY,z],direction}));
+        addBridgeDetails(this.bridgePreview,appearance,deck,width/2,tint,true,true);
+      }
+      for(const mesh of this.bridgePreview.children){
+        mesh.castShadow=mesh.receiveShadow=false;
+        mesh.renderOrder=5;
+      }
+    }
   }
   showPreview(e,valid,sourceId=null){
     const [w,d]=entityDimensions(e);
@@ -325,7 +346,13 @@ export class World {
     this.hover.scale.set(w*CELL,d*CELL,1);this.hover.position.set(this.preview.position.x,.06,this.preview.position.z);this.hover.material.color.set(valid?'#6d9975':'#c06a57');this.hover.visible=true;
     this.grid.visible=true;this.grid.position.x=Math.round(this.preview.position.x/32)*32;this.grid.position.z=Math.round(this.preview.position.z/32)*32;
   }
-  clearPreview(sourceId=null){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.roadObstacles.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;this.setPreviewSource(sourceId);}
+  clearBridgePreview(){
+    const materials=new Set();
+    for(const mesh of this.bridgePreview.children){mesh.geometry.dispose();materials.add(mesh.material);}
+    for(const material of materials)material.dispose();
+    this.bridgePreview.clear();
+  }
+  clearPreview(sourceId=null){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.clearBridgePreview();this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.roadObstacles.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;this.setPreviewSource(sourceId);}
   showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
   showRiver(visible){
     this.riverOverlay.visible=visible;

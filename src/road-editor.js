@@ -4,7 +4,7 @@ import { RoadHeightHandles } from './road-height-handles.js';
 import { gridRoadEnd, ROAD_DIRECTIONS } from './road-network.js';
 import { Vector3, Plane } from 'three';
 import { REQUIRED_UNDERSIDE } from './bridges.js';
-import { ROAD_DECK_BOTTOM } from './elevated-roads.js';
+import { elevatedStructure, ROAD_DECK_BOTTOM } from './elevated-roads.js';
 import { BRIDGE_STYLES, continuousBridgeAppearance } from './bridge-styles.js';
 
 const fields=[['x','X 坐标（米）'],['y','高度（米）'],['z','Z 坐标（米）'],['bearing','方向（°）']];
@@ -496,17 +496,30 @@ export class RoadEditor {
       if(point)this.inputs[i][3].value=point[3];
     }
     const plan=start&&end?this.app.city.planRoadAlignment(this.raw(start,end,arc),this.id,this.editOptions()):null;
-    const profiles=plan?.changes?.filter(c=>c.after).map(c=>alignmentGeometry(c.after.alignment).samples).filter(Boolean);
+    const geometry=plan?.geometry;
+    const edits=plan?.changes?.flatMap(c=>c.after?[c.after]:[])??[];
+    const profiles=edits.map(e=>alignmentGeometry(e.alignment).samples).filter(Boolean);
+    const bridges=[];
+    if(geometry?.samples&&!plan.error){
+      const {city}=this.app;
+      const edited=new Map(edits.map(e=>[e.id,e]));
+      const removed=new Set(plan.removed?.map(e=>e.id));
+      const query=bounds=>city.proposedEntities(bounds,edited,removed);
+      for(const entity of edits){
+        const road=alignmentGeometry(entity.alignment);
+        const structure=entity===plan.entity?plan.structure:elevatedStructure(entity.alignment,city.terrain);
+        const appearance=continuousBridgeAppearance(road,structure,city.terrain,query,entity.id);
+        if(appearance)bridges.push({appearance,samples:road.samples,id:entity.id});
+      }
+    }
     const fallback=start&&end?[start,...this.via,end].map(point=>({point:point.slice(0,3),direction:[1,0]})):null;
-    this.app.world.showRoadPreviews(profiles?.length?profiles:plan?.geometry?.samples?[plan.geometry.samples]:fallback?[fallback]:[],plan?.error,this.id,[...plan?.obstacles??[],...plan?.removed??[]]);
+    this.app.world.showRoadPreviews(profiles.length?profiles:geometry?.samples?[geometry.samples]:fallback?[fallback]:[],
+      plan?.error,this.id,[...plan?.obstacles??[],...plan?.removed??[]],bridges);
     this.submit.disabled=hover||!plan||!!plan.error;
     this.continueButton.disabled=this.submit.disabled||this.isLocked(1,end);
     this.feedback.classList.toggle('invalid',!!plan?.error);
-    const geometry=plan?.geometry;
     this.previewGeometry=geometry;
-    const cleared=new Set(plan?.removed?.map(e=>e.id));
-    const appearance=geometry?.samples&&continuousBridgeAppearance(geometry,plan.structure,this.app.city.terrain,
-      bounds=>this.app.city.queryFootprints(bounds).filter(e=>!cleared.has(e.id)),this.id);
+    const appearance=bridges.find(bridge=>bridge.id===plan?.entity?.id)?.appearance;
     const length=start&&end?Math.hypot(end[0]-start[0],end[2]-start[2]):0;
     const measurements=geometry?.samples?[
       `端点间距 ${length.toFixed(1)} 米`,`高差 ${(end[1]-start[1]).toFixed(2)} 米`,`最大坡度 ${(geometry.maxGrade*100).toFixed(1)}%`,

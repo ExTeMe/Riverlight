@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Box3 } from 'three';
+import { Box3, Scene } from 'three';
 import { City } from '../src/core.js';
 import { chooseBridgeStyle, continuousBridgeAppearance, bridgeAppearances } from '../src/bridge-styles.js';
 import { createAlignmentMesh } from '../src/roads.js';
 import { material } from '../src/models.js';
+import { World } from '../src/world.js';
 
 test('short wooded, traditional, urban, and long crossings choose different structures',()=>{
   const site={span:22,straight:true,complete:true,passable:true};
@@ -14,6 +15,29 @@ test('short wooded, traditional, urban, and long crossings choose different stru
   assert.equal(chooseBridgeStyle({...site,span:72}),'arch');
   assert.equal(chooseBridgeStyle({...site,span:72,straight:false}),'girder');
   assert.equal(chooseBridgeStyle({...site,span:72,passable:false}),'girder');
+});
+
+test('bridge preview follows the draft and removes its geometry when blocked or cancelled',()=>{
+  const city=new City();city.terrain='strait';
+  const world=new World(new Scene(),city);
+  const draft=height=>city.planRoadAlignment({start:[-118,height,0,0],end:[118,height,0,0],elevated:true});
+  function preview(height,error=null){
+    const {geometry,structure}=draft(height);
+    const appearance=continuousBridgeAppearance(geometry,structure,city.terrain,()=>[]);
+    world.showRoadPreviews([geometry.samples],error,null,[],[{appearance,samples:geometry.samples}]);
+    return world.bridgePreview.children[0];
+  }
+  const first=preview(7),initial=new Box3().setFromObject(first);
+  let disposed=false;first.geometry.addEventListener('dispose',()=>{disposed=true;});
+  const raised=preview(8);
+  assert.ok(disposed);
+  assert.ok(Math.abs(new Box3().setFromObject(raised).max.y-initial.max.y-1)<1e-5);
+  assert.equal(preview(8,'blocked'),undefined);
+  assert.ok(preview(8));
+  world.clearPreview();
+  assert.equal(world.bridgePreview.children.length,0);
+  assert.equal(city.entities.size,0);
+  world.clear();
 });
 
 test('a wide bridge can carry an arch without lowering its deck or changing its ports',()=>{
