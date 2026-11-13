@@ -260,8 +260,16 @@ export class City {
     if (!entities.length || entities.some(e=>!e)) return {error:'请重新选择物件'};
     if (![...pivot, dx, dz, degrees].every(Number.isFinite)) return {error:'移动或旋转参数无效'};
     const angle = degrees*Math.PI/180;
+    // Exact quarter-turns preserve continuous-road connections to grid edges.
+    const quarter = normalAngle(degrees)/90;
+    const turns = [(x,z)=>[x,z],(x,z)=>[z,-x],(x,z)=>[-x,-z],(x,z)=>[-z,x]];
     const round = n=>Math.round(n*1e8)/1e8;
-    const movePoint = (x,z)=>transformOutline([[x-pivot[0],z-pivot[1]]],pivot[0]+dx,pivot[1]+dz,angle)[0];
+    const movePoint = (x,z)=>{
+      const localX=x-pivot[0],localZ=z-pivot[1];
+      if(!Number.isInteger(quarter))return transformOutline([[localX,localZ]],pivot[0]+dx,pivot[1]+dz,angle)[0];
+      const [u,v]=turns[quarter](localX,localZ);
+      return [pivot[0]+dx+u,pivot[1]+dz+v];
+    };
     const moveRoadPoint = ([x,y,z,bearing])=>{
       const [u,v] = movePoint(x,z);
       return [u,y,v,normalAngle(bearing-degrees)];

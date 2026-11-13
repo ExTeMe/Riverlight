@@ -45,3 +45,13 @@ test('a mixed group rotates around its pivot with the owned parcel and survives 
   assert.ok(city.undo());
   assert.equal(city.parcels.get(parcel.id).angle,15);
 });
+
+test('rotating a grid tile and continuous road together keeps their shared port',()=>{
+  const city=new City();
+  const tile=city.place('road',-40,-30);
+  const {entity:road,error}=city.editRoadAlignment({start:[-160,.04,-118,90],end:[-160,.04,-88,90]});
+  assert.ok(road,error);
+  assert.equal(city.roadNetwork.segments.get(road.id).ports[0].neighborId,tile.id);
+  assert.ok(city.transformGroup([tile.id,road.id],[-160,0],120,0,90),city.editError);
+  assert.equal(city.roadNetwork.segments.get(road.id).ports[0].neighborId,tile.id);
+});
