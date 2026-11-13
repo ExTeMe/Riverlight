@@ -5,7 +5,7 @@ import { BRIDGE_STYLES } from './bridge-styles.js';
 const axis=new Vector3(0,1,0);
 const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
 
-export function addBridgeDetails(group,appearance,samples,half,material,detail=true) {
+export function addBridgeDetails(group,appearance,samples,half,material,detail=true,preview=false) {
   const {key,span,offset=0}=appearance,style=BRIDGE_STYLES[key];
   const pieces=[];
   const start=appearance.from??0,end=appearance.to??samples.length-1;
@@ -29,7 +29,9 @@ export function addBridgeDetails(group,appearance,samples,half,material,detail=t
     const length=direction.length();
     if(length<1e-5)return;
     const rotation=new Quaternion().setFromUnitVectors(axis,direction.divideScalar(length));
-    pieces.push(new BoxGeometry(width,length,depth).applyQuaternion(rotation).translate(...start.lerp(end,.5).toArray()));
+    const thickness=preview?1.6:1;
+    pieces.push(new BoxGeometry(width*thickness,length,depth*thickness)
+      .applyQuaternion(rotation).translate(...start.lerp(end,.5).toArray()));
   }
   const x=half-.2;
   const archLength=appearance.ends?span:length;
@@ -39,6 +41,9 @@ export function addBridgeDetails(group,appearance,samples,half,material,detail=t
     return .16+4*rise*t*(1-t);
   }
   for(const side of [-x,x]){
+    if(preview)for(let i=1;i<distances.length;i++){
+      beam(point(distances[i-1],side,.82),point(distances[i],side,.82),.1);
+    }
     if(key==='arch'){
       const count=Math.ceil(length/(detail?1.6:3.2));
       for(let i=1;i<=count;i++){

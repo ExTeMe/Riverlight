@@ -225,8 +225,14 @@ class App {
       const x=e.x*CELL+offset;
       return {point:[x,bedY+bridgeRise(grades.get(e.id),x),e.z*CELL],direction:[1,0]};
     }));
-    this.world.showRoadPreviews(profiles,!!issue,this.moving);
-    const styles=new Set(crossings.map(c=>BRIDGE_STYLES[gridBridgeAppearance(c,bounds=>this.city.queryFootprints(bounds)).key].name));
+    const bridges=issue?[]:crossings.map(crossing=>{
+      const {bounds}=crossing,z=(bounds.minZ+bounds.maxZ)/2;
+      const appearance=gridBridgeAppearance(crossing,bounds=>this.city.queryFootprints(bounds));
+      const samples=[bounds.minX,bounds.maxX].map(x=>({point:[x,bedY+bridgeRise(bounds,x),z],direction:[1,0]}));
+      return {appearance,samples};
+    });
+    this.world.showRoadPreviews(profiles,!!issue,this.moving,[],bridges);
+    const styles=new Set(bridges.map(({appearance})=>BRIDGE_STYLES[appearance.key].name));
     this.ui.hint(issue?hints[issue]:crossings.length?`桥下净空 ${(Math.min(...crossings.map(bridge=>bridge.bottomY))-WATER_Y).toFixed(2)} 米 · 可容纳原型船 · ${[...styles].join('、')}`:
       '按住左键跨河绘制 · 两岸各接 3 格直线引桥 · Esc 取消');
   }
