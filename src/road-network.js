@@ -199,5 +199,5 @@ export function buildRoadNetwork(entities,revision,terrain){
     }
     Object.assign(segment,paths);
   }
-  return {revision,segments,alignmentMasks,bridges,laneGraph:buildLaneGraph(segments,revision)};
+  return {revision,segments,alignmentMasks,bridges,laneGraph:buildLaneGraph(segments,revision,roadCarriageway)};
 }

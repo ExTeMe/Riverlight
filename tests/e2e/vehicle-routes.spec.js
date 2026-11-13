@@ -30,6 +30,19 @@ for(const [scene,view] of [['T02','线形'],['T03','近景'],['T04','近景']]){
     const inView=car=>car.visible&&(scene==='T02'?segments.get(car.roadId).geometry:
       scene==='T03'?['left','right','straight'].includes(car.kind):
       bridges.grades.has(car.roadId)&&car.point[1]>1);
+    if(scene==='T03'){
+      let waiting;
+      await expect.poll(async()=>{
+        waiting=(await read()).active.find(car=>car.visible&&car.waitingAt);
+        return !!waiting;
+      },{timeout:35000,intervals:[70,100,150]}).toBe(true);
+      expect(waiting.speed).toBe(0);
+      const junction=segments.get(waiting.waitingAt);
+      const [x,,z]=waiting.point,[cx,,cz]=junction.center;
+      const clearance=Math.max(Math.abs(x-cx),Math.abs(z-cz))-(waiting.type==='bus'?1.98:1.28);
+      expect(clearance).toBeCloseTo(junction.junction.crossings[0].stopDistance+.1,5);
+      await page.screenshot({path:info.outputPath('T03-stop-line.png')});
+    }
     await expect.poll(async()=>(await read()).active.some(inView),{timeout:40000,intervals:[70,100,150]}).toBe(true);
     const moving=(await read()).active;
     for(const car of moving){

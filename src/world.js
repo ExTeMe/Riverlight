@@ -15,7 +15,8 @@ import { bridgeAppearances } from './bridge-styles.js';
 import { addBridgeDetails } from './bridge-mesh.js';
 import { JunctionPreview } from './junction-preview.js';
 import { VEHICLE_ENVELOPES } from './road-junction.js';
-import { advanceVehicle, planVehicleTrip, sampleLane, vehicleOrigins, VEHICLE_SPEEDS } from './vehicle-routes.js';
+import { planVehicleTrip, sampleLane, vehicleOrigins, VEHICLE_SPEEDS } from './vehicle-routes.js';
+import { canSpawnVehicle, MIN_VEHICLE_GAP, stepVehicles } from './vehicle-motion.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
@@ -500,14 +501,14 @@ class Traffic {
       const {trip,kind,type}=slot;
       const envelope=VEHICLE_ENVELOPES[type];
       const {point}=sampleLane(trip.route[0],trip.start);
-      if(this.cars.some(car=>{
+      if(!canSpawnVehicle(this.cars,trip,type)||this.cars.some(car=>{
         const {x,y,z}=car.mesh.position;
-        return Math.abs(y-point[1])<1.5&&Math.hypot(x-point[0],z-point[2])<(car.envelope.length+envelope.length)/2+.45;
+        return Math.abs(y-point[1])<1.5&&Math.hypot(x-point[0],z-point[2])<(car.envelope.length+envelope.length)/2+MIN_VEHICLE_GAP;
       }))continue;
       const mesh=vehicle(kind);
       mesh.rotation.order='YXZ';this.scene.add(mesh);
       const car={mesh,id:this.nextVehicleId++,kind,type,trip,edgeIndex:0,distance:trip.start,
-        speed:VEHICLE_SPEEDS[type],envelope,slot};
+        speed:0,travelled:0,envelope,slot};
       this.positionCar(car);
       this.cars.push(car);
       slot.car=car;
@@ -515,10 +516,10 @@ class Traffic {
   }
   get followTarget(){return this.cars[0]?.mesh;}
   get vehicleStatus(){
-    return {arrived:this.arrived,active:this.cars.map(({id,type,trip,edgeIndex,distance,mesh})=>{
+    return {arrived:this.arrived,active:this.cars.map(({id,type,trip,edgeIndex,distance,mesh,speed,waitingAt,following})=>{
       const edge=trip.route[edgeIndex];
       return {id,type,origin:trip.route[0].id,destination:trip.route.at(-1).id,
-        edge:edge.id,roadId:edge.roadId,kind:edge.kind,distance,point:mesh.position.toArray(),visible:mesh.visible};
+        edge:edge.id,roadId:edge.roadId,kind:edge.kind,distance,speed,waitingAt,following,point:mesh.position.toArray(),visible:mesh.visible};
     })};
   }
   positionBoat(vessel,time,dt){
@@ -537,14 +538,12 @@ class Traffic {
     car.mesh.rotation.set(pitch,yaw,0);
   }
   step(dt,time){
-    for(let i=this.cars.length-1;i>=0;i--){
-      const car=this.cars[i];
-      const arrived=advanceVehicle(car,dt*car.speed);
-      this.positionCar(car);
-      if(!arrived)continue;
+    const arrived=stepVehicles(this.cars,dt);
+    for(const car of this.cars)this.positionCar(car);
+    for(const car of arrived){
       this.arrived++;
       this.disposeActor(car);
-      this.cars.splice(i,1);
+      this.cars.splice(this.cars.indexOf(car),1);
       const {slot}=car;
       slot.car=null;slot.delay=1+this.random()*2;
       slot.trip=planVehicleTrip(this.network.laneGraph,car.trip.route[0],car.type,()=>this.random());
