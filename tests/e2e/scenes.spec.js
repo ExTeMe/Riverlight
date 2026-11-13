@@ -769,7 +769,7 @@ test('T04 bridge drag previews insufficient clearance, then raises the connected
   await page.mouse.down();await move(0);
   await expect(page.locator('#mode-hint')).toContainText('净空不足');
   await move(-28);
-  await expect(page.locator('#mode-hint')).toHaveText('桥下净空 1.63 米 · 可容纳原型船');
+  await expect(page.locator('#mode-hint')).toHaveText(/桥下净空 1\.63 米 · 可容纳原型船 · .+桥/);
   await page.screenshot({path:info.outputPath('bridge-clearance-preview.png')});
   await page.mouse.up();
   await expect.poll(()=>page.evaluate(()=>window.riverlight.getStats().entities)).toBe(77);

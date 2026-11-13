@@ -4,6 +4,8 @@ import { ROAD_PROFILES, gridRoadSurface, roadCorner } from './road-network.js';
 import { offsetRoadSample } from './road-alignment.js';
 import { bridgeRise, DECK_DEPTH, PIER_BASE } from './bridges.js';
 import { ROAD_DECK_BOTTOM, ROAD_RAIL_TOP, roadSupports } from './elevated-roads.js';
+import { BRIDGE_STYLES } from './bridge-styles.js';
+import { addBridgeDetails } from './bridge-mesh.js';
 
 function tileSurface(polygons,point){
   const vertices=[];
@@ -16,9 +18,11 @@ function tileSurface(polygons,point){
   return buffer;
 }
 
-export function createBridgeRoad(segment,rotation,material){
+export function createBridgeRoad(segment,rotation,material,appearance=null,detail=true){
   const {kind,center:[x,,z],profile:{width,carriageway,vehicleY,walkY},surface,grade,bridge,mask}=segment;
-  const group=new T.Group(),batches=new Map(),paving=material('#c9c9bd','ground'),structure=material('#9ca3a0','ground');
+  const style=appearance&&BRIDGE_STYLES[appearance.key];
+  const group=new T.Group(),batches=new Map(),paving=material(style?.paving??'#c9c9bd','ground');
+  const structure=material(style?.deck??'#9ca3a0','ground'),pierMaterial=style?material(style.pier,'ground'):structure;
   const rise=px=>bridgeRise(grade,px);
   const add=(geometry,mat)=>{
     if(!batches.has(mat))batches.set(mat,[]);
@@ -51,16 +55,17 @@ export function createBridgeRoad(segment,rotation,material){
     }
   }
   if(kind==='bridge'){
+    const railMaterial=style?material(style.railing,'ground'):paving;
     for(const side of [-1,1]){
       const exit=alongX?(side>0?4:8):(side>0?1:2);
       if(mask&exit)continue;
       const offset=side*(width/2-.06),railX=alongX?x:x+offset,railZ=alongX?z+offset:z;
       const height=u=>walkY+rise(u);
-      box(railX,railZ,alongX?width:.12,alongX?.12:width,u=>height(u)+.8,u=>height(u)+.92,paving);
-      for(const post of [-1.6,0,1.6])box(railX+(alongX?post:0),railZ+(alongX?0:post),.09,.09,height,u=>height(u)+.8,paving);
+      box(railX,railZ,alongX?width:.12,alongX?.12:width,u=>height(u)+.8,u=>height(u)+.92,railMaterial);
+      for(const post of [-1.6,0,1.6])box(railX+(alongX?post:0),railZ+(alongX?0:post),.09,.09,height,u=>height(u)+.8,railMaterial);
     }
     const pier=bridge?.piers.find(p=>p.x===x&&p.z===z);
-    if(pier)box(x,z,pier.width,pier.width,()=>PIER_BASE,slabBottom,structure);
+    if(pier)box(x,z,pier.width,pier.width,()=>PIER_BASE,slabBottom,pierMaterial);
   }
   if(grade&&!bridge){
     const distance=Math.max(grade.minX-x,x-grade.maxX);
@@ -69,13 +74,15 @@ export function createBridgeRoad(segment,rotation,material){
   for(const [mat,parts] of batches){
     const geometry=parts.length===1?parts[0]:mergeGeometries(parts);
     if(parts.length>1)for(const part of parts)part.dispose();
-    const mesh=new T.Mesh(geometry,mat);mesh.receiveShadow=true;mesh.castShadow=mat===structure;group.add(mesh);
+    const mesh=new T.Mesh(geometry,mat);mesh.receiveShadow=true;mesh.castShadow=mat===structure||mat===pierMaterial;group.add(mesh);
   }
+  if(appearance?.ends)addBridgeDetails(group,appearance,appearance.ends.map(point=>({point,direction:[1,0]})),width/2,material,detail);
   return group;
 }
 
-export function createAlignmentMesh(geometry,ports,material,structure=null,terrain='meander'){
+export function createAlignmentMesh(geometry,ports,material,structure=null,terrain='meander',appearance=null,detail=true){
   const group=new T.Group(),asphalt=[],paving=[],marks=[],deck=[],rails=[];
+  const style=appearance&&BRIDGE_STYLES[appearance.key];
   const {width,carriageway,bedY,vehicleY,walkY}=ROAD_PROFILES.road;
   const half=width/2,edge=carriageway/2,road=vehicleY-bedY,walk=walkY-bedY;
   const {samples}=geometry;
@@ -123,7 +130,7 @@ export function createAlignmentMesh(geometry,ports,material,structure=null,terra
         offsetRoadSample(sample,b,floor(sample)),offsetRoadSample(sample,b,top));
     }
   }
-  for(const [points,color,role] of [[asphalt,'#677378','road'],[paving,'#c9c9bd','ground'],[marks,'#e8dfbc','road'],[deck,'#a5ada6','ground'],[rails,'#657972','ground']]){
+  for(const [points,color,role] of [[asphalt,'#677378','road'],[paving,style?.paving??'#c9c9bd','ground'],[marks,'#e8dfbc','road'],[deck,style?.deck??'#a5ada6','ground'],[rails,style?.railing??'#657972','ground']]){
     if(!points.length)continue;
     const buffer=new T.BufferGeometry();
     buffer.setAttribute('position',new T.Float32BufferAttribute(points,3));buffer.computeVertexNormals();
@@ -131,13 +138,17 @@ export function createAlignmentMesh(geometry,ports,material,structure=null,terra
   }
   for(const [parts,color] of [
     [(structure?.piers??roadSupports(samples,terrain)).map(({x,z,width,base,top})=>
-      new T.BoxGeometry(width,top-base,width).translate(x,(top+base)/2,z)),'#9ca3a0'],
-    [posts.map(([x,y,z])=>new T.BoxGeometry(.09,ROAD_RAIL_TOP-walk,.09).translate(x,y,z)),'#657972'],
+      new T.BoxGeometry(width,top-base,width).translate(x,(top+base)/2,z)),style?.pier??'#9ca3a0'],
+    [posts.map(([x,y,z])=>new T.BoxGeometry(.09,ROAD_RAIL_TOP-walk,.09).translate(x,y,z)),style?.railing??'#657972'],
   ]){
     if(!parts.length)continue;
     const geometry=mergeGeometries(parts);
     for(const part of parts)part.dispose();
     const supports=new T.Mesh(geometry,material(color,'ground'));supports.castShadow=true;supports.receiveShadow=true;group.add(supports);
+  }
+  if(appearance){
+    const deckSamples=samples.map(sample=>({...sample,point:[sample.point[0],sample.point[1]+walk,sample.point[2]]}));
+    addBridgeDetails(group,appearance,deckSamples,half,material,detail);
   }
   return group;
 }

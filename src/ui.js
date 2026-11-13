@@ -2,6 +2,7 @@ import { CATALOG, CATEGORIES, BY_ID, CELL, entityDimensions } from './catalog.js
 import { PRESETS } from './environment.js';
 import { icon } from './icons.js';
 import { SCENES, SCENE_WEATHER } from './baseline.js';
+import { BRIDGE_STYLES } from './bridge-styles.js';
 const ib=(action,glyph,label,extra='')=>`<button class="icon-button ${extra}" data-action="${action}" data-tip="${label}" aria-label="${label}" title="${label}">${icon(glyph)}</button>`;
 const button=(action,glyph,label,primary=false)=>`<button class="button ${primary?'primary':''}" data-action="${action}">${icon(glyph,16)}${label}</button>`;
 const escape=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -112,7 +113,8 @@ export class UI {
     }
     const item=BY_ID[selected?.type],size=selected?entityDimensions(selected).map(n=>n*CELL).join(' × '):'';
     const metres=n=>Number(n.toFixed(2));
-    panel.querySelector('#selected-name').textContent=item?.name??'空地块';
+    const bridge=this.app.world.bridgeStyles?.get(selected?.id);
+    panel.querySelector('#selected-name').textContent=bridge?BRIDGE_STYLES[bridge.key].name:item?.name??'空地块';
     panel.querySelector('#selected-meta').textContent=selected?.alignment?`${selected.alignment.elevated?'高架道路':'连续道路'} · 可调整线形与高度`:parcel?`${metres(parcel.width)} × ${metres(parcel.depth)} 米地块 · ${metres(parcel.angle)}°${item?` · 建筑 ${size} 米`:' · 从目录选择建筑'}`:`${size} 米 · 格网物件`;
     const legacy=!!selected&&!parcel&&!selected.alignment;
     const ports=selected?.alignment&&this.app.city.roadNetwork.segments.get(selected.id).ports;

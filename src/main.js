@@ -13,6 +13,7 @@ import { SimulationClock } from './simulation-clock.js';
 import { PROTOTYPE_HULL, PROTOTYPE_RADIUS, WATER_Y, navigableSpan, riverBanks } from './river.js';
 import { pointOnTrack } from './navigation.js';
 import { bridgeRise, buildBridges, REQUIRED_UNDERSIDE } from './bridges.js';
+import { BRIDGE_STYLES, gridBridgeAppearance } from './bridge-styles.js';
 import { ROAD_PROFILES, hasTraffic } from './road-network.js';
 import { placementOf, usesParcel } from './parcel.js';
 import { ParcelEditor } from './parcel-editor.js';
@@ -225,7 +226,8 @@ class App {
       return {point:[x,bedY+bridgeRise(grades.get(e.id),x),e.z*CELL],direction:[1,0]};
     }));
     this.world.showRoadPreviews(profiles,!!issue,this.moving);
-    this.ui.hint(issue?hints[issue]:crossings.length?`桥下净空 ${(Math.min(...crossings.map(bridge=>bridge.bottomY))-WATER_Y).toFixed(2)} 米 · 可容纳原型船`:
+    const styles=new Set(crossings.map(c=>BRIDGE_STYLES[gridBridgeAppearance(c,bounds=>this.city.queryFootprints(bounds)).key].name));
+    this.ui.hint(issue?hints[issue]:crossings.length?`桥下净空 ${(Math.min(...crossings.map(bridge=>bridge.bottomY))-WATER_Y).toFixed(2)} 米 · 可容纳原型船 · ${[...styles].join('、')}`:
       '按住左键跨河绘制 · 两岸各接 3 格直线引桥 · Esc 取消');
   }
   startBuild(type,color=0,legacy=false){
