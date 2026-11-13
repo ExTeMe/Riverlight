@@ -24,7 +24,7 @@ export class UI {
       <form class="parcel-editor glass" aria-label="地块与建筑编辑" hidden></form>
       <form class="parcel-editor road-editor glass" aria-label="道路编辑" hidden></form>
       <div class="world-controls"><div class="zoom glass">${ib('zoom-in','plus','放大')}${ib('zoom-out','minus','缩小')}${ib('home','compass','回到全景 Home')}</div><button class="pill glass" data-action="expand">${icon('expand',16)}<span>扩展地图</span></button></div>
-      <div class="view-controls"><button class="pill glass" data-action="camera">${icon('camera',16)}<span id="camera-label">自由观察</span><kbd class="key">C</kbd></button><button class="pill glass" data-action="quiet">${icon('eye',16)}<span>静静欣赏</span></button></div>
+      <div class="view-controls"><button class="pill glass" data-action="toggle-simulation" aria-label="暂停城市活动" title="暂停城市活动">${icon('pause',16)}<span>暂停城市活动</span></button><button class="pill glass" data-action="camera">${icon('camera',16)}<span id="camera-label">自由观察</span><kbd class="key">C</kbd></button><button class="pill glass" data-action="quiet">${icon('eye',16)}<span>静静欣赏</span></button></div>
       <div class="mode-hint" id="mode-hint" hidden></div>
       <section class="catalog glass" aria-label="建筑目录"><div class="catalog-head"><nav class="categories">${CATEGORIES.map(c=>`<button class="category" data-category="${c.id}">${icon(c.icon,16)}${c.label}</button>`).join('')}</nav><span class="catalog-label">${icon('leaf',12)} 米制地块 · 自由建造</span></div><div class="cards" id="cards"></div><div class="catalog-foot"><span id="world-stats"></span><span><kbd class="key">R</kbd>旋转 &nbsp; <kbd class="key">Esc</kbd>取消 &nbsp; 拖入或点击建筑开始</span></div></section>
       <div class="toast" role="status" aria-live="polite"></div><div class="quiet-hint">按 H 或 Esc 返回建造 · 此刻，只需欣赏</div><div class="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true"></section></div><input type="file" id="import-file" accept=".json,application/json" hidden>`;
@@ -124,6 +124,14 @@ export class UI {
   }
   clock(){const e=this.app.city.environment,h=Math.floor(e.hour),m=Math.floor((e.hour%1)*60);this.root.querySelector('#clock-label').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;if(document.activeElement.id!=='time')this.root.querySelector('#time').value=e.hour;this.root.querySelector('[data-action=play]').innerHTML=icon(e.playing?'pause':'play',13);}
   hint(text){const el=this.root.querySelector('#mode-hint');el.textContent=text;el.hidden=!text;}
+  simulation(paused){
+    const button=this.root.querySelector('[data-action="toggle-simulation"]');
+    const label=paused?'恢复城市活动':'暂停城市活动';
+    button.innerHTML=`${icon(paused?'play':'pause',16)}<span>${label}</span>`;
+    button.setAttribute('aria-label',label);
+    button.title=label;
+    button.classList.toggle('active',paused);
+  }
   sailing(boat){
     const el=this.sailingStatus;
     if(!el)return;

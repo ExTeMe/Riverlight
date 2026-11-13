@@ -132,7 +132,8 @@ test('autonomous pedestrians follow valid edges, move over time, and rebuild aft
  const net=buildWalkNetwork(c);assert.ok(net.components.length);const route=walkingRoute(net,net.components[0][0],12);
  for(let i=1;i<route.length;i++)assert.ok(route[i-1].edges.has(route[i].id));
  const people=new Pedestrians(new Scene());people.rebuild(c);assert.ok(people.walkers.length>0);const before=people.walkers.map(w=>[w.x,w.z]);
- for(let i=0;i<240;i++)people.update(1/30,i/30,new Vector3(-100,0,-120),[]);
+ for(let i=0;i<240;i++)people.step(1/30,[]);
+ people.render(new Vector3(-100,0,-120));
  assert.ok(people.walkers.some((w,i)=>Math.hypot(w.x-before[i][0],w.z-before[i][1])>3));assert.equal(people.parts.length,6);
  for(const e of [...c.entities.values()])c.remove(e.id);people.rebuild(c);assert.equal(people.walkers.length,0);people.clear();
 });
