@@ -11,6 +11,7 @@ import { buildRoadNetwork, hasTraffic } from './road-network.js';
 import { alignmentGeometry, offsetRoadSample } from './road-alignment.js';
 import { createAlignmentMesh, createBridgeRoad, roadSelectionBands } from './roads.js';
 import { bridgeRise } from './bridges.js';
+import { bridgeAppearances } from './bridge-styles.js';
 import { JunctionPreview } from './junction-preview.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
@@ -118,6 +119,13 @@ export class World {
     if(!force&&state===this.lastRegion)return;
     this.lastRegion=state;
     const network=this.city.roadNetwork,roadsChanged=network!==this.renderedRoadNetwork;
+    const nextAppearances=force||roadsChanged||!this.bridgeStyles
+      ?bridgeAppearances(network,this.city.terrain,bounds=>this.city.queryFootprints(bounds)):this.bridgeStyles;
+    const styleChanges=new Set();
+    for(const [id,appearance] of nextAppearances){
+      if(appearance.key!==this.bridgeStyles?.get(id)?.key)styleChanges.add(id);
+    }
+    this.bridgeStyles=nextAppearances;
     const wanted=new Set();
     for(let x=cx-r;x<=cx+r;x++)for(let z=cz-r;z<=cz+r;z++){
       if(x*CHUNK>=this.city.radius || (x+1)*CHUNK<=-this.city.radius || z*CHUNK>=this.city.radius || (z+1)*CHUNK<=-this.city.radius)continue;
@@ -125,7 +133,8 @@ export class World {
       const detail=distance<420&&Math.hypot((x+.5)*CHUNK*CELL-focus.x,(z+.5)*CHUNK*CELL-focus.z)<210;
       const chunk=this.loaded.get(ck);
       if(!chunk){const land=landGeometry(x,z,this.city.terrain),buildings=new T.Group();this.scene.add(land,buildings);this.loaded.set(ck,{land,buildings,detail});this.buildChunk(ck,detail);}
-      else if(roadsChanged||chunk.detail!==detail||chunk.revision!==this.city.meshRevisions.get(ck))this.buildChunk(ck,detail);
+      else if(roadsChanged||chunk.detail!==detail||chunk.revision!==this.city.meshRevisions.get(ck)
+        ||(styleChanges.size&&[...this.city.chunks.get(ck)??[]].some(id=>styleChanges.has(id))))this.buildChunk(ck,detail);
     }
     this.renderedRoadNetwork=network;
     for(const ck of [...this.loaded.keys()])if(!wanted.has(ck))this.unload(ck);
@@ -179,13 +188,13 @@ export class World {
       if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
       if(road?.geometry){
-        const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure,this.city.terrain);
+        const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure,this.city.terrain,this.bridgeStyles.get(id),detail);
         model.userData.alignment=true;
         for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
         c.buildings.add(model);continue;
       }
       if(road?.grade||e.type==='bridge'){
-        const model=createBridgeRoad(road,e.rotation,material);
+        const model=createBridgeRoad(road,e.rotation,material,this.bridgeStyles.get(id),detail);
         for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;mesh.castShadow&&=detail;}
         c.buildings.add(model);continue;
       }

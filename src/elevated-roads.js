@@ -45,9 +45,13 @@ export function elevatedStructure(alignment,terrain){
   if(cached?.terrain===terrain)return cached.structure;
   const {bounds,samples,sections}=alignmentGeometry(alignment);
   if(!samples)return null;
-  const wet=sections.filter(section=>waterOverlaps(section.outline,section.bounds,terrain));
-  const bottomY=wet.length?Math.min(...wet.map(section=>section.minY+ROAD_DECK_BOTTOM)):null;
-  const structure={bounds,bottomY,piers:roadSupports(samples,terrain)};
+  let bottomY=null,waterRange=null;
+  for(const [i,section] of sections.entries()){
+    if(!waterOverlaps(section.outline,section.bounds,terrain))continue;
+    bottomY=Math.min(bottomY??Infinity,section.minY+ROAD_DECK_BOTTOM);
+    waterRange=[waterRange?.[0]??i,i+1];
+  }
+  const structure={bounds,bottomY,waterRange,piers:roadSupports(samples,terrain)};
   structureCache.set(alignment,{terrain,structure});
   return structure;
 }

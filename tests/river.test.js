@@ -92,10 +92,10 @@ test('T04 bridge meshes, lanes and footways share their grade and leave room for
   for(let i=1;i<route.length;i++)assert.ok(route[i-1].edges.has(route[i].id));
   const [walker]=world.traffic.people.walkers;
   Object.assign(walker,{route,index:0,t:0,wait:0,speed:1.4});
-  const focus=new Vector3(),initial=from.profile.vehicleY;
+  const initial=from.profile.vehicleY;
   let previous=null,previousWalk=null;
   for(let step=0;step<650;step++){
-    world.traffic.update(1/60,step/60,focus,false);
+    world.traffic.step(1/60,step/60);
     const {x,y}=car.mesh.position;
     close(y,initial+bridgeRise(bridge.bounds,x));
     if(previous!==null)assert.ok(Math.abs(previous-y)<.01);
@@ -166,7 +166,7 @@ test('the largest vessel clears two bridges, waits short of a low bridge, and tu
   const city=new City(createScene('T04').city);
   assert.ok(city.paint('bridge',gridLine([-7,2],[9,2])));
   const world=new World(new Scene(),city),traffic=world.traffic;
-  const [vessel]=traffic.boats,mesh=vessel.mesh,focus=new Vector3(),box=new Box3();
+  const [vessel]=traffic.boats,mesh=vessel.mesh,box=new Box3();
   const blocker=city.place('bridge',Math.round(sailingCenter(28,city.terrain,PROTOTYPE_RADIUS)/4),7);
   assert.ok(blocker);world.sync(true);
   const open=city.roadNetwork.bridges.crossings.filter(bridge=>bridge.passable);
@@ -175,7 +175,7 @@ test('the largest vessel clears two bridges, waits short of a low bridge, and tu
   const dt=.05;
   for(let i=0;i<1000;i++){
     const before=mesh.position.clone(),yaw=mesh.rotation.y;
-    traffic.update(dt,i*dt,focus,false);
+    traffic.step(dt,i*dt);
     const {x,y,z}=mesh.position;
     assert.ok(Math.hypot(x-before.x,z-before.z)<=BOAT_SPEED*dt+1e-6);
     assert.ok(Math.abs(mesh.rotation.y-yaw)<=1.5*dt+1e-6);

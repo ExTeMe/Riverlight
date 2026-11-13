@@ -5,6 +5,7 @@ import { gridRoadEnd, ROAD_DIRECTIONS } from './road-network.js';
 import { Vector3, Plane } from 'three';
 import { REQUIRED_UNDERSIDE } from './bridges.js';
 import { ROAD_DECK_BOTTOM } from './elevated-roads.js';
+import { BRIDGE_STYLES, continuousBridgeAppearance } from './bridge-styles.js';
 
 const fields=[['x','X 坐标（米）'],['y','高度（米）'],['z','Z 坐标（米）'],['bearing','方向（°）']];
 const presets={straight:[0,0],s:[30,30]};
@@ -503,11 +504,15 @@ export class RoadEditor {
     this.feedback.classList.toggle('invalid',!!plan?.error);
     const geometry=plan?.geometry;
     this.previewGeometry=geometry;
+    const cleared=new Set(plan?.removed?.map(e=>e.id));
+    const appearance=geometry?.samples&&continuousBridgeAppearance(geometry,plan.structure,this.app.city.terrain,
+      bounds=>this.app.city.queryFootprints(bounds).filter(e=>!cleared.has(e.id)),this.id);
     const length=start&&end?Math.hypot(end[0]-start[0],end[2]-start[2]):0;
     const measurements=geometry?.samples?[
       `端点间距 ${length.toFixed(1)} 米`,`高差 ${(end[1]-start[1]).toFixed(2)} 米`,`最大坡度 ${(geometry.maxGrade*100).toFixed(1)}%`,
       Number.isFinite(geometry.minRadius)?`${arc?'圆弧半径':'最小半径'} ${geometry.minRadius.toFixed(1)} 米`:'',
       plan.structure?.bottomY!=null?`水面净空 ${(plan.structure.bottomY-WATER_Y).toFixed(2)} 米`:'',
+      appearance&&!plan.error?`自动桥型：${BRIDGE_STYLES[appearance.key].name}`:'',
     ]:[];
     const message=this.addingPoint?'点击预览道路放置中间点':plan?plan.error:start?'请选择终点':'请拖出道路或点选起点';
     const roadCount=plan?.changes?.filter(c=>c.after).length;
