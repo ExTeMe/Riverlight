@@ -14,6 +14,8 @@ import { bridgeRise } from './bridges.js';
 import { bridgeAppearances } from './bridge-styles.js';
 import { addBridgeDetails } from './bridge-mesh.js';
 import { JunctionPreview } from './junction-preview.js';
+import { VEHICLE_ENVELOPES } from './road-junction.js';
+import { advanceVehicle, planVehicleTrip, sampleLane, vehicleOrigins, VEHICLE_SPEEDS } from './vehicle-routes.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
@@ -89,7 +91,7 @@ function horizonGeometry(focus,terrain){
   return surfaceGeometry(points);
 }
 export class World {
-  constructor(scene,city){
+  constructor(scene,city,vehicleSeed){
     this.scene=scene;this.city=city;this.loaded=new Map();this.pickables=[];this.lastRegion='';this.activeCenter=new T.Vector3();
     this.horizon=new T.Mesh(horizonGeometry(this.activeCenter,city.terrain),material('#839e79','ground'));this.horizonCenter=new T.Vector3();scene.add(this.horizon);
     this.quay=new T.Mesh(new T.BufferGeometry(),material('#c2b9a5','ground'));this.quay.receiveShadow=true;scene.add(this.quay);
@@ -107,7 +109,7 @@ export class World {
     this.hover=new T.Mesh(new T.PlaneGeometry(1,1),new T.MeshBasicMaterial({color:'#638b71',transparent:true,opacity:.3,depthWrite:false,side:T.DoubleSide}));this.hover.rotation.x=-Math.PI/2;this.hover.visible=false;scene.add(this.hover);
     this.preview=null;this.previewKey='';
     this.bridgePreview=new T.Group();scene.add(this.bridgePreview);
-    this.traffic=new Traffic(scene,city);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
+    this.traffic=new Traffic(scene,city,vehicleSeed);this.junctionPreview=new JunctionPreview(scene);this.sync(true);
   }
   setCity(city){this.clear();this.clearPreview();this.city=city;this.select(null);this.junctionPreview.clear();this.showMobility(false);this.showRiver(false);this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(this.activeCenter,city.terrain);this.traffic.setCity(city);this.sync(true);}
   clear(){for(const ck of [...this.loaded.keys()])this.unload(ck);this.lastRegion='';}
@@ -396,11 +398,15 @@ export class World {
   }
 }
 class Traffic {
-  constructor(scene,city){this.scene=scene;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];this.sailingTime=0;this.setCity(city);}
+  constructor(scene,city,vehicleSeed=1){
+    this.scene=scene;this.vehicleSeed=vehicleSeed;this.cars=[];this.people=new Pedestrians(scene);this.boats=[];
+    this.setCity(city);
+  }
   setCity(city){
     if(this.city)this.city.editGuard=null;
     for(const vessel of this.boats)this.disposeActor(vessel);
     this.boats=[];this.city=city;
+    this.network=null;
     this.sailingTime=0;
     this.track=navigationTrack(city.worldBounds(),city.terrain);
     city.editGuard=(changes,to)=>this.navigationEditError(changes,to);
@@ -447,17 +453,10 @@ class Traffic {
     return canKeepSailing(vessel,routes,routeAt(this.routes,vessel.distance))?null:'船只正在经过这里，请等船驶离后再修改航道';
   }
   rebuild(){
-    for(const car of this.cars)this.disposeActor(car);
-    this.cars=[];
-    this.randomState=1;
-    this.network=this.city.roadNetwork;
-    const roads=[...this.network.segments.values()].filter(s=>hasTraffic(s.kind)&&!s.geometry&&this.gridPorts(s).length);
-    for(let i=0;i<Math.min(46,Math.floor(roads.length/10));i++){
-      const e=roads[Math.floor(i*roads.length/Math.max(1,Math.min(46,Math.floor(roads.length/10))))],mesh=vehicle(i%5);
-      mesh.rotation.order='YXZ';this.scene.add(mesh);
-      const car={mesh,from:e,to:this.network.segments.get(this.gridPorts(e)[0].neighborId),last:null,t:this.random(),speed:2.3+(i%4)*.3,dwell:0,kind:i%5};
-      this.positionCar(car);
-      this.cars.push(car);
+    const network=this.city.roadNetwork;
+    if(network!==this.network){
+      this.network=network;
+      this.rebuildVehicles();
     }
     this.people.rebuild(this.city);
     this.routes=this.planRoutes(this.network.bridges.crossings,this.city.queryFootprints(this.track.area));
@@ -466,9 +465,62 @@ class Traffic {
       const vessel=launchVessel(this.track,this.routes);
       if(vessel){vessel.mesh=boat();this.scene.add(vessel.mesh);this.boats.push(vessel);this.positionBoat(vessel,this.sailingTime,0);}
     }
-    this.followTarget=this.cars[0]?.mesh;
   }
-  gridPorts(segment){return segment.ports.filter(port=>!this.network.segments.get(port.neighborId).geometry);}
+  rebuildVehicles(){
+    for(const car of this.cars)this.disposeActor(car);
+    this.cars=[];
+    this.vehicleSlots=[];
+    this.arrived=0;this.nextVehicleId=1;this.randomState=this.vehicleSeed;
+    const graph=this.network.laneGraph;
+    const roads=new Set([...graph.edges.values()].map(edge=>edge.roadId));
+    const count=Math.min(46,Math.max(1,Math.floor(roads.size/10)));
+    const origins=new Map(Object.keys(VEHICLE_SPEEDS).map(type=>[type,vehicleOrigins(graph,type)]));
+    const unreachable=new Set();
+    const random=()=>this.random();
+    for(let i=0;i<count;i++){
+      const kind=i%5,type=kind===3?'bus':'car';
+      const candidates=origins.get(type);
+      const first=Math.floor((i+.5)*candidates.length/count);
+      for(let offset=0;offset<candidates.length;offset++){
+        const entry=candidates[(first+offset)%candidates.length],key=`${type}/${entry.id}`;
+        if(unreachable.has(key))continue;
+        const trip=planVehicleTrip(graph,entry,type,random);
+        if(!trip){unreachable.add(key);continue;}
+        this.vehicleSlots.push({kind,type,trip,delay:0});
+        break;
+      }
+    }
+    this.spawnVehicles(0);
+  }
+  spawnVehicles(dt){
+    for(const slot of this.vehicleSlots){
+      if(slot.car)continue;
+      slot.delay-=dt;
+      if(slot.delay>0)continue;
+      const {trip,kind,type}=slot;
+      const envelope=VEHICLE_ENVELOPES[type];
+      const {point}=sampleLane(trip.route[0],trip.start);
+      if(this.cars.some(car=>{
+        const {x,y,z}=car.mesh.position;
+        return Math.abs(y-point[1])<1.5&&Math.hypot(x-point[0],z-point[2])<(car.envelope.length+envelope.length)/2+.45;
+      }))continue;
+      const mesh=vehicle(kind);
+      mesh.rotation.order='YXZ';this.scene.add(mesh);
+      const car={mesh,id:this.nextVehicleId++,kind,type,trip,edgeIndex:0,distance:trip.start,
+        speed:VEHICLE_SPEEDS[type],envelope,slot};
+      this.positionCar(car);
+      this.cars.push(car);
+      slot.car=car;
+    }
+  }
+  get followTarget(){return this.cars[0]?.mesh;}
+  get vehicleStatus(){
+    return {arrived:this.arrived,active:this.cars.map(({id,type,trip,edgeIndex,distance,mesh})=>{
+      const edge=trip.route[edgeIndex];
+      return {id,type,origin:trip.route[0].id,destination:trip.route.at(-1).id,
+        edge:edge.id,roadId:edge.roadId,kind:edge.kind,distance,point:mesh.position.toArray(),visible:mesh.visible};
+    })};
+  }
   positionBoat(vessel,time,dt){
     if(dt)advanceVessel(vessel,this.track,routeAt(this.routes,vessel.distance),dt);
     const {x,z}=pointOnTrack(this.track,vessel.distance);
@@ -479,33 +531,25 @@ class Traffic {
     this.randomState=(Math.imul(this.randomState,1664525)+1013904223)>>>0;
     return this.randomState/4294967296;
   }
-  positionCar(c,dt){
-    const prev=this.network.segments.get(c.last),t=Math.min(1,c.t),u=1-t;
-    const [bx,,bz]=c.from.center,[tx,,tz]=c.to.center,[px,,pz]=prev?.center??[2*bx-tx,0,2*bz-tz];
-    const ax=(px+bx)/2,az=(pz+bz)/2,cx=(bx+tx)/2,cz=(bz+tz)/2;
-    const vx=2*u*(bx-ax)+2*t*(cx-bx),vz=2*u*(bz-az)+2*t*(cz-bz),len=Math.hypot(vx,vz)||1,dx=vx/len,dz=vz/len;
-    const y=c.from.profile.vehicleY,lane=c.from.profile.lanes[1].offset;
-    const x=u*u*ax+2*u*t*bx+t*t*cx-dz*lane,z=u*u*az+2*u*t*bz+t*t*cz+dx*lane;
-    c.mesh.position.set(x,y+bridgeRise(c.from.grade,x),z);
-    const grade=c.from.grade??c.to.grade??prev?.grade;
-    c.mesh.rotation.x=-Math.atan2(bridgeRise(grade,x+dx)-bridgeRise(grade,x-dx),2);
-    const target=Math.atan2(dx,dz);
-    const delta=T.MathUtils.euclideanModulo(target-c.mesh.rotation.y+Math.PI,Math.PI*2)-Math.PI;
-    c.mesh.rotation.y=dt===undefined?target:c.mesh.rotation.y+delta*Math.min(1,dt*9);
+  positionCar(car){
+    const {point,yaw,pitch}=sampleLane(car.trip.route[car.edgeIndex],car.distance);
+    car.mesh.position.fromArray(point);
+    car.mesh.rotation.set(pitch,yaw,0);
   }
   step(dt,time){
-    for(const c of this.cars){
-      if(c.dwell>0)c.dwell-=dt;else c.t+=dt*c.speed/CELL;
-      if(c.t>=1){
-        c.t-=1;c.last=c.from.id;c.from=c.to;
-        const ports=this.gridPorts(c.from),forward=ports.filter(port=>port.neighborId!==c.last);
-        const next=forward.length?forward:ports;
-        const port=next[Math.floor(this.random()*next.length)];
-        c.to=port?this.network.segments.get(port.neighborId):c.from;
-        if(c.kind===3&&c.from.id%31===0)c.dwell=2;
-      }
-      this.positionCar(c,dt);
+    for(let i=this.cars.length-1;i>=0;i--){
+      const car=this.cars[i];
+      const arrived=advanceVehicle(car,dt*car.speed);
+      this.positionCar(car);
+      if(!arrived)continue;
+      this.arrived++;
+      this.disposeActor(car);
+      this.cars.splice(i,1);
+      const {slot}=car;
+      slot.car=null;slot.delay=1+this.random()*2;
+      slot.trip=planVehicleTrip(this.network.laneGraph,car.trip.route[0],car.type,()=>this.random());
     }
+    this.spawnVehicles(dt);
     this.people.step(dt,this.cars);
     this.sailingTime=time;
     for(const vessel of this.boats)this.positionBoat(vessel,time,dt);

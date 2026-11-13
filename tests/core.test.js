@@ -211,8 +211,10 @@ test('streaming a large city releases render chunks without deleting city data',
  world.sync(false,new Vector3(1600,0,1200),180);assert.ok(first.every(key=>!world.loaded.has(key)));assert.ok(world.loaded.size<=81);
  world.sync(false,new Vector3(0,0,0),180);assert.deepEqual([...world.loaded.keys()],first);assert.deepEqual(c.snapshot(),before);
  let released=0;const trafficCity=createDemo();world.setCity(trafficCity);
- for(const car of world.traffic.cars)car.mesh.traverse(m=>{if(m.geometry)m.geometry.addEventListener('dispose',()=>released++);});
- world.sync(true);assert.ok(released>0);world.clear();assert.equal(world.loaded.size,0);
+ const cars=world.traffic.cars;
+ for(const car of cars)car.mesh.traverse(m=>{if(m.geometry)m.geometry.addEventListener('dispose',()=>released++);});
+ world.sync(true);assert.equal(world.traffic.cars,cars);assert.equal(released,0);
+ world.setCity(c);assert.ok(released>0);world.clear();assert.equal(world.loaded.size,0);
 });
 
 test('a local edit and its undo keep unrelated chunk meshes loaded',()=>{
