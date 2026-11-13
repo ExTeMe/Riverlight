@@ -4,41 +4,43 @@ import { createScene } from '../src/baseline.js';
 import { BY_ID, CELL } from '../src/catalog.js';
 import { City, riverCenter, riverWidth } from '../src/core.js';
 import { World } from '../src/world.js';
+import { SIMULATION_STEP } from '../src/simulation-clock.js';
 
-const dt = 1 / 60;
+const dt = SIMULATION_STEP;
 const duration = 60;
 
 function observe(id) {
   const baseline = createScene(id);
   const city = new City(baseline.city);
   const focus = new Vector3(...baseline.cameras.near.target);
-  // Seed only this standalone replay. The browser still runs the normal simulation.
+  // The pedestrian prototype still uses Math.random.
   let randomState = baseline.seed;
   const originalRandom = Math.random;
   Math.random = () => (randomState = (Math.imul(randomState, 1664525) + 1013904223) >>> 0) / 2 ** 32;
   try {
-    const { traffic } = new World(new Scene(), city);
-    const { cars, people } = traffic;
+    const world = new World(new Scene(), city, baseline.seed);
+    const { traffic } = world, { people } = traffic;
     // The lower body boxes in vehicle() exclude mirrors, lights and visual padding.
-    const bodies = cars.map(car => new OBB(
-      new Vector3(0, .65, 0), new Vector3(.64, .26, car.kind === 3 ? 1.9 : 1.2),
-    ));
+    const body = type => new OBB(new Vector3(0, .65, 0), new Vector3(.64, .26, type === 'bus' ? 1.9 : 1.2));
     const overlaps = [];
     const pedestrianSamples = { water: 0, buildingLot: 0, stepOverSpeed: 0 };
-    for (let frame = 1; frame <= duration * 60; frame++) {
+    for (let frame = 1; frame <= duration / dt; frame++) {
       const previous = people.walkers.map(({ x, z }) => [x, z]);
       const time = frame * dt;
-      traffic.update(dt, time, focus);
-      const boxes = cars.map(({ mesh }, index) => {
+      world.step(dt, time);
+      traffic.render(focus, false);
+      const { cars } = traffic;
+      const boxes = cars.map(({ mesh, type }) => {
         mesh.updateMatrix();
-        return bodies[index].clone().applyMatrix4(mesh.matrix);
+        return body(type).applyMatrix4(mesh.matrix);
       });
       for (let a = 0; a < cars.length; a++) {
         for (let b = a + 1; b < cars.length; b++) {
           if (!boxes[a].intersectsOBB(boxes[b])) continue;
           overlaps.push({ frame, time, cars: [a, b].map(index => {
-            const { mesh, from, to } = cars[index];
-            return { index, position: mesh.position.toArray(), from: [from.x, from.z], to: [to.x, to.z] };
+            const { id, mesh, trip, edgeIndex } = cars[index];
+            return { id, position: mesh.position.toArray(), edge: trip.route[edgeIndex].id,
+              origin: trip.route[0].id, destination: trip.route.at(-1).id };
           }) });
         }
       }
@@ -53,7 +55,8 @@ function observe(id) {
       });
     }
     return { scene: id, sceneVersion: baseline.sceneVersion, seed: baseline.seed, dt, duration,
-      vehicles: cars.length, pedestrians: people.walkers.length, overlaps, pedestrianSamples };
+      vehicles: traffic.cars.length, arrivals: traffic.vehicleStatus.arrived,
+      pedestrians: people.walkers.length, overlaps, pedestrianSamples };
   } finally {
     Math.random = originalRandom;
   }

@@ -13,11 +13,13 @@ function portPoint(port,offset,height){
 export function buildRoadPaths(segment,cornerPoint,cornerHeight){
   const {center,profile,ports,geometry,corner,surface,junction}=segment;
   const {vehicleY,walkY}=profile;
-  const waypoints=(ports,points)=>({from:ports[0],to:ports[1],points,vehicles});
+  const waypoints=(ports,points,directions)=>({from:ports[0],to:ports[1],points,directions,vehicles});
   if(geometry){
     const lanePaths=segment.lanes.map(({direction,points})=>{
       const start=direction===1?0:1;
-      return waypoints([ports.find(p=>p.end===start),ports.find(p=>p.end!==start)],direction===1?points:points.slice().reverse());
+      const tangents=geometry.samples.map(sample=>sample.direction.map(n=>n*direction));
+      return waypoints([ports.find(p=>p.end===start),ports.find(p=>p.end!==start)],
+        direction===1?points:points.slice().reverse(),direction===1?tangents:tangents.reverse());
     });
     return {lanePaths,walkways:segment.sidewalks.map(({points})=>asLine(points))};
   }
@@ -28,16 +30,26 @@ export function buildRoadPaths(segment,cornerPoint,cornerHeight){
     const from=ports.find(port=>ROAD_DIRECTIONS[port.side][0]===sx),to=ports.find(port=>ROAD_DIRECTIONS[port.side][1]===sz);
     const arc=(radius,y,field)=>Array.from({length:25},(_,i)=>shift(center,cornerPoint(sx,sz,radius,i*Math.PI/48),
       cornerHeight(y,from[field],to[field],i/24)));
-    return {lanePaths:[waypoints([from,to],arc(profile.width/2+sx*sz*lane,vehicleY,'vehicleY')),
-      waypoints([to,from],arc(profile.width/2-sx*sz*lane,vehicleY,'vehicleY').reverse())],
+    const tangents=Array.from({length:25},(_,i)=>[-sx*Math.cos(i*Math.PI/48),sz*Math.sin(i*Math.PI/48)]);
+    return {lanePaths:[waypoints([from,to],arc(profile.width/2+sx*sz*lane,vehicleY,'vehicleY'),tangents),
+      waypoints([to,from],arc(profile.width/2-sx*sz*lane,vehicleY,'vehicleY').reverse(),
+        tangents.slice().reverse().map(direction=>direction.map(n=>-n)))],
     walkways:[-1,1].map(sign=>asLine(arc(profile.width/2+sign*offset,walkY,'walkY')))};
   }
   const lanePaths=[];
   if(junction){
     for(const {from,to,samples,vehicles,kind} of junction.movements){
       const incoming=ports.find(p=>p.side===from),outgoing=ports.find(p=>p.side===to);
-      lanePaths.push({from:incoming,to:outgoing,points:samples.map(({point},i)=>shift(center,point,
-        i===0?incoming.vehicleY:i===samples.length-1&&outgoing?outgoing.vehicleY:vehicleY)),vehicles,kind});
+      const points=samples.map(({point},i)=>shift(center,point,
+        i===0?incoming.vehicleY:i===samples.length-1&&outgoing?outgoing.vehicleY:vehicleY));
+      lanePaths.push({from:incoming,to:outgoing,points,directions:samples.map(sample=>sample.direction),vehicles,kind});
+      if(kind==='stop'){
+        // Mirror the checked stopping path across the centreline for departures.
+        const direction=ROAD_DIRECTIONS[from],offset=sidePoint(from,0,2*lane);
+        const start=shift(points.at(-1),offset,points.at(-1)[1]);
+        lanePaths.push({to:incoming,points:[start,portPoint(incoming,lane,'vehicleY')],
+          directions:[direction,direction],vehicles,kind:'entry'});
+      }
     }
   }else if(ports.length===2&&(ports[0].side>>1)===(ports[1].side>>1)){
     for(const [from,to] of [ports,ports.slice().reverse()])lanePaths.push(waypoints([from,to],[
@@ -69,12 +81,13 @@ export function buildLaneGraph(segments,revision){
     return nodes.get(id);
   };
   for(const segment of segments.values())for(const [i,path] of segment.lanePaths.entries()){
-    const {from,to,points,vehicles,kind}=path,id=`${segment.id}:${i}`;
+    const {from,to,points,directions,vehicles,kind}=path,id=`${segment.id}:${i}`;
     const start=node(from?`${from.neighborId}>${segment.id}`:`${id}:start`,points[0]);
     const end=node(to?`${segment.id}>${to.neighborId}`:`${id}:end`,points.at(-1));
     const distance=[0];
     for(let j=1;j<points.length;j++)distance.push(distance.at(-1)+length(points[j-1],points[j]));
-    edges.set(id,{id,roadId:segment.id,from:start.id,to:end.id,points,distance,length:distance.at(-1),vehicles,kind:kind??'lane'});
+    edges.set(id,{id,roadId:segment.id,from:start.id,to:end.id,points,directions,distance,length:distance.at(-1),
+      vehicles,kind:kind??'lane',entry:!from,exit:!to});
     start.outgoing.push(id);
   }
   return {revision,nodes,edges};

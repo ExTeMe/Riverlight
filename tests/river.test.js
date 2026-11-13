@@ -85,26 +85,27 @@ test('T04 bridge meshes, lanes and footways share their grade and leave room for
       assert.ok(Math.abs(b[1]-a[1])<=.120001*Math.hypot(b[0]-a[0],b[2]-a[2]));
     }
   }
-  const [car]=world.traffic.cars,from=segments.get(bridge.approachIds[1]);
-  const fromId=from.ports.find(p=>p.side===1).neighborId;
-  Object.assign(car,{from,last:fromId,to:segments.get(from.ports.find(p=>p.side===0).neighborId),t:0});
+  const car=world.traffic.cars.find(car=>bridge.deckIds.every(id=>car.trip.route.some(edge=>edge.roadId===id)));
+  assert.ok(car);
+  const from=segments.get(bridge.approachIds[1]);
   const route=sidewalk.filter(n=>n.kind==='sidewalk'&&n.x>=-28&&n.x<=0&&n.z===1.82).sort((a,b)=>a.x-b.x);
   for(let i=1;i<route.length;i++)assert.ok(route[i-1].edges.has(route[i].id));
   const [walker]=world.traffic.people.walkers;
   Object.assign(walker,{route,index:0,t:0,wait:0,speed:1.4});
   const initial=from.profile.vehicleY;
-  let previous=null,previousWalk=null;
-  for(let step=0;step<650;step++){
-    world.traffic.step(1/60,step/60);
+  let previous=null,previousWalk=null,peak=0;
+  for(let step=0;step<480;step++){
+    world.traffic.step(1/30,step/30);
     const {x,y}=car.mesh.position;
     close(y,initial+bridgeRise(bridge.bounds,x));
-    if(previous!==null)assert.ok(Math.abs(previous-y)<.01);
+    if(previous!==null)assert.ok(Math.abs(previous-y)<.013);
     previous=y;
+    peak=Math.max(peak,y);
     close(walker.y,from.profile.walkY+bridgeRise(bridge.bounds,walker.x));
-    if(previousWalk!==null)assert.ok(Math.abs(previousWalk-walker.y)<.005);
+    if(previousWalk!==null)assert.ok(Math.abs(previousWalk-walker.y)<.006);
     previousWalk=walker.y;
   }
-  assert.ok(car.mesh.position.y>1.5);
+  assert.ok(peak>1.5);
   assert.ok(walker.y>1.55);
   boatModel.traverse(o=>o.geometry?.dispose());world.clear();
 });
