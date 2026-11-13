@@ -27,22 +27,28 @@ export class Pedestrians {
       positions.push(a.x+nx,y,a.z+nz,a.x-nx,y,a.z-nz,b.x-nx,v,b.z-nz,a.x+nx,y,a.z+nz,b.x-nx,v,b.z-nz,b.x+nx,v,b.z+nz);
     }
     if(positions.length){const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new T.Mesh(geometry,new T.MeshStandardMaterial({color:'#c8c7b7',roughness:.95,side:T.DoubleSide}));mesh.receiveShadow=true;mesh.name='Entrance_and_quay_walkways';this.group.add(mesh);}
-    this.update(0,0,new T.Vector3(),[]);
+    this.render(new T.Vector3());
   }
-  update(dt,time,focus,cars){
-    let visible=0;
+  step(dt,cars){
     this.walkers.forEach((walker,i)=>{
       let a=walker.route[walker.index],b=walker.route[walker.index+1];
       if(!b){walker.seed++;walker.route=walkingRoute(this.network,a,walker.seed);walker.index=0;walker.t=0;walker.wait=.5+(i%5)*.3;b=walker.route[1];}
-      if(!b)return;
+      if(!b){walker.moving=false;return;}
       const distance=Math.hypot(b.x-a.x,b.y-a.y,b.z-a.z)||.01,crossing=a.edges.get(b.id)==='crossing';
       const occupied=crossing&&walker.t<.06&&cars.some(car=>Math.hypot(car.mesh.position.x-(a.x+b.x)/2,car.mesh.position.z-(a.z+b.z)/2)<3.2);
       const moving=walker.wait<=0&&!occupied;
+      walker.moving=moving;
       if(walker.wait>0)walker.wait-=dt;
       if(moving){walker.t+=dt*walker.speed/distance;walker.walked+=dt*walker.speed;}
       const t=Math.min(1,walker.t);walker.x=T.MathUtils.lerp(a.x,b.x,t);walker.y=T.MathUtils.lerp(a.y,b.y,t);walker.z=T.MathUtils.lerp(a.z,b.z,t);
       const angle=Math.atan2(b.x-a.x,b.z-a.z);walker.angle+=T.MathUtils.euclideanModulo(angle-walker.angle+Math.PI,Math.PI*2)-Math.PI;
       if(walker.t>=1){walker.index++;walker.t=0;}
+    });
+  }
+  render(focus){
+    let visible=0;
+    this.walkers.forEach((walker,i)=>{
+      const {moving}=walker;
       const near=Math.hypot(walker.x-focus.x,walker.z-focus.z)<190;if(near)visible++;
       this.pose.position.set(walker.x,walker.y+(moving?Math.abs(Math.sin(walker.walked*5))*.025:0),walker.z);this.pose.rotation.set(0,walker.angle,0);this.pose.scale.setScalar(near?1:0);this.pose.updateMatrix();
       const swing=moving?Math.sin(walker.walked*5+i)*.48:0;

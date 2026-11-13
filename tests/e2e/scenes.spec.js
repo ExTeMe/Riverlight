@@ -444,6 +444,7 @@ test('T02 and T03 show road markings, allowed vehicle movements and topology cha
   await page.getByRole('button',{name:'绘制曲线与坡道',exact:true}).click();
   await page.locator('#scene').click({position:{x:Math.round((1+edge.x)*480),y:Math.round((1-edge.y)*320)}});
   const editor=page.getByRole('form',{name:'道路编辑'});
+  await editor.getByText('精细调整',{exact:true}).click();
   await expect(editor.getByLabel('起点 高度（米）')).toHaveValue('0.04');
   await expect(editor.getByLabel('起点 方向（°）')).toHaveValue('90');
   await editor.getByLabel('终点 X 坐标（米）').fill('-96');
@@ -724,6 +725,25 @@ test('T04 sails under two high bridge spans in a strait city',async({page})=>{
   expect(river.reaches).toEqual([[-105,105]]);
   const [west,east]=river.sections.find(section=>section.z===0).banks;
   expect(east-west).toBeGreaterThan(160);
+  expect(errors).toEqual([]);
+});
+
+test('T04 pauses city activity independently of the day-night clock',async({page})=>{
+  const errors=[];page.on('pageerror',error=>errors.push(error.message));
+  await page.goto('/?scene=T04');await ready(page);
+  const stats=()=>page.evaluate(()=>window.riverlight.getStats());
+  const button=name=>page.getByRole('button',{name,exact:true});
+  await button('暂停城市活动').click();
+  await expect(button('恢复城市活动')).toBeVisible();
+  const paused=await stats();
+  expect(paused.sailing).toBeTruthy();
+  await button('环境与氛围').click();
+  await page.getByRole('combobox',{name:'时间流速'}).selectOption('8');
+  await button('暂停或继续时间').click();
+  await expect.poll(async()=> (await stats()).environment.hour).not.toBe(paused.environment.hour);
+  expect((await stats()).sailing).toEqual(paused.sailing);
+  await button('恢复城市活动').click();
+  await expect.poll(async()=> (await stats()).sailing.point[2]).not.toBe(paused.sailing.point[2]);
   expect(errors).toEqual([]);
 });
 

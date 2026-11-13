@@ -9,6 +9,7 @@ import { CityAOPass } from './ambient-occlusion.js';
 import { City, createDemo, footprintBounds, gridLine } from './core.js';
 import { CELL, BY_ID, snapStep } from './catalog.js';
 import { legacySnap } from './space.js';
+import { SimulationClock } from './simulation-clock.js';
 import { PROTOTYPE_HULL, PROTOTYPE_RADIUS, WATER_Y, navigableSpan, riverBanks } from './river.js';
 import { pointOnTrack } from './navigation.js';
 import { bridgeRise, buildBridges, REQUIRED_UNDERSIDE } from './bridges.js';
@@ -47,6 +48,7 @@ class App {
     this.controls=new OrbitControls(this.camera,this.canvas);this.controls.enableDamping=true;this.controls.dampingFactor=.075;this.controls.minDistance=24;this.controls.maxDistance=900;this.controls.minPolarAngle=.18;this.controls.maxPolarAngle=Math.PI*.43;this.controls.target.set(4,0,15);this.controls.mouseButtons={LEFT:null,MIDDLE:T.MOUSE.PAN,RIGHT:T.MOUSE.ROTATE};this.controls.panSpeed=.8;this.controls.rotateSpeed=.5;this.controls.zoomSpeed=.65;this.controls.update();
     this.selectionIds=new Set();
     this.groupTransform=null;
+    this.simulation=new SimulationClock();
     this.raycaster=new T.Raycaster();this.pointer=new T.Vector2();this.plane=new T.Plane(new T.Vector3(0,1,0),0);this.point=new T.Vector3();
     this.assetStatus=await loadArchitectureAssets();this.world=new World(this.scene,this.city);this.environment=new Environment(this.scene,this.renderer,this.city);this.sound=new Soundscape();
     this.composer=new EffectComposer(this.renderer);this.composer.addPass(new RenderPass(this.scene,this.camera));this.ao=new CityAOPass(this.scene,this.camera,innerWidth,innerHeight,this.environment);this.ao.blendIntensity=.65;this.ao.updateGtaoMaterial({radius:2.5,distanceExponent:1,thickness:1,scale:1,samples:8});this.composer.addPass(this.ao);this.bloom=new UnrealBloomPass(new T.Vector2(innerWidth,innerHeight),.16,.45,1.15);this.composer.addPass(this.bloom);this.composer.addPass(new OutputPass());
@@ -72,7 +74,7 @@ class App {
     document.querySelector('#loading').style.opacity='0';setTimeout(()=>document.querySelector('#loading').remove(),800);
     if(opened.error){console.error(opened.error);this.ui.saved('原存档已保护 · 当前另存恢复城市');this.ui.toast('原存档读取失败，已保护原记录。当前城市将另存，可在「我的城市」导出原记录。',true);}
     if(this.baseline)this.ui.saved(`独立场景 · ${this.baseline.id} / v${this.baseline.sceneVersion}`);
-    this.last=performance.now();this.elapsed=0;this.uiClock=0;this.animate=this.animate.bind(this);requestAnimationFrame(this.animate);
+    this.last=performance.now();this.uiClock=0;this.animate=this.animate.bind(this);requestAnimationFrame(this.animate);
     setTimeout(()=>document.querySelector('.intro')?.classList.add('hide'),22000);
     // Read-only diagnostics are useful during visual and performance verification.
     window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,laneRoadRevision:this.city.roadNetwork.laneGraph.revision,laneEdges:this.city.roadNetwork.laneGraph.edges.size,mobilityOverlay:this.world.walkOverlay.visible,sailing:this.world.traffic.boatStatus,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
@@ -177,7 +179,10 @@ class App {
     this.canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';this.updatePointer(e);if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else this.preview();});
     this.canvas.addEventListener('drop',e=>{e.preventDefault();if(this.replacing)return;const type=e.dataTransfer.getData('text/plain');if(!BY_ID[type])return;if(this.buildType!==type&&this.editor.type!==type)this.startBuild(type);this.updatePointer(e);this.click();});
     window.addEventListener('keydown',e=>this.keydown(e));window.addEventListener('keyup',e=>this.keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{this.keys.clear();this.drawing=false;this.pointerDown=null;this.roadEditor.cancelDraw();});
-    document.addEventListener('visibilitychange',()=>{if(document.hidden){this.keys.clear();this.autosave.flush();}});
+    document.addEventListener('visibilitychange',()=>{
+      this.last=performance.now();
+      if(document.hidden){this.keys.clear();this.autosave.flush();}
+    });
     this.controls.addEventListener('start',()=>{this.follow=false;});
   }
   extendStroke(){
@@ -357,7 +362,8 @@ class App {
     try{
       try{await this.saveSession.replace(this.city,this.cameraState(),city,view,original);}
       catch(error){console.error(error);this.ui.toast('城市切换失败，原城市已保留。请导出备份后重试。',true);return false;}
-      this.cancel();this.setSelection([]);this.city=city;this.world.setCity(city);this.environment.city=city;this.environment.refreshSources();this.follow=false;this.controls.autoRotate=false;this.setQuality();this.restoreCamera(view);this.ui.refresh();this.ui.closeModal();
+      this.cancel();this.setSelection([]);this.simulation.reset();this.last=performance.now();
+      this.city=city;this.world.setCity(city);this.environment.city=city;this.environment.refreshSources();this.follow=false;this.controls.autoRotate=false;this.setQuality();this.restoreCamera(view);this.ui.refresh();this.ui.closeModal();
       this.autosave.reset();this.ui.saved(this.saveSession.protected?'已保存恢复城市 · 原存档已保护':'已保存 · 当前城市已备份');return true;
     }finally{this.replacing=false;this.autosave.schedule();}
   }
@@ -367,6 +373,7 @@ class App {
   keydown(e){
     if(e.key==='Escape'&&(this.editor.active||this.roadEditor.active||this.groupTransform)){e.preventDefault();this.cancel();this.ui.refreshSelection();return;}
     if(e.target.matches('input,textarea,select')||this.ui.modalOpen){if(e.key==='Escape')this.ui.closeModal();return;}
+    if(e.key===' '&&e.target.closest('button'))return;
     const key=e.key.toLowerCase();this.keys.add(key);
     if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(key))e.preventDefault();
     if(e.ctrlKey||e.metaKey){if(['z','y','s'].includes(key))e.preventDefault();if(key==='z')this.action(e.shiftKey?'redo':'undo');if(key==='y')this.action('redo');if(key==='s')this.action('save');return;}
@@ -434,6 +441,11 @@ class App {
       case 'quiet':this.cancel();this.quiet=!this.quiet;document.body.classList.toggle('quiet',this.quiet);this.world.emptyParcels.layers.set(this.quiet?1:0);break;
       case 'environment':{const panel=document.querySelector('.environment');panel.hidden=!panel.hidden;document.querySelector('[data-action=environment]').classList.toggle('active',!panel.hidden);break;}
       case 'play':this.setEnvironment({playing:!this.city.environment.playing});break;
+      case 'toggle-simulation':
+        this.simulation.paused=!this.simulation.paused;
+        this.last=performance.now();
+        this.ui.simulation(this.simulation.paused);
+        break;
       case 'save':if(await this.persist())this.ui.toast('这一刻，已经为你保存');break;
       case 'cities':await this.ui.cities();break;
       case 'scenes':this.ui.scenes();break;
@@ -475,14 +487,17 @@ class App {
     }
   }
   animate(now){
-    const dt=Math.min((now-this.last)/1000,.06);this.last=now;this.elapsed+=dt;
+    const frameTime=Math.max(0,(now-this.last)/1000);
+    this.last=now;
+    const dt=Math.min(frameTime,.06);
+    if(!document.hidden&&!this.replacing)this.simulation.advance(frameTime,(step,time)=>this.world.step(step,time));
     if(!this.ui.modalOpen){const dir=new T.Vector3();this.camera.getWorldDirection(dir);dir.y=0;dir.normalize();const right=new T.Vector3().crossVectors(dir,new T.Vector3(0,1,0));const move=new T.Vector3();
       if(this.keys.has('arrowup')||this.keys.has('w'))move.add(dir);if(this.keys.has('arrowdown')||this.keys.has('s'))move.sub(dir);if(this.keys.has('arrowright')||this.keys.has('d'))move.add(right);if(this.keys.has('arrowleft')||this.keys.has('a'))move.sub(right);
       if(move.lengthSq()){move.normalize().multiplyScalar(dt*this.camera.position.distanceTo(this.controls.target)*.38);this.controls.target.add(move);this.camera.position.add(move);this.follow=false;}
     }
     const limit=this.city.radius*CELL-8,clamped=this.controls.target.clone();clamped.x=T.MathUtils.clamp(clamped.x,-limit,limit);clamped.z=T.MathUtils.clamp(clamped.z,-limit,limit);const correction=clamped.sub(this.controls.target);this.controls.target.add(correction);this.camera.position.add(correction);
     if(this.follow&&this.world.traffic.followTarget){const target=this.world.traffic.followTarget.position;this.controls.target.lerp(target,dt*1.5);this.camera.position.lerp(target.clone().add(new T.Vector3(15,12,21)),dt*.75);}
-    this.controls.update(dt);this.editor.handles.layout();this.roadEditor.handles.layout();this.roadEditor.layoutPoints();this.renderer.info.reset();this.world.update(dt,this.elapsed,this.controls.target,this.camera.position.distanceTo(this.controls.target));this.ui.sailing(this.world.riverOverlay.visible?this.world.traffic.boatStatus:null);this.environment.update(dt,this.camera,this.controls.target);this.sound.update(this.city.environment,this.controls.target);this.composer.render();
+    this.controls.update(dt);this.editor.handles.layout();this.roadEditor.handles.layout();this.roadEditor.layoutPoints();this.renderer.info.reset();this.world.update(this.simulation.time,this.controls.target,this.camera.position.distanceTo(this.controls.target));this.ui.sailing(this.world.riverOverlay.visible?this.world.traffic.boatStatus:null);this.environment.update(dt,this.camera,this.controls.target);this.sound.update(this.city.environment,this.controls.target);this.composer.render();
     this.uiClock+=dt;if(this.uiClock>.3){this.ui.clock();this.uiClock=0;}requestAnimationFrame(this.animate);
   }
 }
