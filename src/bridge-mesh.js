@@ -88,5 +88,5 @@ export function addBridgeDetails(group,appearance,samples,half,material,detail=t
   const geometry=mergeGeometries(pieces);
   for(const part of pieces)part.dispose();
   const mesh=new Mesh(geometry,material(style.railing,'ground'));
-  mesh.castShadow=detail;mesh.receiveShadow=true;group.add(mesh);
+  mesh.castShadow=true;mesh.receiveShadow=true;group.add(mesh);
 }

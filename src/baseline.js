@@ -66,6 +66,15 @@ export const SCENE_WEATHER = [
   {id:'snow',name:'雪景',hour:10,season:'winter',weather:'snow'},
 ];
 
+const T06_SAMPLE_VIEWS = {
+  cottage: { position: [-100, 12, 36], target: [-111, 2.7, 14] },
+  bakery: { position: [-62, 11, 12], target: [-75, 3.3, -10] },
+  library: { position: [-33, 13, 41], target: [-48, 3, 19] },
+  office: { position: [-45, 18, 11], target: [-65, 12, -28] },
+  park: { position: [-68, 10, 30], target: [-82, 1.1, 14] },
+  pier: { position: [-20, 9, 32], target: [-3, .55, 13] },
+};
+
 // Fixed placements, not random decoration: invalid geometry fails visibly.
 export function createScene(id, density='standard') {
   const spec=SCENES.find(scene=>scene.id===id);
@@ -156,6 +165,7 @@ export function createScene(id, density='standard') {
   city.undoStack=[];city.redoStack=[];
   const target=[...spec.target],position=[...spec.position];
   const cameras={medium:{position,target},near:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*.48)},far:{target:[...target],position:target.map((v,i)=>v+(position[i]-v)*1.75)}};
+  if(id==='T06')Object.assign(cameras,structuredClone(T06_SAMPLE_VIEWS));
   if(id==='T02'){
     cameras.corners={target:[-106,0,8],position:[-106,158,41]};
     cameras.alignment={target:[-102,0,-89],position:[-103,95,-9]};

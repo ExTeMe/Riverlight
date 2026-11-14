@@ -9,6 +9,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { readFile, stat } from 'node:fs/promises';
 import { Box3, BoxGeometry, BufferAttribute, Group, Mesh, MeshStandardMaterial, Scene, Texture, Vector3 } from 'three';
 import { World } from '../src/world.js';
+import { createScene } from '../src/baseline.js';
 import { buildWalkNetwork, walkingRoute } from '../src/walk-network.js';
 import { Pedestrians } from '../src/pedestrians.js';
 
@@ -215,6 +216,30 @@ test('streaming a large city releases render chunks without deleting city data',
  for(const car of cars)car.mesh.traverse(m=>{if(m.geometry)m.geometry.addEventListener('dispose',()=>released++);});
  world.sync(true);assert.equal(world.traffic.cars,cars);assert.equal(released,0);
  world.setCity(c);assert.ok(released>0);world.clear();assert.equal(world.loaded.size,0);
+});
+
+test('zooming out changes detail by chunk and keeps waterfront furniture and shadows',()=>{
+ const city=new City(createScene('T06').city),world=new World(new Scene(),city);
+ const focus=new Vector3(-65,0,0);
+ const zoom=distance=>{
+  world.sync(false,focus,distance);
+  return [...world.loaded.values()].filter(chunk=>chunk.detail).length;
+ };
+ const waterfront=()=>world.pickables.filter(mesh=>mesh.userData.entityIds?.includes(null));
+ const bench=[...city.entities.values()].find(entity=>entity.type==='bench');
+ const office=[...city.entities.values()].find(entity=>entity.type==='office');
+ const hasShadow=id=>world.pickables.some(mesh=>mesh.castShadow&&mesh.userData.entityIds?.includes(id));
+ const near=zoom(419),quayInstances=waterfront().reduce((sum,mesh)=>sum+mesh.count,0);
+ assert.ok(near>0&&quayInstances>0);
+ assert.equal(zoom(421),near);
+ const intermediate=zoom(480);
+ assert.ok(intermediate>0&&intermediate<near);
+ assert.equal(zoom(481),intermediate);
+ assert.equal(zoom(560),0);
+ assert.equal(waterfront().reduce((sum,mesh)=>sum+mesh.count,0),quayInstances);
+ assert.ok(hasShadow(null)&&hasShadow(bench.id)&&hasShadow(office.id));
+ assert.ok(zoom(419)>intermediate);
+ world.clear();
 });
 
 test('a local edit and its undo keep unrelated chunk meshes loaded',()=>{
