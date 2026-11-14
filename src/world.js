@@ -19,6 +19,14 @@ import { planVehicleTrip, sampleLane, vehicleOrigins, VEHICLE_SPEEDS } from './v
 import { canSpawnVehicle, MIN_VEHICLE_GAP, stepVehicles } from './vehicle-motion.js';
 import { advanceVessel, BOAT_BRAKE, BOAT_SPEED, bridgeObstacles, canKeepSailing, launchVessel, navigationRoutes, navigationTrack, pointOnTrack, routeAt } from './navigation.js';
 
+const CHUNK_SPAN = CELL * CHUNK;
+
+function useDetailedModels(chunkX,chunkZ,focus,distance,wasDetailed){
+  // Pull the detail boundary in as the view zooms out, with a 16 m return band.
+  const range=Math.min(210,(540-distance)/.75)+(wasDetailed?16:0);
+  return range>0&&(chunkX-focus.x)**2+(chunkZ-focus.z)**2<range**2;
+}
+
 function quad(out,a,b,c,d){out.push(...a,...c,...b,...a,...d,...c);}
 function clipX(polygon,edge,side){
   const out=[];let a=polygon.at(-1);
@@ -120,8 +128,17 @@ export class World {
     if(focus.distanceTo(this.horizonCenter)>500){this.horizon.geometry.dispose();this.horizon.geometry=horizonGeometry(focus,this.city.terrain);this.horizonCenter.copy(focus);}
     const cx=Math.floor(focus.x/(CELL*CHUNK)),cz=Math.floor(focus.z/(CELL*CHUNK));
     const r=Math.min(12,Math.max(2,Math.ceil(distance*.8/(CELL*CHUNK))+1));
-    const state=`${cx}:${cz}:${r}:${this.city.radius}:${distance<420}`;
-    if(!force&&state===this.lastRegion)return;
+    const state=`${cx}:${cz}:${r}:${this.city.radius}`;
+    if(!force&&state===this.lastRegion){
+      let rebuilt=false;
+      for(const [ck,chunk] of this.loaded){
+        const detail=useDetailedModels(chunk.x,chunk.z,focus,distance,chunk.detail);
+        if(detail===chunk.detail)continue;
+        this.buildChunk(ck,detail);rebuilt=true;
+      }
+      if(rebuilt)this.refreshPickables();
+      return;
+    }
     this.lastRegion=state;
     const network=this.city.roadNetwork,roadsChanged=network!==this.renderedRoadNetwork;
     const nextAppearances=force||roadsChanged||!this.bridgeStyles
@@ -135,9 +152,10 @@ export class World {
     for(let x=cx-r;x<=cx+r;x++)for(let z=cz-r;z<=cz+r;z++){
       if(x*CHUNK>=this.city.radius || (x+1)*CHUNK<=-this.city.radius || z*CHUNK>=this.city.radius || (z+1)*CHUNK<=-this.city.radius)continue;
       const ck=key(x,z);wanted.add(ck);
-      const detail=distance<420&&Math.hypot((x+.5)*CHUNK*CELL-focus.x,(z+.5)*CHUNK*CELL-focus.z)<210;
+      const centerX=(x+.5)*CHUNK_SPAN,centerZ=(z+.5)*CHUNK_SPAN;
       const chunk=this.loaded.get(ck);
-      if(!chunk){const land=landGeometry(x,z,this.city.terrain),buildings=new T.Group();this.scene.add(land,buildings);this.loaded.set(ck,{land,buildings,detail});this.buildChunk(ck,detail);}
+      const detail=useDetailedModels(centerX,centerZ,focus,distance,chunk?.detail);
+      if(!chunk){const land=landGeometry(x,z,this.city.terrain),buildings=new T.Group();this.scene.add(land,buildings);this.loaded.set(ck,{land,buildings,x:centerX,z:centerZ});this.buildChunk(ck,detail);}
       else if(roadsChanged||chunk.detail!==detail||chunk.revision!==this.city.meshRevisions.get(ck)
         ||(styleChanges.size&&[...this.city.chunks.get(ck)??[]].some(id=>styleChanges.has(id))))this.buildChunk(ck,detail);
     }
@@ -183,14 +201,13 @@ export class World {
   buildChunk(ck,detail){
     const c=this.loaded.get(ck);c.detail=detail;c.revision=this.city.meshRevisions.get(ck);disposeChunkMeshes(c.buildings);c.buildings.clear();c.animations=[];
     const batches=new Map();
-    const append=(model,matrix,id)=>{for(const mesh of model.children){
+    const append=(model,matrix,id,castShadow=true)=>{for(const mesh of model.children){
       if(mesh.userData.dynamic){const holder=new T.Group(),animated=mesh.clone(true);holder.applyMatrix4(matrix);holder.add(animated);holder.traverse(o=>{if(o.isMesh)o.userData.entityId=id;});c.buildings.add(holder);c.animations.push(holder);continue;}
-      const k=mesh.geometry.uuid+mesh.material.uuid;if(!batches.has(k))batches.set(k,{mesh,matrices:[],ids:[]});const batch=batches.get(k);batch.matrices.push(matrix);batch.ids.push(id);
+      const k=mesh.geometry.uuid+mesh.material.uuid+castShadow;if(!batches.has(k))batches.set(k,{mesh,castShadow,matrices:[],ids:[]});const batch=batches.get(k);batch.matrices.push(matrix);batch.ids.push(id);
     }};
     for(const id of this.city.chunks.get(ck)||[]){
       if(id===this.previewSource)continue;
       const e=this.city.entities.get(id);
-      if(!detail&&['bench','flowers','lamp'].includes(e.type))continue;
       const road=this.city.roadNetwork.segments.get(id),mask=hasTraffic(e.type)?road.mask:0;
       if(road?.geometry){
         const model=createAlignmentMesh(road.geometry,road.ports,material,road.structure,this.city.terrain,this.bridgeStyles.get(id),detail);
@@ -200,7 +217,7 @@ export class World {
       }
       if(road?.grade||e.type==='bridge'){
         const model=createBridgeRoad(road,e.rotation,material,this.bridgeStyles.get(id),detail);
-        for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;mesh.castShadow&&=detail;}
+        for(const mesh of model.children){mesh.userData.entityId=id;mesh.userData.roadGeometry=true;}
         c.buildings.add(model);continue;
       }
       const model=(detail?getTemplate:getDistantTemplate)(e.type,e.color,mask),p=placementOf(e);
@@ -210,11 +227,11 @@ export class World {
         if(mask)p.radians=0;
       }
       const matrix=new T.Matrix4().compose(new T.Vector3(p.x,0,p.z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),p.radians),new T.Vector3(p.scaleX,1,p.scaleZ));
-      append(model,matrix,id);
-      if(detail&&e.type==='road'&&!road.junction&&(e.x+e.z)%6===0)append(getTemplate('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.8,.13,e.z*CELL+1.8),id);
+      append(model,matrix,id,detail||!['road','path'].includes(e.type));
+      if(e.type==='road'&&!road.junction&&(e.x+e.z)%6===0)append((detail?getTemplate:getDistantTemplate)('lamp'),new T.Matrix4().makeTranslation(e.x*CELL+1.8,.13,e.z*CELL+1.8),id);
     }
     const [cx,cz]=ck.split(',').map(Number);
-    if(detail)for(let z=Math.ceil(cz*CHUNK*CELL/12)*12;z<(cz+1)*CHUNK*CELL;z+=12){if(Math.abs(z)>105)continue;for(const side of [-1,1]){
+    for(let z=Math.max(-96,Math.ceil(cz*CHUNK_SPAN/12)*12);z<Math.min(108,(cz+1)*CHUNK_SPAN);z+=12){for(const side of [-1,1]){
       const [center]=quayCenter(z,side,this.city.terrain),x=center+side*QUAY.width;
       if(Math.floor((x+CELL/2)/(CHUNK*CELL))!==cx)continue;
       if(!this.city.waterfront.some(section=>section.side===side&&section.from<=z&&z<section.to))continue;
@@ -224,8 +241,8 @@ export class World {
       if(this.city.queryFootprints(outlineBounds(outline)).length||outline.some(([px,pz])=>side*(px-quayCenter(pz,side,this.city.terrain)[0])<QUAY.width/2))continue;
       append(model,new T.Matrix4().compose(new T.Vector3(x,0,z),new T.Quaternion().setFromAxisAngle(new T.Vector3(0,1,0),angle),new T.Vector3(1,1,1)),null);
     }}
-    for(const {mesh,matrices,ids} of batches.values()){
-      const inst=new T.InstancedMesh(mesh.geometry,mesh.material,matrices.length);matrices.forEach((m,i)=>inst.setMatrixAt(i,m));inst.userData.entityIds=ids;inst.castShadow=detail&&mesh.castShadow;inst.receiveShadow=true;inst.computeBoundingSphere();c.buildings.add(inst);
+    for(const {mesh,castShadow,matrices,ids} of batches.values()){
+      const inst=new T.InstancedMesh(mesh.geometry,mesh.material,matrices.length);matrices.forEach((m,i)=>inst.setMatrixAt(i,m));inst.userData.entityIds=ids;inst.castShadow=castShadow&&mesh.castShadow;inst.receiveShadow=true;inst.computeBoundingSphere();c.buildings.add(inst);
     }
   }
   select(id,parcelId,group=null){

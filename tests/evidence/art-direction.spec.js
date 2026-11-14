@@ -3,10 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 test.use({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 0.75, video: 'off', trace: 'off' });
 
-const landscapeViews = {
-  park: { position: [-68, 10, 30], target: [-82, 1.1, 14] },
-  pier: { position: [-20, 9, 32], target: [-3, .55, 13] },
-};
+const sampleViews = ['cottage', 'bakery', 'library', 'office', 'park', 'pier'];
 
 async function photograph(page, testInfo, name) {
   await page.evaluate(async () => {
@@ -65,9 +62,8 @@ test('T06 captures the same three views by day, at dusk and in rain', async ({ p
       }
     }
     if (preset !== 'dusk') {
-      await page.locator('[data-action="camera"]').click();
-      for (const [name, view] of Object.entries(landscapeViews)) {
-        await recallView(page, view);
+      for (const name of preset === 'day' ? sampleViews : ['bakery', 'park', 'pier']) {
+        await page.locator(`[data-view="${name}"]`).click();
         await photograph(page, testInfo, `${preset}-${name}`);
       }
     }
@@ -75,7 +71,7 @@ test('T06 captures the same three views by day, at dusk and in rain', async ({ p
   expect(errors).toEqual([]);
 });
 
-test('ART-04 records both sides of the LOD threshold and park lighting', async ({ page }, testInfo) => {
+test('ART-04 records the LOD transition, fountain motion and park lighting', async ({ page }, testInfo) => {
   test.setTimeout(480_000);
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -98,7 +94,9 @@ test('ART-04 records both sides of the LOD threshold and park lighting', async (
   const target = [-65, 0, 0];
   const direction = [55, 55, 85];
   const length = Math.hypot(...direction);
-  for (const [name, distance] of [['lod-near', 419], ['lod-far', 421], ['lod-return', 419]]) {
+  const views = [['lod-419', 419], ['lod-421', 421], ['lod-480', 480], ['lod-560', 560], ['lod-return', 419]];
+  const detailedChunks = [];
+  for (const [name, distance] of views) {
     const position = target.map((value, index) => value + distance * direction[index] / length);
     await recallView(page, { position, target });
     await photograph(page, testInfo, name);
@@ -110,9 +108,14 @@ test('ART-04 records both sides of the LOD threshold and park lighting', async (
     const data = JSON.parse(await readFile(path, 'utf8'));
     expect(data.scene).toMatchObject({ id: 'T06', version: 3 });
     expect(Math.hypot(...data.camera.position.map((value, index) => value - data.camera.target[index]))).toBeCloseTo(distance, 4);
-    if (name === 'lod-far') expect(data.detailedChunks).toBe(0);
-    else expect(data.detailedChunks).toBeGreaterThan(0);
+    detailedChunks.push(data.detailedChunks);
   }
+  const [before, after, intermediate, distant, returned] = detailedChunks;
+  expect(after).toBe(before);
+  expect(intermediate).toBeGreaterThan(0);
+  expect(intermediate).toBeLessThan(after);
+  expect(distant).toBe(0);
+  expect(returned).toBeGreaterThan(intermediate);
   await page.getByText('观察与记录', { exact: true }).click();
   await recallView(page, { position: [-63, 8, 53], target: [-76, 1.5, 40] });
   await photograph(page, testInfo, 'fountain-a');
@@ -122,7 +125,7 @@ test('ART-04 records both sides of the LOD threshold and park lighting', async (
   await photograph(page, testInfo, 'fountain-b');
 
   await selectWeather('rain');
-  await recallView(page, landscapeViews.park);
+  await page.locator('[data-view="park"]').click();
   await page.evaluate(async () => {
     for (let frame = 0; frame < 32; frame++) await new Promise(requestAnimationFrame);
   });
