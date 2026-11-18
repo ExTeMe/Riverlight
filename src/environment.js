@@ -73,10 +73,10 @@ export class Environment {
     this.lightSources=[];
     const addLight=(position,intensity=34,distance=24)=>this.lightSources.push({position,intensity,distance});
     for(const e of this.city.entities.values()){
-      if(e.type==='park'){
+      if(e.type==='park'||e.type==='bridge-court'){
         const anchor=getTemplate(e.type).userData.anchors?.light;
         if(!anchor)continue;
-        addLight(new T.Vector3(...placementAnchor(e,anchor)),18,8);
+        addLight(new T.Vector3(...placementAnchor(e,anchor)),e.type==='park'?18:12,e.type==='park'?8:6);
       }else if(['cafe','bakery','bookshop','mall','amusement','museum','pier'].includes(e.type)){
         const [w,d]=entityDimensions(e);
         if(e.pose){

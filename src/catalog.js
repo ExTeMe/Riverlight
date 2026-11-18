@@ -8,6 +8,7 @@ export const CATEGORIES = [
 ];
 const item = (id, name, category, kind, w, d, color, extra = {}) => ({ id, name, category, kind, w, d, color, ...extra });
 export const CATALOG = [
+  item('bridge-court', '双庭石居', 'home', 'house', 4, 4, '#ad9f88', { floors: 2, roof: '#576a6d' }),
   item('cottage', '河畔小屋', 'home', 'house', 2, 2, '#ece1c7', { floors: 1, roof: '#b35d43' }),
   item('sage-house', '鼠尾草小屋', 'home', 'house', 2, 2, '#a7b9a5', { floors: 1, roof: '#586c6b' }),
   item('rose-house', '蔷薇小屋', 'home', 'house', 2, 2, '#dab0a2', { floors: 1, roof: '#9a5445' }),
