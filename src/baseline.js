@@ -1,5 +1,6 @@
 import { City, waterAt, gridLine, createDemo } from './core.js';
 import { usesParcel } from './parcel.js';
+import { createRiverfrontStudy, RIVERFRONT_STUDY_ID } from './riverfront-study.js';
 
 export const BASELINE = Object.freeze({
   id: 'BASE-02',
@@ -77,6 +78,7 @@ const T06_SAMPLE_VIEWS = {
 
 // Fixed placements, not random decoration: invalid geometry fails visibly.
 export function createScene(id, density='standard') {
+  if(id===RIVERFRONT_STUDY_ID)return createRiverfrontStudy(createScene('T04',density));
   const spec=SCENES.find(scene=>scene.id===id);
   if(!spec)throw new Error(`未知场景：${id}；请选择 T01～T07`);
   if(!['sparse','standard','dense'].includes(density))throw new Error('未知场景密度');

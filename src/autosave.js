@@ -27,7 +27,7 @@ export async function encodeSnapshot(city,current,{yieldTurn=yieldTask,batchSize
   return [text(header.slice(0,-1)+',"entities":['),...entities,text('],"parcels":['),...parcels,text(']}')];
 }
 
-export function createSaveWriter(store,name){
+export function createSaveWriter(store,name,{allowRiverfront=false}={}){
   let worker,unavailable=false;
   return async (id,parts,camera)=>{
     if(!worker&&!unavailable&&typeof Worker!=='undefined'){
@@ -41,7 +41,7 @@ export function createSaveWriter(store,name){
         worker.terminate();worker=undefined;unavailable=true;
         reject(new Error(event.message||'后台保存失败'));
       };
-      worker.postMessage({name,id,parts,camera},parts);
+      worker.postMessage({name,id,parts,camera,allowRiverfront},parts);
     });
   };
 }

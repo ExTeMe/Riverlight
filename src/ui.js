@@ -2,6 +2,7 @@ import { CATALOG, CATEGORIES, BY_ID, CELL, entityDimensions } from './catalog.js
 import { PRESETS } from './environment.js';
 import { icon } from './icons.js';
 import { SCENES, SCENE_WEATHER } from './baseline.js';
+import { RIVERFRONT_STUDY_ID, riverfrontEvidence } from './riverfront-study.js';
 import { BRIDGE_STYLES } from './bridge-styles.js';
 const ib=(action,glyph,label,extra='')=>`<button class="icon-button ${extra}" data-action="${action}" data-tip="${label}" aria-label="${label}" title="${label}">${icon(glyph)}</button>`;
 const button=(action,glyph,label,primary=false)=>`<button class="button ${primary?'primary':''}" data-action="${action}">${icon(glyph,16)}${label}</button>`;
@@ -24,6 +25,7 @@ export class UI {
       <section class="selection-panel glass" hidden><h3 id="selected-name"></h3><p id="selected-meta"></p><div class="selection-actions">${[['edit-lot','expand','移动整块'],['edit-building','move','调整建筑'],['edit-road','road','调整线形'],['extend-road-start','plus','延伸起点'],['extend-road-end','plus','延伸终点'],['inspect-junction','curve','转向预览'],['move','move','移动'],['rotate','rotate','旋转'],['copy','copy','复制'],['color','palette','配色'],['focus','eye','靠近'],['delete','erase','拆除'],['apply-group','check','应用'],['cancel-group','close','取消']].map(([action,glyph,label])=>`<button data-action="${action}" class="${action==='delete'?'danger':''}">${icon(glyph,17)}${label}</button>`).join('')}</div></section>
       <form class="parcel-editor glass" aria-label="地块与建筑编辑" hidden></form>
       <form class="parcel-editor road-editor glass" aria-label="道路编辑" hidden></form>
+      ${app.baseline?.id===RIVERFRONT_STUDY_ID?'<form class="parcel-editor riverfront-editor glass" aria-label="滨水平台编辑" hidden></form>':''}
       <div class="world-controls"><div class="zoom glass">${ib('zoom-in','plus','放大')}${ib('zoom-out','minus','缩小')}${ib('home','compass','回到全景 Home')}</div><button class="pill glass" data-action="expand">${icon('expand',16)}<span>扩展地图</span></button></div>
       <div class="view-controls"><button class="pill glass" data-action="toggle-simulation" aria-label="暂停城市活动" title="暂停城市活动">${icon('pause',16)}<span>暂停城市活动</span></button><button class="pill glass" data-action="camera">${icon('camera',16)}<span id="camera-label">自由观察</span><kbd class="key">C</kbd></button><button class="pill glass" data-action="quiet">${icon('eye',16)}<span>静静欣赏</span></button></div>
       <div class="mode-hint" id="mode-hint" hidden></div>
@@ -54,12 +56,25 @@ export class UI {
         ${app.baseline.id==='T06'?`<div class="scene-buttons" role="group" aria-label="样板近景">${[['cottage','住宅'],['bakery','面包房'],['library','图书馆'],['office','办公楼'],['park','公园'],['pier','码头']].map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>`:''}
         ${app.baseline.junctionViews?`<div class="scene-buttons">${[['tee','T 字路口'],['terminal','断头路'],['junction','十字路口']].filter(([id])=>app.baseline.junctionViews[id]).map(([id,name])=>`<button data-action="scene-camera" data-view="${id}">${name}</button>`).join('')}</div>
           <div class="scene-buttons" id="junction-controls" hidden><button data-action="junction-vehicle" data-vehicle="car">小车</button><button data-action="junction-vehicle" data-vehicle="bus">公交</button><button data-action="hide-junction">关闭轨迹</button></div><p id="junction-summary" hidden></p>`:''}
+        ${app.baseline.id===RIVERFRONT_STUDY_ID?`
+          <div class="scene-buttons" role="group" aria-label="西岸建造">
+            <button data-action="study-frontage" data-type="bakery">面包房</button>
+            <button data-action="study-frontage" data-type="market">市集</button>
+            <button data-action="study-paving">铺设前场</button>
+          </div>
+          <div class="scene-buttons">
+            <button data-action="study-platform">滨水平台</button>
+            <button data-action="study-remove-platform">拆除平台</button>
+            <button data-action="study-walk" aria-pressed="false">显示步行图</button>
+          </div>
+          <p id="study-status" aria-live="polite"></p>
+          <div class="scene-buttons" role="group" aria-label="西岸空间轮廓">${[['buildings','建筑占地'],['forecourt','前场位置'],['alley','通巷预留'],['platform','平台轮廓']].map(([id,name])=>`<button data-action="study-guide" data-layer="${id}" aria-pressed="false">${name}</button>`).join('')}</div>`:''}
         <div class="scene-buttons weather-compare">${SCENE_WEATHER.map(p=>`<button data-action="scene-weather" data-weather-id="${p.id}">${p.name}</button>`).join('')}</div>
         ${app.baseline.id==='T07'?`<div class="scene-buttons">${[['sparse','小街'],['standard','城区'],['dense','密集城区']].map(([id,name])=>`<button data-action="scene-density" data-density="${id}" aria-pressed="${app.baseline.density===id}">${name}</button>`).join('')}</div>`:''}
         <details><summary>观察与记录</summary><p>${escape(app.baseline.purpose)}</p><p>待实现：${escape(app.baseline.limitations.join('；'))}</p><p>v${app.baseline.sceneVersion} · 固定布局 ${app.baseline.seed} · 高画质起步。车辆与天气动画仍为原型随机状态。</p><button class="button" data-action="scene-evidence">导出资源快照</button></details>
         <div class="scene-footer"><button data-action="reset-baseline">重置场景</button><button data-action="resume-scene">保存并重载</button><button data-action="return-city">返回我的城市</button></div>`;
       this.root.append(panel);
-      if(app.baseline.id==='T04'){
+      if(app.baseline.cameras.river){
         this.sailingStatus=document.createElement('p');this.sailingStatus.hidden=true;this.sailingStatus.setAttribute('aria-live','polite');
         panel.querySelector('.scene-buttons').after(this.sailingStatus);
       }
@@ -89,6 +104,21 @@ export class UI {
     this.clock();this.refreshActive();
     this.refreshSelection();
     this.refreshJunction();
+    this.refreshStudy();
+  }
+  refreshStudy(){
+    const status=this.root.querySelector('#study-status');if(!status)return;
+    const {city,world,studyLayer}=this.app;
+    const proof=riverfrontEvidence(city,world.traffic.people.network);
+    const count=proof.entries.filter(entry=>entry.built).length;
+    const toQuay=proof.entries.filter(entry=>entry.route).length;
+    const platform=proof.platform?.quayRoute.length?'平台可步行至岸道':proof.platform?'平台暂未接到岸道':'可先建平台或沿街铺面';
+    const crossing=!proof.crossing?'缺少桥头过街':count?`${toQuay} 处入口经桥头接岸`:'桥头过街已就绪';
+    status.textContent=`${crossing} · ${platform}`;
+    this.root.querySelector('[data-action=study-remove-platform]').disabled=!proof.platform;
+    const walk=this.root.querySelector('[data-action=study-walk]');
+    walk.setAttribute('aria-pressed',String(world.walkOverlay.visible));walk.textContent=world.walkOverlay.visible?'隐藏步行图':'显示步行图';
+    for(const button of this.root.querySelectorAll('[data-action=study-guide]'))button.setAttribute('aria-pressed',String(button.dataset.layer===studyLayer));
   }
   refreshJunction(){
     const summary=this.root.querySelector('#junction-summary');if(!summary)return;
@@ -100,7 +130,7 @@ export class UI {
   }
   refreshSelection(){
     const selected=this.app.city.entities.get(this.app.selected),parcel=this.app.city.parcels.get(this.app.selectedParcel);
-    const panel=this.root.querySelector('.selection-panel');panel.hidden=(!selected&&!parcel)||!!this.app.editor?.active||!!this.app.roadEditor?.active;
+    const panel=this.root.querySelector('.selection-panel');panel.hidden=(!selected&&!parcel)||!!this.app.editor?.active||!!this.app.roadEditor?.active||!!this.app.platformEditor?.active;
     if(panel.hidden)return;
     const count=this.app.selectionIds.size, draft=this.app.groupTransform;
     if(count>1){

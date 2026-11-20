@@ -18,7 +18,7 @@ function metadata(record) {
 }
 
 // The existing cities store and raw records survive the database upgrade.
-export function createSaveStore({ indexedDB = globalThis.indexedDB,
+export function createSaveStore({ indexedDB = globalThis.indexedDB, allowRiverfront = false,
   name = 'riverlight-cities', now = Date.now, makeId = uniqueId } = {}) {
   let dbPromise;
   function database() {
@@ -85,7 +85,7 @@ export function createSaveStore({ indexedDB = globalThis.indexedDB,
       existing.onsuccess = () => {
         try {
           const original = existing.result;
-          if (original && !supportedCityVersion(original.data?.version)) {
+          if (original && !supportedCityVersion(original.data?.version,allowRiverfront)) {
             throw new Error('原存档格式未知，已阻止覆盖');
           }
           if (original?.data?.version < CITY_VERSION) {

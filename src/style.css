@@ -34,6 +34,7 @@
 .road-continue{margin-top:7px;padding:7px 10px;border:1px solid #98ab94;border-radius:8px;color:#344f3b;font-size:12px;font-weight:600}
 .road-editor{max-height:calc(100vh - 135px)}
 #app:has(.road-editor:not([hidden]))>.catalog,#app:has(.road-editor:not([hidden]))>.scene-panel,#app:has(.road-editor:not([hidden]))>.intro{display:none}
+#app.paving-study>.scene-panel,#app.paving-study>.catalog,#app:has(.riverfront-editor:not([hidden]))>.catalog{display:none}
 #app:has(.road-editor:not([hidden]))>.world-controls,#app:has(.road-editor:not([hidden]))>.view-controls{bottom:24px}
 .road-elevation{padding:7px 0}.road-clearance{font-size:12px;border:1px solid #98ab94;border-radius:8px;padding:6px 9px;width:100%}
 .road-position-handle{width:23px;height:23px;border:3px solid #f8fff5;background:#456b54}

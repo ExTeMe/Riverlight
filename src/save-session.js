@@ -1,20 +1,21 @@
 import { City, createDemo } from './core.js';
 import { CITY_VERSION } from './city-format.js';
 
-export function parseCityFile(text) {
+export function parseCityFile(text, options) {
   const input = JSON.parse(text);
   if (!input || typeof input !== 'object') throw new Error('存档格式不受支持');
   const data = input.city || input.data || input;
-  const city = new City(data);
+  const city = new City(data, options);
   return { city, camera: input.camera,
     original: data.version < CITY_VERSION ? { data, camera: input.camera, input } : undefined };
 }
 
 // Owns save ordering and recovery; rendering and UI do not choose which original record to overwrite.
 export class SaveSession {
-  constructor(store, { makeId = () => `recovery-${globalThis.crypto.randomUUID()}` } = {}) {
+  constructor(store, { allowRiverfront = false, makeId = () => `recovery-${globalThis.crypto.randomUUID()}` } = {}) {
     this.store = store;
     this.makeId = makeId;
+    this.cityOptions = { allowRiverfront };
     this.target = 'autosave';
     this.queue = Promise.resolve();
     this.protected = false;
@@ -22,13 +23,13 @@ export class SaveSession {
   }
 
   async open(initial, { resume = false } = {}) {
-    const fresh = () => initial ? { city: new City(initial.city), camera: structuredClone(initial.camera) } : { city: createDemo() };
+    const fresh = () => initial ? { city: new City(initial.city, this.cityOptions), camera: structuredClone(initial.camera) } : { city: createDemo() };
     if (initial && !resume) return fresh();
     try {
       this.original = await this.store.load('autosave');
       if (!this.original) return fresh();
       if (!this.original.data) throw new Error('原存档缺少城市数据');
-      return { city: new City(this.original.data), camera: this.original.camera };
+      return { city: new City(this.original.data, this.cityOptions), camera: this.original.camera };
     } catch (error) {
       this.protected = true;
       this.target = this.makeId();
@@ -40,7 +41,7 @@ export class SaveSession {
           try {
             const saved = await this.store.load(candidate.id);
             if (!saved?.data) throw new Error('恢复存档缺少城市数据');
-            const city = new City(saved.data);
+            const city = new City(saved.data, this.cityOptions);
             this.target = candidate.id;
             return { city, camera: saved.camera, error };
           } catch { /* Keep invalid recovery records intact and try the next one. */ }

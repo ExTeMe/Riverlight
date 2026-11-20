@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { buildWalkNetwork, walkingRoute, WALK_LINK_HALF_WIDTH } from './walk-network.js';
+import { buildWalkNetwork, walkingRoute, walkStrip } from './walk-network.js';
 
 const palette=['#e1b55b','#6e919e','#b85f4e','#e4dccc','#659479','#91749c'];
 /** Autonomous walkers, rendered in six batches regardless of the number of people. */
@@ -19,14 +19,16 @@ export class Pedestrians {
       for(let i=0;i<count;i++)if(name==='body'||name.includes('Arm'))mesh.setColorAt(i,new T.Color(palette[i%palette.length]));
       this.parts.push(mesh);this.group.add(mesh);
     }
-    const positions=[];
-    for(const [a,b] of this.network.connectors){
-      const dx=b.x-a.x,dz=b.z-a.z,l=Math.hypot(dx,dz);if(l<.1)continue;
-      const nx=-dz/l*WALK_LINK_HALF_WIDTH,nz=dx/l*WALK_LINK_HALF_WIDTH;
-      const y=Math.max(.012,a.y-.014),v=Math.max(.012,b.y-.014);
-      positions.push(a.x+nx,y,a.z+nz,a.x-nx,y,a.z-nz,b.x-nx,v,b.z-nz,a.x+nx,y,a.z+nz,b.x-nx,v,b.z-nz,b.x+nx,v,b.z+nz);
+    const positions=[],lift=city.allowRiverfront ? .004 : -.014;
+    for(const [a,b,halfWidth] of this.network.connectors){
+      if(Math.hypot(b.x-a.x,b.z-a.z)<.1)continue;
+      const y=Math.max(.012,a.y+lift),v=Math.max(.012,b.y+lift);
+      const [startLeft,endLeft,endRight,startRight]=walkStrip(a,b,halfWidth);
+      const point=([x,z],height)=>[x,height,z];
+      const p=point(startLeft,y),q=point(startRight,y),r=point(endRight,v),s=point(endLeft,v);
+      positions.push(...p,...q,...r,...p,...r,...s);
     }
-    if(positions.length){const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new T.Mesh(geometry,new T.MeshStandardMaterial({color:'#c8c7b7',roughness:.95,side:T.DoubleSide}));mesh.receiveShadow=true;mesh.name='Entrance_and_quay_walkways';this.group.add(mesh);}
+    if(positions.length){const geometry=new T.BufferGeometry();geometry.setAttribute('position',new T.Float32BufferAttribute(positions,3));geometry.computeVertexNormals();const mesh=new T.Mesh(geometry,new T.MeshStandardMaterial({color:city.allowRiverfront?'#cbc1a6':'#c8c7b7',roughness:.95,side:T.DoubleSide}));mesh.receiveShadow=true;mesh.name='Entrance_and_quay_walkways';this.group.add(mesh);}
     this.render(new T.Vector3());
   }
   step(dt,cars){

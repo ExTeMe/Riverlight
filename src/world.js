@@ -176,6 +176,7 @@ export class World {
         this.quay.geometry.dispose();this.quay.geometry=surfaceGeometry(points);
       }
       this.traffic.rebuild();
+      this.syncRiverfront();
       if(this.riverOverlay.visible)this.showRiver(true);
       const guide=this.junctionPreview;
       if(guide.id)this.showJunction(guide.id,guide.kind);
@@ -374,6 +375,42 @@ export class World {
   }
   clearPreview(sourceId=null){if(this.preview){this.scene.remove(this.preview);this.preview.traverse(o=>{if(o.isMesh){o.material.dispose();if(this.preview.userData.roadPreview)o.geometry.dispose();}});this.preview=null;}this.clearBridgePreview();this.previewKey='';this.hover.visible=false;this.grid.visible=false;this.previewParcel.visible=false;this.roadObstacles.visible=false;this.previewFootprint.visible=false;this.previewFootprint.material.depthTest=true;this.previewFootprint.renderOrder=0;this.setPreviewSource(sourceId);}
   showJunction(id,kind){this.junctionPreview.set(this.city.roadNetwork.segments.get(id),kind);}
+  showStudyGuide(lines){
+    if(!lines.length){if(this.studyGuide)this.studyGuide.visible=false;return;}
+    if(!this.studyGuide)this.studyGuide=lineLayer(this.scene,0xfff4d8);
+    updateLines(this.studyGuide,lines);
+    this.studyGuide.visible=true;
+  }
+  showStudyDraft(lines,invalid=false){
+    if(!lines.length){if(this.studyDraft)this.studyDraft.visible=false;return;}
+    if(!this.studyDraft)this.studyDraft=lineLayer(this.scene,0x96ffe2);
+    this.studyDraft.material.color.set(invalid?0xff8866:0x96ffe2);
+    updateLines(this.studyDraft,lines);
+    this.studyDraft.visible=true;
+  }
+  syncRiverfront(){
+    if(this.studyPlatformRecord!==this.city.platform){
+      if(this.studyPlatform){
+        this.scene.remove(this.studyPlatform);
+        this.studyPlatform.geometry.dispose();
+        this.studyPlatform=null;
+      }
+      this.studyPlatformRecord=this.city.platform;
+      if(this.city.platform){
+        const {surfaces,ground}=this.city.platform.geometry,vertices=[];
+        for(const {points} of surfaces){
+          quad(vertices,...points);
+          for(let i=0;i<points.length;i++){
+            const a=points[i],b=points[(i+1)%points.length];
+            quad(vertices,a,[a[0],ground,a[2]],[b[0],ground,b[2]],b);
+          }
+        }
+        this.studyPlatform=new T.Mesh(surfaceGeometry(vertices),material('#c4b597','ground'));
+        this.studyPlatform.castShadow=this.studyPlatform.receiveShadow=true;
+        this.scene.add(this.studyPlatform);
+      }
+    }
+  }
   showRiver(visible){
     this.riverOverlay.visible=visible;
     if(!visible)return;
@@ -453,9 +490,9 @@ class Traffic {
       const {minZ,maxZ}=footprintBounds(entity);
       return minZ<=z+padding&&maxZ>=z-padding;
     };
-    if(!changes.some(c=>!c.parcel&&(near(c.before)||near(c.after))))return null;
+    if(!changes.some(c=>!c.parcel&&!c.platform&&(near(c.before)||near(c.after))))return null;
     const proposed=new Map(this.city.entities);
-    for(const c of changes)if(!c.parcel){
+    for(const c of changes)if(!c.parcel&&!c.platform){
       const entity=c[to];
       if(entity)proposed.set(entity.id,entity);
       else proposed.delete((c.before??c.after).id);

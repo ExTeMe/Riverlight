@@ -1,6 +1,6 @@
 import { BY_ID, CELL, CHUNK, SNAP, LEGACY_LOTS, entityDimensions } from './catalog.js';
 import { SpatialIndex, legacyFootprintBounds, riverCenter, riverWidth, terrainSurfaceAt, waterAt, worldBounds } from './space.js';
-import { ALIGNMENT_ROAD_VERSION, ARC_ROAD_VERSION, BRIDGE_PROFILE_VERSION, CITY_VERSION, ELEVATED_ROAD_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, supportedCityVersion } from './city-format.js';
+import { ALIGNMENT_ROAD_VERSION, ARC_ROAD_VERSION, BRIDGE_PROFILE_VERSION, CITY_VERSION, ELEVATED_ROAD_VERSION, GRID_ROAD_VERSION, PARCEL_VERSION, RIVERFRONT_VERSION, supportedCityVersion } from './city-format.js';
 import { usesParcel, parcelOutline, footprintOutline, parcelOnLand, fitsParcel, legacyParcel, normalizeParcel, normalAngle, readParcelEntity, placementOf } from './parcel.js';
 import { EDGE_EPSILON, boundsContain, outlineBounds, outlineContains, outlinesOverlap, transformOutline } from './outline.js';
 import { buildRoadNetwork, hasTraffic, isRoad, nextRoadRevision, readGridRoad, readRoadHeader, roadCenter, roadHeader } from './road-network.js';
@@ -8,6 +8,7 @@ import { alignmentGeometry, matchingRoadEnds, readAlignment, roadContains } from
 import { elevatedStructure, obstacleHeight, roadBlocksOutline, roadConflict, roadEndsSeparated, roadObstacleConflict } from './elevated-roads.js';
 import { REQUIRED_UNDERSIDE } from './bridges.js';
 import { QUAY, quaySection, riverSections, waterOverlaps } from './river.js';
+import { entityOutlines, platformOverlaps, platformPlan } from './riverfront-platform.js';
 export { riverCenter, riverWidth, waterAt };
 export const VERSION = CITY_VERSION;
 export const MAX_ENTITIES = 100000;
@@ -29,7 +30,7 @@ const boundsIntersect = (a,b) => a.minX<b.maxX&&a.maxX>b.minX&&a.minZ<b.maxZ&&a.
 const overlapsEntity = (outline,e,terrain,height=0) => e.alignment
   ? roadBlocksOutline(e.alignment,outline,height,terrain) : outlinesOverlap(outline,footprintOutline(e));
 const colorOrPoseChanged = (before,after) => before.color!==after.color||['offsetX','offsetZ','angle'].some(key=>before.pose[key]!==after.pose[key]);
-const roadChanged = ({before,after,parcel}) => !parcel&&(isRoad(before?.type)||isRoad(after?.type))
+const roadChanged = ({before,after,parcel,platform}) => !parcel&&!platform&&(isRoad(before?.type)||isRoad(after?.type))
   &&['id','type','x','z','rotation','alignment'].some(key=>before?.[key]!==after?.[key]);
 export function footprint(e) {
   const [w, d] = entityDimensions(e);
@@ -50,7 +51,8 @@ export function gridLine(a, b) {
   return cells;
 }
 export class City {
-  constructor(data) {
+  constructor(data, { allowRiverfront = false } = {}) {
+    this.allowRiverfront=allowRiverfront;
     this.name = '河光之城'; this.terrain='meander';this.radius = 64; this.entities = new Map(); this.occupancy = new Map(); this.chunks = new Map();this.spatial=new SpatialIndex();
     this.parcels=new Map();this.parcelSpatial=new SpatialIndex();this.meshRevisions=new Map();
     this.roadRevision=0;this._roadNetwork=null;this.alignmentCount=0;
@@ -106,6 +108,7 @@ export class City {
     if(bounds.maxX<=bounds.minX||bounds.maxZ<=bounds.minZ)return '地块尺寸无效';
     if(!boundsContain(this.worldBounds(),bounds,EDGE_EPSILON))return '地块超出可建边界';
     if(!parcelOnLand(outline,bounds,this.terrain))return '地块侵入水域';
+    if(this.platform&&platformOverlaps(this.platform.geometry,[outline]))return '地块占用平台或缓坡';
     if(this.proposedParcels(bounds,parcelChanges).some(p=>p.id!==parcel.id&&outlinesOverlap(outline,parcelOutline(p))))return '地块与其他地块重叠';
     if(this.proposedEntities(bounds,entityChanges).some(e=>e.id!==ownerId&&reservesLand(e)&&overlapsEntity(outline,e,this.terrain)))return '地块与道路或建筑重叠';
     return null;
@@ -113,6 +116,7 @@ export class City {
   canPlace(e, ignoreId, {allowHistoricBank=false,entityChanges,parcelChanges,onRoadConflict,removedIds}={}) {
     if (!BY_ID[e.type]) return '未知建筑';
     if(this.entities.size>=MAX_ENTITIES&&!ignoreId)return '当前城市物件已达到存档容量上限';
+    if(this.platform&&platformOverlaps(this.platform.geometry,entityOutlines(e)))return '物件占用平台或缓坡';
     const query=bounds=>this.proposedEntities(bounds,entityChanges,removedIds);
     const parcels=bounds=>this.proposedParcels(bounds,parcelChanges);
     if(e.alignment){
@@ -197,11 +201,13 @@ export class City {
   }
   applyChanges(changes,from,to) {
     for(const c of changes)if(c[from]){
-      if(c.parcel){this.parcels.delete(c[from].id);this.parcelSpatial.erase(c[from].id);}
+      if(c.platform)this.platform=null;
+      else if(c.parcel){this.parcels.delete(c[from].id);this.parcelSpatial.erase(c[from].id);}
       else this.erase(c[from].id);
     }
     for(const c of changes)if(c[to]){
-      if(c.parcel)this.insertParcel(c[to]);
+      if(c.platform)this.platform=c[to];
+      else if(c.parcel)this.insertParcel(c[to]);
       else this.insert(c[to]);
     }
     if(changes.some(roadChanged)){
@@ -215,8 +221,26 @@ export class City {
   }
   guardEdit(changes,to){
     this.editError=changes?.length?this.editGuard?.(changes,to):null;
+    if(this.platform&&!this.editError){
+      const {id,x,z}=this.platform.landing;
+      const from=to==='after'?'before':'after';
+      const support=changes?.find(c=>!c.parcel&&!c.platform&&c[from]?.id===id);
+      if(support&&(support[to]?.type!=='path'||support[to].x!==x||support[to].z!==z))
+        this.editError='这块步道接着缓坡，请先移除或改接平台';
+    }
     return !!changes?.length&&!this.editError;
   }
+  planPlatform(draft){
+    return this.allowRiverfront?platformPlan(this,draft):{error:'滨水平台仅在西岸试验场景中可用'};
+  }
+  editPlatform(draft){
+    const plan=this.planPlatform(draft);
+    if(plan.error)return {error:plan.error};
+    if(this.platform&&Object.entries(plan.record).every(([key,value])=>this.platform.record[key]===value))return {changed:false};
+    const changed=this.commit([{platform:true,before:this.platform,after:plan}]);
+    return {changed,error:this.editError};
+  }
+  removePlatform(){return !!this.platform&&this.commit([{platform:true,before:this.platform}]);}
   commit(changes) {
     if (!this.guardEdit(changes,'after')) return false;
     this.applyChanges(changes,'before','after');
@@ -463,16 +487,18 @@ export class City {
     const segment=this.roadNetwork.segments.get(e.id);
     return segment?.ports.map(port=>this.entities.get(port.neighborId))??[];
   }
-  snapshotHeader(version=VERSION) {
+  snapshotHeader(version=this.platform?RIVERFRONT_VERSION:VERSION) {
     const mixed=this.alignmentCount>0;
-    if(!supportedCityVersion(version)||version===1||(version===2&&this.parcels.size)
+    if(!supportedCityVersion(version,this.allowRiverfront)||version===1||(version===2&&this.parcels.size)
+      ||(version===RIVERFRONT_VERSION)!==!!this.platform
       ||(version<ALIGNMENT_ROAD_VERSION&&mixed)
       ||(version<ELEVATED_ROAD_VERSION&&(this.terrain==='strait'||mixed&&[...this.entities.values()].some(e=>e.alignment?.elevated)))
       ||(version<ARC_ROAD_VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.arc))
       ||(version<BRIDGE_PROFILE_VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.deckHeight!==undefined))
       ||(version<VERSION&&mixed&&[...this.entities.values()].some(e=>e.alignment?.via)))throw new Error('无法导出为该存档格式');
     return {version,terrain:this.terrain,name:this.name,radius:this.radius,nextId:this.nextId,environment:{...this.environment},
-      ...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{})};
+      ...(version>=GRID_ROAD_VERSION?{roads:roadHeader(this.roadRevision,mixed)}:{}),
+      ...(this.platform?{riverfrontPlatform:{...this.platform.record}}:{})};
   }
   *snapshotEntries(version=VERSION) {
     if(version>=PARCEL_VERSION)for(const parcel of this.parcels.values())yield {parcel:{...parcel}};
@@ -491,7 +517,7 @@ export class City {
       }
     }
   }
-  snapshot(version=VERSION) {
+  snapshot(version=this.platform?RIVERFRONT_VERSION:VERSION) {
     const header=this.snapshotHeader(version),entities=[],parcels=[];
     for(const {entity,parcel} of this.snapshotEntries(version)){
       if(entity)entities.push(entity);
@@ -500,7 +526,8 @@ export class City {
     return {...header,entities,...(version>=PARCEL_VERSION?{parcels}:{})};
   }
   restore(raw) {
-    if (!raw || !supportedCityVersion(raw.version) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
+    if (!raw || !supportedCityVersion(raw.version,this.allowRiverfront) || !Array.isArray(raw.entities) || raw.entities.length>MAX_ENTITIES || !Number.isInteger(raw.radius) || raw.radius<16 || raw.radius>4096) throw new Error('存档格式不受支持');
+    if((raw.version===RIVERFRONT_VERSION)!==Object.hasOwn(raw,'riverfrontPlatform'))throw new Error('平台记录需要西岸试验存档 v10');
     const next = new City(); next.radius=raw.radius;next.terrain=raw.version===1?'legacy':raw.terrain;
     const terrains=raw.version>=ELEVATED_ROAD_VERSION?['legacy','meander','strait']:['legacy','meander'];
     if(!terrains.includes(next.terrain))throw new Error('未知地形');
@@ -550,8 +577,11 @@ export class City {
       ids.add(e.id); next.insert(e);
     }
     for(const p of parcels.values())if(p.grid&&!used.has(p.id))throw new Error('兼容地块缺少原建筑');
+    const platform=raw.version===RIVERFRONT_VERSION?platformPlan(next,raw.riverfrontPlatform):null;
+    if(platform?.error)throw new Error(platform.error);
     this.name=String(raw.name || '未命名城市').slice(0,40);this.terrain=next.terrain;this.radius=next.radius; this.entities=next.entities; this.occupancy=next.occupancy; this.chunks=next.chunks;this.spatial=next.spatial;
     this.parcels=next.parcels;this.parcelSpatial=next.parcelSpatial;this.meshRevisions=next.meshRevisions;
+    this.platform=platform;
     this.roadRevision=next.roadRevision;this._roadNetwork=null;this._waterfront=null;this.alignmentCount=next.alignmentCount;
     this.nextId=[...ids].reduce((max,id)=>Math.max(max,id),0)+1;
     if(Number.isSafeInteger(raw.nextId)&&raw.nextId>this.nextId)this.nextId=raw.nextId;

@@ -5,6 +5,7 @@ import { SpatialIndex } from './space.js';
 import { getTemplate } from './models.js';
 import { hasTraffic, roadCarriageway } from './road-network.js';
 import { roadBlocksOutline } from './elevated-roads.js';
+import { platformOverlaps } from './riverfront-platform.js';
 
 export const WALK_LINK_HALF_WIDTH=.13;
 const distance=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
@@ -16,10 +17,10 @@ function searchNodes(nodes){
   return ({x,z},max)=>index.query({minX:x-max,minZ:z-max,maxX:x+max,maxZ:z+max}).map(id=>nodes[id]);
 }
 
-function strip(a,b){
+export function walkStrip(a,b,halfWidth=WALK_LINK_HALF_WIDTH){
   const dx=b.x-a.x,dz=b.z-a.z,length=Math.hypot(dx,dz);
   if(length<1e-8)return null;
-  const x=-dz/length*WALK_LINK_HALF_WIDTH,z=dx/length*WALK_LINK_HALF_WIDTH;
+  const x=-dz/length*halfWidth,z=dx/length*halfWidth;
   return [[a.x+x,a.z+z],[b.x+x,b.z+z],[b.x-x,b.z-z],[a.x-x,a.z-z]];
 }
 
@@ -32,12 +33,13 @@ export function buildWalkNetwork(city){
     return nodes.get(id);
   };
   const link=(a,b,kind='walk')=>{if(!a||!b||a===b)return;a.edges.set(b.id,kind);b.edges.set(a.id,kind);};
-  const clear=(a,b,owner)=>{
-    const outline=strip(a,b);if(!outline)return false;
+  const clear=(a,b,owner,halfWidth)=>{
+    const outline=walkStrip(a,b,halfWidth);if(!outline)return false;
     const run=Math.hypot(a.x-b.x,a.z-b.z);
     if(Math.abs(a.y-b.y)>.12+run*.12)return false;
     const bounds=outlineBounds(outline);
     if(!boundsContain(city.worldBounds(),bounds)||!parcelOnLand(outline,bounds,city.terrain))return false;
+    if(city.platform&&platformOverlaps(city.platform.geometry,[outline]))return false;
     for(const entity of city.queryFootprints(bounds)){
       const segment=network.segments.get(entity.id);
       if(segment&&hasTraffic(entity.type)){
@@ -68,13 +70,19 @@ export function buildWalkNetwork(city){
       }
     }
   }
-  const connect=(a,search,max,owner)=>{
+  const nearestNode=(a,search,max,owner,halfWidth)=>{
     let nearest,best=max;
     for(const b of search(a,max)){
       const d=distance(a,b);
-      if(d>.015&&d<best&&clear(a,b,owner)){nearest=b;best=d;}
+      if(d>.015&&d<best&&clear(a,b,owner,halfWidth)){nearest=b;best=d;}
     }
-    if(nearest){link(a,nearest);connectors.push([a,nearest]);}
+    return nearest;
+  };
+  const connect=(a,search,max,owner)=>{
+    const width=.55;
+    const wide=city.allowRiverfront?nearestNode(a,search,max,owner,width):null;
+    const nearest=wide??nearestNode(a,search,max,owner);
+    if(nearest){link(a,nearest);connectors.push([a,nearest,wide?width:WALK_LINK_HALF_WIDTH]);}
     return nearest;
   };
   const roads=searchNodes([...roadNodes]),paths=searchNodes([...pathNodes]);
@@ -88,13 +96,23 @@ export function buildWalkNetwork(city){
     connect(current,roads,2.7);if(current.z%4===0)connect(current,paths,4);
   }
   const walking=searchNodes([...roadNodes,...pathNodes,...quays].filter(n=>n.edges.size));
-  for(const entity of city.entities.values())if(BY_ID[entity.type].floors||publicPlaces.has(entity.type)){
+  const entrance=entity=>{
     const anchor=getTemplate(entity.type,entity.color).userData.anchors?.entrance;
     const fallback=[0,.14,BY_ID[entity.type].d*CELL/2+.35*(entity.lot?BY_ID[entity.type].d/entity.lot[1]:1)];
-    const [x,y,z]=placementAnchor(entity,anchor||fallback),a=node(x,y,z,'destination');
-    if(connect(a,walking,7,{...placementOf(entity),id:entity.id})){
+    const [x,y,z]=placementAnchor(entity,anchor||fallback);
+    return {x,y,z,owner:{...placementOf(entity),id:entity.id}};
+  };
+  for(const entity of city.entities.values())if(BY_ID[entity.type].floors||publicPlaces.has(entity.type)){
+    const {x,y,z,owner}=entrance(entity),a=node(x,y,z,'destination');
+    if(connect(a,walking,7,owner)){
       a.entityId=entity.id;destinations.push(a);
     }
+  }
+  if(city.platform){
+    const {geometry,landing}=city.platform,segment=network.segments.get(landing.id);
+    const [base,top,deck]=geometry.centerline.map(([x,y,z],index)=>node(x,y,z,index===2?'platform':'ramp'));
+    const [x,,z]=segment.center,access=node(x,segment.profile.walkY,z,'path');
+    link(access,base,'platform-approach');link(base,top,'ramp');link(top,deck,'platform');
   }
   // Disconnected points never produce people. Component membership bounds route choices.
   for(const [id,n] of nodes)if(!n.edges.size)nodes.delete(id);
@@ -104,7 +122,12 @@ export function buildWalkNetwork(city){
     for(let i=0;i<queue.length;i++){const v=queue[i];group.push(v);for(const id of v.edges.keys())if(!seen.has(id)&&nodes.has(id)){seen.add(id);queue.push(nodes.get(id));}}
     if(group.length>6)components.push(group);
   }
-  return {revision:network.revision,nodes,components,connectors,destinations};
+  const entryAccess=city.allowRiverfront?entity=>{
+    const {owner,...point}=entrance(entity);
+    const target=nearestNode(point,walking,7,owner,.55)??nearestNode(point,walking,7,owner);
+    return {point,target};
+  }:undefined;
+  return {revision:network.revision,nodes,components,connectors,destinations,entryAccess};
 }
 
 export function walkingRoute(network,start,seed,steps=55){

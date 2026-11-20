@@ -5,4 +5,6 @@ export const ELEVATED_ROAD_VERSION = 6;
 export const ARC_ROAD_VERSION = 7;
 export const BRIDGE_PROFILE_VERSION = 8;
 export const CITY_VERSION = 9;
-export const supportedCityVersion = version => Number.isInteger(version)&&version>=1&&version<=CITY_VERSION;
+export const RIVERFRONT_VERSION = 10;
+export const supportedCityVersion = (version, allowRiverfront = false) =>
+  Number.isInteger(version)&&version>=1&&version<=(allowRiverfront?RIVERFRONT_VERSION:CITY_VERSION);

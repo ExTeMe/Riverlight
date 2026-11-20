@@ -30,6 +30,13 @@ import { Autosave, createSaveWriter, encodeSnapshot } from './autosave.js';
 import { icon } from './icons.js';
 import { loadArchitectureAssets } from './asset-loader.js';
 import { createBaseline, createScene, SCENE_WEATHER } from './baseline.js';
+import { RIVERFRONT_STUDY_ID, STUDY_FRONTAGES, riverfrontEvidence, riverfrontGuideLines } from './riverfront-study.js';
+import { RiverfrontEditor } from './riverfront-editor.js';
+
+function sceneForApp(id, density) {
+  if(id===RIVERFRONT_STUDY_ID&&!import.meta.env.DEV)throw new Error('西岸街坡仅在开发服务中开放');
+  return createScene(id,density);
+}
 
 class App {
   async init(){
@@ -38,10 +45,12 @@ class App {
       this.baseline=createBaseline();
     }
     const sceneParams=new URLSearchParams(location.search);
-    if(sceneParams.has('scene'))this.baseline=createScene(sceneParams.get('scene'),sceneParams.get('density')||'standard');
+    if(sceneParams.has('scene'))this.baseline=sceneForApp(sceneParams.get('scene'),sceneParams.get('density')||'standard');
+    const allowRiverfront=this.baseline?.id===RIVERFRONT_STUDY_ID;
+    this.cityOptions={allowRiverfront};
     const saveName=this.baseline?(this.baseline.cameras?`riverlight-scenes-${this.baseline.id}-${this.baseline.density}`:'riverlight-baselines'):'riverlight-cities';
-    this.saves=this.baseline?createSaveStore({name:saveName}):saves;
-    this.saveSession=new SaveSession(this.saves);const opened=await this.saveSession.open(this.baseline,{resume:!!this.baseline&&new URLSearchParams(location.search).get('resume')==='1'});this.city=opened.city;
+    this.saves=this.baseline?createSaveStore({name:saveName,allowRiverfront}):saves;
+    this.saveSession=new SaveSession(this.saves,this.cityOptions);const opened=await this.saveSession.open(this.baseline,{resume:!!this.baseline&&new URLSearchParams(location.search).get('resume')==='1'});this.city=opened.city;
     this.canvas=document.querySelector('#scene');this.renderer=new T.WebGLRenderer({canvas:this.canvas,antialias:true,alpha:false,powerPreference:'high-performance'});
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));this.renderer.setSize(innerWidth,innerHeight);this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=T.PCFSoftShadowMap;this.renderer.toneMapping=T.ACESFilmicToneMapping;this.renderer.toneMappingExposure=.98;this.renderer.outputColorSpace=T.SRGBColorSpace;
     this.scene=new T.Scene();this.camera=new T.PerspectiveCamera(39,innerWidth/innerHeight,.5,4500);this.camera.position.set(183,180,230);
@@ -56,7 +65,8 @@ class App {
     this.thumbTarget=new T.WebGLRenderTarget(160,128,{format:T.RGBAFormat});this.thumbTarget.texture.colorSpace=T.SRGBColorSpace;
     this.thumbScene=new T.Scene();this.thumbScene.add(new T.HemisphereLight('#fff6e2','#869a78',3));const thumbLight=new T.DirectionalLight('#ffffff',3);thumbLight.position.set(-6,14,12);this.thumbScene.add(thumbLight);
     this.ui=new UI(this);this.editor=new ParcelEditor(this,this.ui.root);this.roadEditor=new RoadEditor(this,this.ui.root.querySelector('.road-editor'));
-    const writer=createSaveWriter(this.saves,saveName);
+    if(allowRiverfront)this.platformEditor=new RiverfrontEditor(this,this.ui.root.querySelector('.riverfront-editor'));
+    const writer=createSaveWriter(this.saves,saveName,this.cityOptions);
     this.autosave=new Autosave({
       available:()=>!this.replacing,
       capture:async current=>{
@@ -80,6 +90,7 @@ class App {
     // Read-only diagnostics are useful during visual and performance verification.
     window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,laneRoadRevision:this.city.roadNetwork.laneGraph.revision,laneEdges:this.city.roadNetwork.laneGraph.edges.size,mobilityOverlay:this.world.walkOverlay.visible,sailing:this.world.traffic.boatStatus,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
     window.riverlight.getVehicles=()=>this.world.traffic.vehicleStatus;
+    if(allowRiverfront)window.riverlight.getRiverfront=()=>riverfrontEvidence(this.city,this.world.traffic.people.network);
   }
   thumbnail(type){
     if(this.thumbCache.has(type))return this.thumbCache.get(type);
@@ -91,7 +102,7 @@ class App {
   }
   async navigateScene(id,density='standard',resume=false){
     if(this.replacing||this.navigating)return;
-    if(id)createScene(id,density); // Validate before saving or navigating.
+    if(id)sceneForApp(id,density); // Validate before saving or navigating.
     this.navigating=true;
     try{
     if(!await this.persist())return;
@@ -132,7 +143,8 @@ class App {
         return entity?.pose?[{id:entity.id,type:entity.type,parcel:entity.pose.parcel.id,point:[node.x,node.y,node.z],reachable:byNode.get(node.id)??[]}]:[];
       });
     }
-    const river=this.baseline?.id==='T04'?{
+    const riverfront=this.baseline?.id===RIVERFRONT_STUDY_ID?riverfrontEvidence(this.city,this.world.traffic.people.network):undefined;
+    const river=this.baseline?.cameras?.river?{
       waterY:this.environment.water.position.y,quaySections:this.city.waterfront.length,radius:PROTOTYPE_RADIUS,
       sections:[-55,0,35].map(z=>({z,banks:riverBanks(z,this.city.terrain),navigable:navigableSpan(z,this.city.terrain,PROTOTYPE_RADIUS)})),
       requiredUnderside:REQUIRED_UNDERSIDE,bridges:this.city.roadNetwork.bridges.crossings,
@@ -142,7 +154,7 @@ class App {
     return {revision:document.querySelector('meta[name="riverlight-revision"]')?.content,workingTree:document.querySelector('meta[name="riverlight-working-tree"]')?.content,
       capturedAt:new Date().toISOString(),scene:this.baseline?{id:this.baseline.id,version:this.baseline.sceneVersion,seed:this.baseline.seed,density:this.baseline.density}:null,
       browser:navigator.userAgent,viewport:[innerWidth,innerHeight],pixelRatio:this.renderer.getPixelRatio(),camera:this.cameraState(),
-      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,vehicles:this.world.traffic.vehicleStatus,boats:this.world.traffic.boats.length,mobility,river,
+      ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,vehicles:this.world.traffic.vehicleStatus,boats:this.world.traffic.boats.length,mobility,river,riverfront,
       detailedChunks:[...this.world.loaded.values()].filter(chunk=>chunk.detail).length,
       rendererMemory:{...this.renderer.info.memory},method:'最近一帧累计渲染调用（含反射与后处理）；几何/纹理为 WebGL 资源数量，不是字节数',
       frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[],spatial};
@@ -150,20 +162,34 @@ class App {
   bind(){
     window.addEventListener('resize',()=>{this.camera.aspect=innerWidth/innerHeight;this.camera.updateProjectionMatrix();this.renderer.setSize(innerWidth,innerHeight);this.composer.setSize(innerWidth,innerHeight);});
     this.canvas.addEventListener('contextmenu',e=>e.preventDefault());
-    this.canvas.addEventListener('pointermove',e=>{this.updatePointer(e);this.extendStroke();if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else if(this.roadEditor.active&&this.cursor)this.roadEditor.pointer(...this.roadPointer(),e);else this.preview();});
+    this.canvas.addEventListener('pointermove',e=>{
+      this.updatePointer(e);this.extendStroke();
+      if(this.platformEditor?.start&&this.cursor)this.platformEditor.draw(this.point.x,this.point.z,true);
+      else if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);
+      else if(this.roadEditor.active&&this.cursor)this.roadEditor.pointer(...this.roadPointer(),e);
+      else this.preview();
+    });
     this.canvas.addEventListener('pointerdown',e=>{
       if(e.button!==0||this.ui.modalOpen||this.replacing)return;
       this.updatePointer(e);this.pointerDown={x:e.clientX,y:e.clientY};
       if(!this.cursor)return;
-      if(this.roadEditor.active)this.roadEditor.beginDraw(...this.roadPointer(),e);
+      if(this.platformEditor?.active){this.platformEditor.start=[this.point.x,this.point.z];this.canvas.setPointerCapture(e.pointerId);}
+      else if(this.roadEditor.active)this.roadEditor.beginDraw(...this.roadPointer(),e);
       else if(this.buildType&&['road','bridge','path','tree'].includes(this.buildType)&&!this.moving){
         this.drawing=true;this.dragCells=[[this.cursor.x,this.cursor.z]];this.lastCell=this.dragCells[0];this.canvas.setPointerCapture(e.pointerId);
       }
     });
     this.canvas.addEventListener('pointerup',e=>{
       if(e.button!==0)return;
-      if(this.replacing){this.drawing=false;this.dragCells=[];this.pointerDown=null;this.roadEditor.cancelDraw();return;}
+      if(this.replacing){this.drawing=false;this.dragCells=[];this.pointerDown=null;this.roadEditor.cancelDraw();if(this.platformEditor)this.platformEditor.start=null;return;}
       this.updatePointer(e);
+      if(this.platformEditor?.start){
+        const start=this.pointerDown;
+        this.pointerDown=null;
+        if(start&&this.cursor)this.platformEditor.draw(this.point.x,this.point.z,Math.hypot(e.clientX-start.x,e.clientY-start.y)>=7);
+        this.platformEditor.start=null;
+        return;
+      }
       if(this.drawing){
         this.extendStroke();this.drawing=false;
         const painted=this.city.paint(this.buildType,this.dragCells);
@@ -176,11 +202,11 @@ class App {
       if(distance>=7&&this.roadEditor.active&&this.cursor)this.roadEditor.finishDraw(...this.roadPointer());
       else{this.roadEditor.cancelDraw();if(distance<7)this.click(e);}
     });
-    this.canvas.addEventListener('pointercancel',()=>{this.drawing=false;this.dragCells=[];this.pointerDown=null;this.roadEditor.cancelDraw();});
+    this.canvas.addEventListener('pointercancel',()=>{this.drawing=false;this.dragCells=[];this.pointerDown=null;this.roadEditor.cancelDraw();if(this.platformEditor)this.platformEditor.start=null;});
     this.canvas.addEventListener('pointerleave',()=>{if(!this.drawing){if(this.roadEditor.active)this.roadEditor.render();else if(!this.editor.active)this.world.clearPreview();this.cursor=null;}});
     this.canvas.addEventListener('dragover',e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';this.updatePointer(e);if(this.editor.active&&this.cursor)this.editor.pointer(this.point.x,this.point.z);else this.preview();});
     this.canvas.addEventListener('drop',e=>{e.preventDefault();if(this.replacing)return;const type=e.dataTransfer.getData('text/plain');if(!BY_ID[type])return;if(this.buildType!==type&&this.editor.type!==type)this.startBuild(type);this.updatePointer(e);this.click();});
-    window.addEventListener('keydown',e=>this.keydown(e));window.addEventListener('keyup',e=>this.keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{this.keys.clear();this.drawing=false;this.pointerDown=null;this.roadEditor.cancelDraw();});
+    window.addEventListener('keydown',e=>this.keydown(e));window.addEventListener('keyup',e=>this.keys.delete(e.key.toLowerCase()));window.addEventListener('blur',()=>{this.keys.clear();this.drawing=false;this.pointerDown=null;this.roadEditor.cancelDraw();if(this.platformEditor)this.platformEditor.start=null;});
     document.addEventListener('visibilitychange',()=>{
       this.last=performance.now();
       if(document.hidden){this.keys.clear();this.autosave.flush();}
@@ -270,9 +296,15 @@ class App {
   cancel(){
     const wasGrouping=!!this.groupTransform;
     this.groupTransform=null;
+    if(this.ui.root.classList.contains('paving-study')){
+      this.ui.root.classList.remove('paving-study');
+      if(this.studyLayer==='forecourt'){this.studyLayer=null;this.world.showStudyGuide([]);}
+      this.ui.refreshStudy();
+    }
     this.world.clearPreview();this.buildType=null;this.moving=null;this.rotation=0;this.buildColor=0;this.mode='select';this.drawing=false;this.dragCells=[];
     if(this.editor?.active){this.editor.close();this.world.select(this.selected,this.selectedParcel);this.ui.refreshSelection();}
     if(this.roadEditor?.active){this.roadEditor.close();this.world.select(this.selected,this.selectedParcel);this.ui.refreshSelection();}
+    if(this.platformEditor?.active){this.platformEditor.close();this.ui.refreshSelection();}
     this.ui?.hint('');this.ui?.refreshActive();
     if(wasGrouping){this.showSelection();this.ui.refreshSelection();}
   }
@@ -346,7 +378,7 @@ class App {
     this.showSelection();this.ui.refresh();
   }
   reportEditError(){if(this.city.editError)this.ui.toast(this.city.editError,true);}
-  changed(){this.world.sync(true,this.controls.target,this.camera.position.distanceTo(this.controls.target));this.environment.refreshSources();this.showSelection();this.ui.refresh();this.autosave.mark();}
+  changed(){this.world.sync(true,this.controls.target,this.camera.position.distanceTo(this.controls.target));if(this.studyLayer)this.world.showStudyGuide(riverfrontGuideLines(this.city,this.studyLayer));this.environment.refreshSources();this.showSelection();this.ui.refresh();this.autosave.mark();}
   setEnvironment(values){
     if(this.replacing||Object.entries(values).every(([key,value])=>this.city.environment[key]===value))return;
     Object.assign(this.city.environment,values);if(values.quality)this.setQuality();this.ui.refresh();this.autosave.mark();
@@ -372,15 +404,15 @@ class App {
       try{await this.saveSession.replace(this.city,this.cameraState(),city,view,original);}
       catch(error){console.error(error);this.ui.toast('城市切换失败，原城市已保留。请导出备份后重试。',true);return false;}
       this.cancel();this.setSelection([]);this.simulation.reset();this.last=performance.now();
-      this.city=city;this.world.setCity(city);this.environment.city=city;this.environment.refreshSources();this.follow=false;this.controls.autoRotate=false;this.setQuality();this.restoreCamera(view);this.ui.refresh();this.ui.closeModal();
+      this.city=city;this.world.setCity(city);if(this.studyLayer)this.world.showStudyGuide(riverfrontGuideLines(city,this.studyLayer));this.environment.city=city;this.environment.refreshSources();this.follow=false;this.controls.autoRotate=false;this.setQuality();this.restoreCamera(view);this.ui.refresh();this.ui.closeModal();
       this.autosave.reset();this.ui.saved(this.saveSession.protected?'已保存恢复城市 · 原存档已保护':'已保存 · 当前城市已备份');return true;
     }finally{this.replacing=false;this.autosave.schedule();}
   }
-  async importFile(file){try{if(file.size>20*1024*1024)throw new Error('城市文件超过 20 MB');const parsed=parseCityFile(await file.text());if(await this.replaceCity(parsed.city,parsed.camera,parsed.original))this.ui.toast('城市已导入，欢迎回来');}catch(error){this.ui.toast(`无法导入：${error.message}`,true);}}
+  async importFile(file){try{if(file.size>20*1024*1024)throw new Error('城市文件超过 20 MB');const parsed=parseCityFile(await file.text(),this.cityOptions);if(await this.replaceCity(parsed.city,parsed.camera,parsed.original))this.ui.toast('城市已导入，欢迎回来');}catch(error){this.ui.toast(`无法导入：${error.message}`,true);}}
   home(){this.follow=false;this.controls.autoRotate=false;this.keys.clear();this.camera.position.set(183,180,230);this.controls.target.set(4,0,15);this.controls.update();}
   zoom(factor){const direction=this.camera.position.clone().sub(this.controls.target);const length=T.MathUtils.clamp(direction.length()*factor,this.controls.minDistance,this.controls.maxDistance);this.camera.position.copy(this.controls.target).add(direction.setLength(length));this.controls.update();}
   keydown(e){
-    if(e.key==='Escape'&&(this.editor.active||this.roadEditor.active||this.groupTransform)){e.preventDefault();this.cancel();this.ui.refreshSelection();return;}
+    if(e.key==='Escape'&&(this.editor.active||this.roadEditor.active||this.platformEditor?.active||this.groupTransform)){e.preventDefault();this.cancel();this.ui.refreshSelection();return;}
     if(e.target.matches('input,textarea,select')||this.ui.modalOpen){if(e.key==='Escape')this.ui.closeModal();return;}
     if(e.key===' '&&e.target.closest('button'))return;
     const key=e.key.toLowerCase();this.keys.add(key);
@@ -389,7 +421,7 @@ class App {
     if(e.repeat)return;
     const actions={v:'select',b:'road',t:'trees',x:'erase',c:'camera',h:'quiet',home:'home',delete:'delete',backspace:'delete'};
     if(actions[key]){e.preventDefault();this.action(actions[key]);}
-    if(key==='r'){if(this.editor.active)this.editor.rotate();else if(this.buildType){this.rotation=(this.rotation+1)%4;this.preview();}else this.action('rotate');}
+    if(key==='r'){if(this.editor.active)this.editor.rotate();else if(this.platformEditor?.active)this.platformEditor.rotate();else if(this.buildType){this.rotation=(this.rotation+1)%4;this.preview();}else this.action('rotate');}
     if(key==='escape'){if(this.quiet)this.action('quiet');this.cancel();this.setSelection([]);this.world.select(null);this.world.junctionPreview.clear();this.world.showMobility(false);this.world.showRiver(false);this.ui.refresh();}
     if(key===' ')this.action('play');
   }
@@ -401,6 +433,28 @@ class App {
       case 'select':this.cancel();break;
       case 'draw-parcel':this.startParcelEdit({mode:'draw'});break;
       case 'cancel-parcel':this.cancel();break;
+      case 'cancel-platform':this.cancel();break;
+      case 'study-frontage':if(this.platformEditor){
+        const {type,...sample}=STUDY_FRONTAGES.find(lot=>lot.type===el.dataset.type);
+        const parcel=this.city.parcels.get(sample.id)??sample,entity=this.city.parcelOwner(parcel);
+        this.startParcelEdit({mode:entity?'lot':'quick',parcel,type,entity});
+      }break;
+      case 'study-paving':if(this.platformEditor){
+        this.startBuild('path');
+        this.ui.root.classList.add('paving-study');
+        this.studyLayer='forecourt';this.world.showStudyGuide(riverfrontGuideLines(this.city,this.studyLayer));
+        this.ui.refreshStudy();
+        this.ui.hint('按住左键沿白线拖铺桥头前场 · Esc 返回');
+      }break;
+      case 'study-platform':if(this.platformEditor){
+        this.cancel();this.setSelection([]);this.showSelection();this.platformEditor.open();this.ui.refreshSelection();
+      }break;
+      case 'study-remove-platform':if(this.platformEditor){
+        this.cancel();if(this.city.removePlatform())this.changed();else this.reportEditError();
+      }break;
+      case 'study-walk':if(this.platformEditor){
+        this.world.showMobility(!this.world.walkOverlay.visible,this.controls.target);this.ui.refreshStudy();
+      }break;
       case 'edit-lot':if(parcel)this.startParcelEdit({mode:'lot',parcel,entity:e});break;
       case 'edit-building':if(e?.pose)this.startParcelEdit({mode:'building',parcel:e.pose.parcel,entity:e});break;
       case 'road':this.ui.showCategory('road');this.startBuild('road');break;
@@ -468,23 +522,30 @@ class App {
         this.world.showJunction(cell&&this.city.at(...cell)?.id,'car');this.world.showMobility(view==='walk',this.controls.target);
         this.world.showRiver(view==='river');
         this.ui.refreshJunction();
+        this.ui.refreshStudy();
       }break;
       case 'scene-weather':{const preset=SCENE_WEATHER.find(p=>p.id===el.dataset.weatherId);if(preset){const {hour,season,weather}=preset;this.setEnvironment({hour,season,weather,playing:false});}break;}
+      case 'study-guide':{
+        this.studyLayer=this.studyLayer===el.dataset.layer?null:el.dataset.layer;
+        this.world.showStudyGuide(riverfrontGuideLines(this.city,this.studyLayer));
+        this.ui.refreshStudy();
+        break;
+      }
       case 'scene-evidence':download(`${this.baseline.id}-evidence.json`,JSON.stringify(this.sceneEvidence(),null,2));this.ui.toast('已导出当前镜头与实际资源记录');break;
       case 'save-copy':this.city.name=document.querySelector('#rename-city').value.trim()||'未命名城市';if(await this.persist(`city-${crypto.randomUUID()}`)){await this.persist();this.ui.refresh();await this.ui.cities();this.ui.toast('城市已收藏');}break;
-      case 'load-city':{const s=await this.saves.load(el.dataset.saveId);if(!s?.data)throw new Error('该存档无法打开，请保留原记录并使用其他备份');await this.replaceCity(new City(s.data),s.camera);break;}
+      case 'load-city':{const s=await this.saves.load(el.dataset.saveId);if(!s?.data)throw new Error('该存档无法打开，请保留原记录并使用其他备份');await this.replaceCity(new City(s.data,this.cityOptions),s.camera);break;}
       case 'new-city':
       case 'new-strait-city':{
-        const city=new City(),strait=action==='new-strait-city';
+        const city=new City(undefined,this.cityOptions),strait=action==='new-strait-city';
         city.name=strait?'海峡新城':'新的河畔';
         if(strait)city.terrain='strait';
         await this.replaceCity(city);break;
       }
-      case 'demo-city':await this.replaceCity(createDemo());break;
+      case 'demo-city':{const demo=createDemo();await this.replaceCity(this.cityOptions.allowRiverfront?new City(demo.snapshot(),this.cityOptions):demo);break;}
       case 'export':download(`${this.city.name}.riverlight.json`,JSON.stringify({city:this.city.snapshot(),camera:this.cameraState()},null,2));this.ui.toast('城市文件已导出');break;
       case 'export-original':{const original=await this.saveSession.originalRecord();if(!original)throw new Error('原记录暂时无法读取，请保留浏览器数据并稍后重试');download('riverlight-original-record.json',JSON.stringify(original,null,2));this.ui.toast('原存档记录已导出，未作修改');break;}
       case 'export-save':{const record=await this.saves.load(el.dataset.saveId);if(!record)throw new Error('该记录暂时无法读取');download(`${record.name||'未命名城市'}.riverlight-record.json`,JSON.stringify(record,null,2));this.ui.toast('存档原记录已导出');break;}
-      case 'reset-baseline':if(this.baseline){const initial=this.baseline.cameras?createScene(this.baseline.id,this.baseline.density):createBaseline();if(await this.replaceCity(new City(initial.city),initial.camera)){const url=new URL(location.href);url.searchParams.delete('resume');location.assign(url);}}break;
+      case 'reset-baseline':if(this.baseline){const initial=this.baseline.cameras?sceneForApp(this.baseline.id,this.baseline.density):createBaseline();if(await this.replaceCity(new City(initial.city,this.cityOptions),initial.camera)){const url=new URL(location.href);url.searchParams.delete('resume');location.assign(url);}}break;
       case 'import':document.querySelector('#import-file').click();break;
       case 'close-modal':this.ui.closeModal();break;case 'help':this.ui.help();break;case 'audio':this.ui.audio();break;
       case 'toggle-audio':await this.sound.enable();document.querySelector('.top-actions [data-action=audio]').innerHTML=icon(this.sound.enabled?'sound':'mute');this.ui.audio();break;

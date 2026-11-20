@@ -1,6 +1,7 @@
 import { BY_ID, CELL } from './catalog.js';
 import { normalAngle, PARCEL_EDGES, parcelLocal, resizeParcelEdge } from './parcel.js';
 import { ParcelHandles } from './parcel-handles.js';
+import { frontageSuggestion } from './riverfront-study.js';
 
 const snap=(value,step)=>step?Math.round(value/step)*step:value;
 const field=(name,label)=>`<label>${label}<input type="number" name="${name}" step="any" required></label>`;
@@ -23,6 +24,9 @@ export class ParcelEditor {
       <fieldset data-edit="building"><legend>建筑相对地块</legend><div class="parcel-fields">
         ${field('offsetX','局部 X（米）')}${field('offsetZ','局部 Z（米）')}${field('relative','相对角度 °')}
       </div></fieldset>
+      <fieldset data-edit="frontage" hidden><legend>沿街入口</legend>
+        <div class="parcel-actions"><button type="button" data-frontage="pick">选路侧</button><button type="button" data-frontage="apply">采用建议</button></div>
+      </fieldset>
       </div>
       <p class="parcel-feedback" aria-live="polite"></p>
       <div class="parcel-actions"><button type="button" data-action="cancel-parcel">取消</button><button type="submit" class="primary">确认</button></div>`;
@@ -34,6 +38,13 @@ export class ParcelEditor {
     });
     this.form.addEventListener('focusin',()=>this.app.keys.clear());
     this.form.addEventListener('submit',event=>{event.preventDefault();this.apply();});
+    this.form.querySelector('[data-frontage=pick]').addEventListener('click',()=>{
+      this.pickRoad=!this.pickRoad;this.render();
+    });
+    this.form.querySelector('[data-frontage=apply]').addEventListener('click',()=>{
+      if(!this.suggestion)return;
+      this.set('angle',this.suggestion.angle);this.set('relative',0);this.pickRoad=false;this.render();
+    });
     this.handles=new ParcelHandles(this,root);
   }
   get active(){return !this.form.hidden;}
@@ -43,7 +54,8 @@ export class ParcelEditor {
   set(name,value){this.get(name).value=value;this.dirty.delete(name);}
   position(x,z){this.set('x',snap(x,this.step));this.set('z',snap(z,this.step));}
   open({mode,parcel,entity,copy=false,type=entity?.type,color=entity?.color??0}){
-    this.mode=mode;this.type=type;this.color=color;this.dirty=new Set();this.corner=null;this.follow=mode==='quick';
+    this.mode=mode;this.type=type;this.color=color;this.dirty=new Set();this.corner=null;this.follow=mode==='quick'&&!parcel;
+    this.roadHint=null;this.pickRoad=false;
     this.form.hidden=false;
     const target=this.app.controls.target,item=BY_ID[type];
     const template=copy?entity.pose.parcel:null;
@@ -55,11 +67,13 @@ export class ParcelEditor {
     const lotOnly=mode==='lot'||mode==='draw',buildingOnly=mode==='building'||mode==='attach';
     this.form.querySelector('[data-edit=lot]').hidden=buildingOnly;
     this.form.querySelector('[data-edit=building]').hidden=lotOnly;
+    this.frontage=this.app.city.allowRiverfront&&!!type&&!buildingOnly;
+    this.form.querySelector('[data-edit=frontage]').hidden=!this.frontage;
     this.form.querySelector('h3').textContent={quick:item?`放置${item.name}`:'放置',draw:'划定空地块',lot:'移动或调整地块',building:'调整建筑',attach:item?`在地块内放置${item.name}`:'放置建筑'}[mode];
     this.form.querySelector('.parcel-instructions').textContent={quick:'在地图点击放置，或输入数值后确认。R 旋转地块。',draw:'在地图点选两个对角，或输入中心和宽深后确认。',lot:'拖动四边调整范围，拖动中间手柄移动整块。也可输入数值。',building:'拖动建筑手柄或点选地块内的新位置。',attach:'点击地块内的位置，或输入局部偏移后确认。'}[mode];
     this.render();
   }
-  close(){this.form.hidden=true;this.type=null;this.corner=null;this.handles.clear();}
+  close(){this.form.hidden=true;this.type=null;this.corner=null;this.handles.clear();if(this.frontage)this.app.world.showStudyDraft([]);}
   read(name,step=0){
     const value=this.get(name).valueAsNumber;
     return this.dirty.has(name)?snap(value,step):value;
@@ -83,8 +97,31 @@ export class ParcelEditor {
     const feedback=this.form.querySelector('.parcel-feedback');
     const relative=['building','attach'].includes(this.mode);
     feedback.textContent=plan.error||(relative?`可以放置 · 相对 ${plan.entity.pose.angle}°`:`可以放置 · 地块 ${plan.parcel.angle}°`);
+    if(this.frontage)this.renderFrontage(plan,feedback);
     feedback.classList.toggle('invalid',!!plan.error);
     this.form.querySelector('[type=submit]').disabled=!!plan.error;
+  }
+  renderFrontage(plan,feedback){
+    const {parcel,entity}=plan;
+    this.suggestion=parcel&&frontageSuggestion(this.app.city,parcel,this.roadHint);
+    this.form.querySelector('[data-frontage=apply]').disabled=!this.suggestion;
+    const access=entity&&!plan.error&&this.app.world.traffic.people.network.entryAccess(entity);
+    const lines=[];
+    if(access){
+      const {point,target}=access;
+      if(target)lines.push(point.x,point.y+.07,point.z,target.x,target.y+.07,target.z);
+      else {
+        const angle=(parcel.angle+entity.pose.angle)*Math.PI/180;
+        for(const start of [0,.5,1,1.5])for(const distance of [start,start+.25])
+          lines.push(point.x+Math.sin(angle)*distance,point.y+.07,point.z+Math.cos(angle)*distance);
+      }
+    }
+    this.app.world.showStudyDraft(lines,!access?.target);
+    if(this.pickRoad)feedback.textContent='点击地图中相邻的道路以选定路侧';
+    else if(!plan.error){
+      const suggested=this.suggestion?`建议 ${this.suggestion.angle.toFixed(1)}°`:'附近没有可选路侧';
+      feedback.textContent+=` · ${suggested} · ${access?.target?'入口可接步道':'入口尚未接到步道'}`;
+    }
   }
   setDraft({parcel,building}){
     for(const name of ['x','z','width','depth','angle'])this.set(name,parcel[name]);
@@ -104,6 +141,7 @@ export class ParcelEditor {
     this.setDraft({parcel,building});
   }
   pointer(x,z){
+    if(this.pickRoad)return;
     if(this.follow){this.position(x,z);this.render();}
     else if(this.mode==='draw'&&this.corner){this.drawTo(x,z);this.render();}
   }
@@ -114,6 +152,13 @@ export class ParcelEditor {
     this.set('width',Math.max(Math.abs(dx),this.step||.01));this.set('depth',Math.max(Math.abs(dz),this.step||.01));
   }
   click(x,z){
+    if(this.pickRoad){
+      const city=this.app.city,road=city.nativeAt(x,z)??city.at(Math.floor(x/CELL+.5),Math.floor(z/CELL+.5));
+      if(road&&frontageSuggestion(city,this.draft().parcel,road.id)){
+        this.roadHint=road.id;this.pickRoad=false;this.render();
+      }else this.app.ui.toast('请选择地块附近的道路',true);
+      return;
+    }
     if(this.mode==='quick'){
       if(this.follow)this.position(x,z);
       this.apply();return;
