@@ -119,7 +119,7 @@ export function updateMaterials(season,night,wet,snow,time,wind,dt=.016) {
     if(role==='windowSoft')m.emissiveIntensity=night*.48;
     if(role==='sign')m.emissiveIntensity=night*.6;
     if(role==='festival')m.emissiveIntensity=night*(1.1+Math.sin(time*.6)*.12);
-    if(role==='light')m.emissiveIntensity=night*1.7;
+    if(role==='light')m.emissiveIntensity=(m.userData.riverlightDayGlow??0)+night*1.7;
   }
 }
 export function getDistantTemplate(type,color=0,connections=15){
@@ -144,13 +144,17 @@ function applyAssetColor(model,type,color){
   if(!color)return;model.traverse(o=>{if(o.isMesh&&o.material.userData.facade){const key=`tint:${type}:${color}:${o.material.uuid}`;let tint=materials.get(key);if(!tint){tint=o.material.clone();tint.color.offsetHSL([0,-.025,.018,.045][color],-.015,[0,-.07,.055,-.02][color]);tint.userData={...o.material.userData,base:tint.color.clone()};materials.set(key,tint);}o.material=tint;}});
 }
 export function registerArchitectureAsset(type,scene,clips=[],lod=false){
-  const builders=new Map(),dynamic=[],mapped=new Map(),anchors={};
+  const builders=new Map(),dynamic=[],mapped=new Map(),anchors={},lights=[];
   // Authored mesh dimensions are retained in the reference catalog; adapt to compact plots.
   const item=BY_ID[type],original=LEGACY_LOTS[type];scene.scale.x*=item.w/original[0];scene.scale.z*=item.d/original[1];scene.updateMatrixWorld(true);
   scene.traverse(o=>{
     if(o.userData.riverlight_dynamic||o.name==='Mall_RevolvingDoor')dynamic.push(o);
     const name=o.name.match(/(?:^|_)(Entrance|Shelter|Light)$/)?.[1];
     if(name&&!o.isMesh)anchors[name.toLowerCase()]=new T.Vector3().setFromMatrixPosition(o.matrixWorld).toArray();
+    const {riverlightLightColor:color,riverlightLightDay:day,riverlightLightNight:night,riverlightLightRange:distance}=o.userData;
+    if(!o.isMesh&&typeof color==='string'&&[day,night,distance].every(Number.isFinite)){
+      lights.push({position:new T.Vector3().setFromMatrixPosition(o.matrixWorld).toArray(),color,day,night,distance});
+    }
   });
   scene.traverse(o=>{if(!o.isMesh)return;const original=o.material;if(!mapped.has(original)){
     const name=original.name,role=name.includes('WindowWarm')?'windowWarm':name.includes('WindowSoft')?'windowSoft':name.includes('Glass')?'glass':name.includes('Roof')?'roof':name.includes('Ground')?'ground':name.includes('Leaf')?'leaf':name.includes('Sign')?'sign':name.includes('Festival')?'festival':name.includes('Light')?'light':'solid';
@@ -175,9 +179,11 @@ export function registerArchitectureAsset(type,scene,clips=[],lod=false){
   for(const builder of builders.values())for(const mesh of [...builder.finish().children])model.add(mesh);
   for(const root of dynamic){const clone=root.clone(true);root.matrixWorld.decompose(clone.position,clone.quaternion,clone.scale);const names=new Set();clone.traverse(o=>names.add(o.name));const filtered=clips.map(clip=>new T.AnimationClip(clip.name,clip.duration,clip.tracks.filter(track=>names.has(track.name.split('.')[0])))).filter(clip=>clip.tracks.length);const animationKey=`${type}:${root.name}`;
     clone.userData={...clone.userData,dynamic:true,animation:clips.length?'gltf':root.name==='Mall_RevolvingDoor'?'mall-door':'static',animationKey};if(!lod)assetClips.set(animationKey,filtered);model.add(clone);
-  }model.userData={source:'Blender MCP',architecture:type,anchors};(lod?importedLods:importedAssets).set(type,model);
+  }model.userData={source:'Blender MCP',architecture:type,anchors,lights};(lod?importedLods:importedAssets).set(type,model);
   for(const key of [...templates.keys()])if(key.startsWith(type+':')||key.startsWith('lod:'+type+':'))templates.delete(key);
 }
+
+export const getAuthoredLights=type=>importedAssets.get(type)?.userData.lights;
 
 export function animateImportedAssets(root,time){root.traverse(o=>{if(o.userData.animation!=='gltf')return;let mixer=mixers.get(o);if(!mixer){mixer=new T.AnimationMixer(o);for(const clip of assetClips.get(o.userData.animationKey)||[])mixer.clipAction(clip).play();mixers.set(o,mixer);}mixer.setTime(time);});}
 

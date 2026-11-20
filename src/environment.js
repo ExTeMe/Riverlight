@@ -1,6 +1,6 @@
 import * as T from 'three';
 import { Water } from 'three/addons/objects/Water.js';
-import { getTemplate, updateMaterials } from './models.js';
+import { getAuthoredLights, getTemplate, updateMaterials } from './models.js';
 import { CELL, entityDimensions } from './catalog.js';
 import { WATER_Y, QUAY, quayCenter, riverBanks, riverSections } from './river.js';
 import { placementAnchor, placementOf } from './parcel.js';
@@ -71,9 +71,12 @@ export class Environment {
     const sources=[...this.city.entities.values()].filter(e=>e.type==='lamp'||(e.type==='road'&&(e.x+e.z)%6===0));const m=new T.Matrix4();let count=0;
     for(const e of sources.slice(0,600)){m.compose(new T.Vector3(e.x*CELL,-e.z*CELL,.13),new T.Quaternion(),new T.Vector3(5,5,1));this.glows.setMatrixAt(count++,m);}this.glows.count=count;this.glows.instanceMatrix.needsUpdate=true;
     this.lightSources=[];
-    const addLight=(position,intensity=34,distance=24)=>this.lightSources.push({position,intensity,distance});
+    const addLight=(position,night=34,distance=24,day=0,color='#ffcc8d')=>this.lightSources.push({position,day,night,distance,color});
     for(const e of this.city.entities.values()){
-      if(e.type==='park'||e.type==='bridge-court'){
+      const lights=getAuthoredLights(e.type);
+      if(lights?.length){
+        for(const light of lights)addLight(new T.Vector3(...placementAnchor(e,light.position)),light.night,light.distance,light.day,light.color);
+      }else if(e.type==='park'||e.type==='bridge-court'){
         const anchor=getTemplate(e.type).userData.anchors?.light;
         if(!anchor)continue;
         addLight(new T.Vector3(...placementAnchor(e,anchor)),e.type==='park'?18:12,e.type==='park'?8:6);
@@ -118,8 +121,8 @@ export class Environment {
     const nearby=this.lightSources.slice().sort((a,b)=>a.position.distanceToSquared(focus)-b.position.distanceToSquared(focus));
     this.localLights.forEach((light,i)=>{
       const source=nearby[i];
-      if(source){light.position.copy(source.position);light.distance=source.distance;}
-      light.intensity=source?this.night*source.intensity:0;
+      if(source){light.position.copy(source.position);light.distance=source.distance;light.color.set(source.color);}
+      light.intensity=source?T.MathUtils.lerp(source.day,source.night,this.night):0;
     });
     for(const [kind,{mesh,positions}]of Object.entries(this.particles)){
       mesh.userData.amount=T.MathUtils.damp(mesh.userData.amount||0,e.weather===kind?1:0,1.3,dt);mesh.material.opacity=.7*mesh.userData.amount;mesh.visible=mesh.userData.amount>.01;if(!mesh.visible)continue;mesh.position.set(focus.x,0,focus.z);

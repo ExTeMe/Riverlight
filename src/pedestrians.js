@@ -19,7 +19,9 @@ export class Pedestrians {
       for(let i=0;i<count;i++)if(name==='body'||name.includes('Arm'))mesh.setColorAt(i,new T.Color(palette[i%palette.length]));
       this.parts.push(mesh);this.group.add(mesh);
     }
-    const positions=[],lift=city.allowRiverfront ? .004 : -.014;
+    // Let the actual paving cover overlapping connector ends. Keep extra
+    // separation on wide study links, where distant views exposed stripes.
+    const positions=[],lift=city.allowRiverfront ? -.035 : -.014;
     for(const [a,b,halfWidth] of this.network.connectors){
       if(Math.hypot(b.x-a.x,b.z-a.z)<.1)continue;
       const y=Math.max(.012,a.y+lift),v=Math.max(.012,b.y+lift);

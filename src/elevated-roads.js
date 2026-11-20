@@ -1,4 +1,5 @@
 import { alignmentGeometry, roadOverlaps, sectionsOverlap } from './road-alignment.js';
+import { BY_ID } from './catalog.js';
 import { channelEnvelope, DECK_DEPTH, PIER_BASE, REQUIRED_UNDERSIDE } from './bridges.js';
 import { boxOutline, outlineBounds } from './outline.js';
 import { waterOverlaps } from './river.js';
@@ -14,7 +15,7 @@ const obstacleHeights={
   // Include the highest existing grid bridge grade as well as road traffic.
   road:5,bridge:5,path:2.4,
 };
-export const obstacleHeight=entity=>obstacleHeights[entity.type];
+export const obstacleHeight=entity=>BY_ID[entity.type]?.obstacleHeight??obstacleHeights[entity.type];
 export const ROAD_DECK_BOTTOM=.03-DECK_DEPTH;
 export const ROAD_RAIL_TOP=.92;
 const ROAD_HEADROOM=3.3;

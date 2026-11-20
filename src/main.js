@@ -33,20 +33,25 @@ import { createBaseline, createScene, SCENE_WEATHER } from './baseline.js';
 import { RIVERFRONT_STUDY_ID, STUDY_FRONTAGES, riverfrontEvidence, riverfrontGuideLines } from './riverfront-study.js';
 import { RiverfrontEditor } from './riverfront-editor.js';
 
-function sceneForApp(id, density) {
-  if(id===RIVERFRONT_STUDY_ID&&!import.meta.env.DEV)throw new Error('西岸街坡仅在开发服务中开放');
-  return createScene(id,density);
-}
-
 class App {
+  sceneForApp(id,density){
+    if(id==='WEST-BUILDINGS'&&this.buildingStudy)return this.buildingStudy.createBuildingStudy(id,density);
+    if(id===RIVERFRONT_STUDY_ID&&!import.meta.env.DEV)throw new Error('西岸街坡仅在开发服务中开放');
+    return createScene(id,density);
+  }
+
   async init(){
     this.mode='select';this.buildType=null;this.rotation=0;this.buildColor=0;this.selected=null;this.selectedParcel=null;this.moving=null;this.keys=new Set();this.cursor=null;this.dragCells=[];this.drawing=false;this.freeCamera=false;this.follow=false;this.quiet=false;this.thumbCache=new Map();this.replacing=false;
     if(import.meta.env.DEV&&new URLSearchParams(location.search).get('baseline')==='BASE-02'){
       this.baseline=createBaseline();
     }
     const sceneParams=new URLSearchParams(location.search);
-    if(sceneParams.has('scene'))this.baseline=sceneForApp(sceneParams.get('scene'),sceneParams.get('density')||'standard');
-    const allowRiverfront=this.baseline?.id===RIVERFRONT_STUDY_ID;
+    if(import.meta.env.DEV&&sceneParams.get('scene')==='WEST-BUILDINGS'){
+      this.buildingStudy=await import('./building-study.js');
+      this.buildingStudy.registerStudyBuildings();
+    }
+    if(sceneParams.has('scene'))this.baseline=this.sceneForApp(sceneParams.get('scene'),sceneParams.get('density')||'standard');
+    const allowRiverfront=this.baseline?.id===RIVERFRONT_STUDY_ID||!!this.buildingStudy;
     this.cityOptions={allowRiverfront};
     const saveName=this.baseline?(this.baseline.cameras?`riverlight-scenes-${this.baseline.id}-${this.baseline.density}`:'riverlight-baselines'):'riverlight-cities';
     this.saves=this.baseline?createSaveStore({name:saveName,allowRiverfront}):saves;
@@ -55,17 +60,20 @@ class App {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));this.renderer.setSize(innerWidth,innerHeight);this.renderer.shadowMap.enabled=true;this.renderer.shadowMap.type=T.PCFSoftShadowMap;this.renderer.toneMapping=T.ACESFilmicToneMapping;this.renderer.toneMappingExposure=.98;this.renderer.outputColorSpace=T.SRGBColorSpace;
     this.scene=new T.Scene();this.camera=new T.PerspectiveCamera(39,innerWidth/innerHeight,.5,4500);this.camera.position.set(183,180,230);
     this.renderer.info.autoReset=false;
-    this.controls=new OrbitControls(this.camera,this.canvas);this.controls.enableDamping=true;this.controls.dampingFactor=.075;this.controls.minDistance=24;this.controls.maxDistance=900;this.controls.minPolarAngle=.18;this.controls.maxPolarAngle=Math.PI*.43;this.controls.target.set(4,0,15);this.controls.mouseButtons={LEFT:null,MIDDLE:T.MOUSE.PAN,RIGHT:T.MOUSE.ROTATE};this.controls.panSpeed=.8;this.controls.rotateSpeed=.5;this.controls.zoomSpeed=.65;this.controls.update();
+    this.controls=new OrbitControls(this.camera,this.canvas);this.controls.enableDamping=true;this.controls.dampingFactor=.075;this.controls.maxDistance=900;this.controls.minPolarAngle=.18;this.controls.target.set(4,0,15);this.controls.mouseButtons={LEFT:null,MIDDLE:T.MOUSE.PAN,RIGHT:T.MOUSE.ROTATE};this.controls.panSpeed=.8;this.controls.rotateSpeed=.5;this.controls.zoomSpeed=.65;this.applyCameraLimits();this.controls.update();
     this.selectionIds=new Set();
     this.groupTransform=null;
     this.simulation=new SimulationClock();
     this.raycaster=new T.Raycaster();this.pointer=new T.Vector2();this.plane=new T.Plane(new T.Vector3(0,1,0),0);this.point=new T.Vector3();
-    this.assetStatus=await loadArchitectureAssets();this.world=new World(this.scene,this.city,this.baseline?.seed);this.environment=new Environment(this.scene,this.renderer,this.city);this.sound=new Soundscape();
+    this.assetStatus=await loadArchitectureAssets(this.buildingStudy?.buildingStudyAssets);
+    const missingStudyAsset=Object.keys(this.buildingStudy?.buildingStudyAssets??{}).find(id=>!this.assetStatus.loaded.includes(id));
+    if(missingStudyAsset)throw new Error(`建筑样板未加载：${BY_ID[missingStudyAsset].name}`);
+    this.world=new World(this.scene,this.city,this.baseline?.seed);this.environment=new Environment(this.scene,this.renderer,this.city);this.sound=new Soundscape();
     this.composer=new EffectComposer(this.renderer);this.composer.addPass(new RenderPass(this.scene,this.camera));this.ao=new CityAOPass(this.scene,this.camera,innerWidth,innerHeight,this.environment);this.ao.blendIntensity=.65;this.ao.updateGtaoMaterial({radius:2.5,distanceExponent:1,thickness:1,scale:1,samples:8});this.composer.addPass(this.ao);this.bloom=new UnrealBloomPass(new T.Vector2(innerWidth,innerHeight),.16,.45,1.15);this.composer.addPass(this.bloom);this.composer.addPass(new OutputPass());
     this.thumbTarget=new T.WebGLRenderTarget(160,128,{format:T.RGBAFormat});this.thumbTarget.texture.colorSpace=T.SRGBColorSpace;
     this.thumbScene=new T.Scene();this.thumbScene.add(new T.HemisphereLight('#fff6e2','#869a78',3));const thumbLight=new T.DirectionalLight('#ffffff',3);thumbLight.position.set(-6,14,12);this.thumbScene.add(thumbLight);
     this.ui=new UI(this);this.editor=new ParcelEditor(this,this.ui.root);this.roadEditor=new RoadEditor(this,this.ui.root.querySelector('.road-editor'));
-    if(allowRiverfront)this.platformEditor=new RiverfrontEditor(this,this.ui.root.querySelector('.riverfront-editor'));
+    if(this.baseline?.id===RIVERFRONT_STUDY_ID)this.platformEditor=new RiverfrontEditor(this,this.ui.root.querySelector('.riverfront-editor'));
     const writer=createSaveWriter(this.saves,saveName,this.cityOptions);
     this.autosave=new Autosave({
       available:()=>!this.replacing,
@@ -91,6 +99,7 @@ class App {
     window.riverlight={getStats:()=>({entities:this.city.entities.size,buildings:[...this.city.entities.values()].filter(e=>BY_ID[e.type].floors).length,pedestrians:this.world.traffic.people.walkers.length,visiblePedestrians:this.world.traffic.people.visibleCount,walkNodes:this.world.traffic.people.network.nodes.size,chunks:this.world.loaded.size,drawCalls:this.renderer.info.render.calls,triangles:this.renderer.info.render.triangles,environment:{...this.city.environment},mode:this.mode,selected:this.selected,roadRevision:this.city.roadNetwork.revision,walkRoadRevision:this.world.traffic.people.network.revision,laneRoadRevision:this.city.roadNetwork.laneGraph.revision,laneEdges:this.city.roadNetwork.laneGraph.edges.size,mobilityOverlay:this.world.walkOverlay.visible,sailing:this.world.traffic.boatStatus,junctionPreview:this.world.junctionPreview.active&&{...this.world.junctionPreview.active},baseline:this.baseline?{id:this.baseline.id,sceneVersion:this.baseline.sceneVersion,seed:this.baseline.seed}:null}),version:'1.0.0'};
     window.riverlight.getVehicles=()=>this.world.traffic.vehicleStatus;
     if(allowRiverfront)window.riverlight.getRiverfront=()=>riverfrontEvidence(this.city,this.world.traffic.people.network);
+    if(this.buildingStudy)window.riverlight.getStudyLightLevel=()=>this.environment.night;
   }
   thumbnail(type){
     if(this.thumbCache.has(type))return this.thumbCache.get(type);
@@ -102,7 +111,7 @@ class App {
   }
   async navigateScene(id,density='standard',resume=false){
     if(this.replacing||this.navigating)return;
-    if(id)sceneForApp(id,density); // Validate before saving or navigating.
+    if(id)this.sceneForApp(id,density); // Validate before saving or navigating.
     this.navigating=true;
     try{
     if(!await this.persist())return;
@@ -143,7 +152,7 @@ class App {
         return entity?.pose?[{id:entity.id,type:entity.type,parcel:entity.pose.parcel.id,point:[node.x,node.y,node.z],reachable:byNode.get(node.id)??[]}]:[];
       });
     }
-    const riverfront=this.baseline?.id===RIVERFRONT_STUDY_ID?riverfrontEvidence(this.city,this.world.traffic.people.network):undefined;
+    const riverfront=this.cityOptions.allowRiverfront?riverfrontEvidence(this.city,this.world.traffic.people.network):undefined;
     const river=this.baseline?.cameras?.river?{
       waterY:this.environment.water.position.y,quaySections:this.city.waterfront.length,radius:PROTOTYPE_RADIUS,
       sections:[-55,0,35].map(z=>({z,banks:riverBanks(z,this.city.terrain),navigable:navigableSpan(z,this.city.terrain,PROTOTYPE_RADIUS)})),
@@ -157,6 +166,9 @@ class App {
       ...window.riverlight.getStats(),cars:this.world.traffic.cars.length,vehicles:this.world.traffic.vehicleStatus,boats:this.world.traffic.boats.length,mobility,river,riverfront,
       detailedChunks:[...this.world.loaded.values()].filter(chunk=>chunk.detail).length,
       rendererMemory:{...this.renderer.info.memory},method:'最近一帧累计渲染调用（含反射与后处理）；几何/纹理为 WebGL 资源数量，不是字节数',
+      authoredLights:this.buildingStudy?this.environment.localLights.filter(light=>light.intensity>0).map(light=>({
+        position:light.position.toArray(),color:light.color.getHexString(),intensity:light.intensity,distance:light.distance,
+      })):undefined,
       frameTime:null,gpuMemoryBytes:null,deviceClass:'未登记',limitations:this.baseline?.limitations||[],spatial};
   }
   bind(){
@@ -384,6 +396,10 @@ class App {
     Object.assign(this.city.environment,values);if(values.quality)this.setQuality();this.ui.refresh();this.autosave.mark();
   }
   setQuality(){const high=this.city.environment.quality==='high';this.renderer.setPixelRatio(Math.min(devicePixelRatio,high?1.5:1));this.composer.setPixelRatio(this.renderer.getPixelRatio());this.bloom.enabled=high;this.ao.enabled=high;this.environment.sun.castShadow=true;}
+  applyCameraLimits(){
+    this.controls.minDistance=this.buildingStudy ? 6 : this.freeCamera ? 8 : 24;
+    this.controls.maxPolarAngle=Math.PI*(this.buildingStudy ? .495 : this.freeCamera ? .493 : .43);
+  }
   cameraState(){return {position:this.camera.position.toArray(),target:this.controls.target.toArray()};}
   restoreCamera(c){if(!c||![c.position,c.target].every(v=>Array.isArray(v)&&v.length===3&&v.every(n=>Number.isFinite(n)&&Math.abs(n)<50000)))return;this.camera.position.fromArray(c.position);this.controls.target.fromArray(c.target);this.controls.update();this.camera.updateMatrixWorld();}
   async persist(id){
@@ -500,7 +516,7 @@ class App {
       case 'focus':if(e?.alignment){this.controls.target.fromArray(this.city.roadNetwork.segments.get(e.id).center);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}else if(e||parcel){const p=e?placementOf(e):parcel;this.controls.target.set(p.x,0,p.z);this.camera.position.copy(this.controls.target).add(new T.Vector3(35,30,40));}break;
       case 'expand':if(this.city.expand()){this.changed();this.ui.toast(`城市向四周生长了 · 现在是 ${this.city.radius*2} × ${this.city.radius*2} 格`);}else this.ui.toast('已到达当前版本的世界边界');break;
       case 'zoom-in':this.zoom(.82);break;case 'zoom-out':this.zoom(1.22);break;case 'home':this.home();break;
-      case 'camera':this.freeCamera=!this.freeCamera;this.controls.maxPolarAngle=this.freeCamera?Math.PI*.493:Math.PI*.43;this.controls.minDistance=this.freeCamera?8:24;document.querySelector('#camera-label').textContent=this.freeCamera?'返回建造视角':'自由观察';document.querySelector('[data-action=camera]').classList.toggle('active',this.freeCamera);this.ui.toast(this.freeCamera?'自由观察 · 右键环绕，方向键移动':'已返回建造视角');break;
+      case 'camera':this.freeCamera=!this.freeCamera;this.applyCameraLimits();document.querySelector('#camera-label').textContent=this.freeCamera?'返回建造视角':'自由观察';document.querySelector('[data-action=camera]').classList.toggle('active',this.freeCamera);this.ui.toast(this.freeCamera?'自由观察 · 右键环绕，方向键移动':'已返回建造视角');break;
       case 'quiet':this.cancel();this.quiet=!this.quiet;document.body.classList.toggle('quiet',this.quiet);this.world.emptyParcels.layers.set(this.quiet?1:0);break;
       case 'environment':{const panel=document.querySelector('.environment');panel.hidden=!panel.hidden;document.querySelector('[data-action=environment]').classList.toggle('active',!panel.hidden);break;}
       case 'play':this.setEnvironment({playing:!this.city.environment.playing});break;
@@ -545,7 +561,7 @@ class App {
       case 'export':download(`${this.city.name}.riverlight.json`,JSON.stringify({city:this.city.snapshot(),camera:this.cameraState()},null,2));this.ui.toast('城市文件已导出');break;
       case 'export-original':{const original=await this.saveSession.originalRecord();if(!original)throw new Error('原记录暂时无法读取，请保留浏览器数据并稍后重试');download('riverlight-original-record.json',JSON.stringify(original,null,2));this.ui.toast('原存档记录已导出，未作修改');break;}
       case 'export-save':{const record=await this.saves.load(el.dataset.saveId);if(!record)throw new Error('该记录暂时无法读取');download(`${record.name||'未命名城市'}.riverlight-record.json`,JSON.stringify(record,null,2));this.ui.toast('存档原记录已导出');break;}
-      case 'reset-baseline':if(this.baseline){const initial=this.baseline.cameras?sceneForApp(this.baseline.id,this.baseline.density):createBaseline();if(await this.replaceCity(new City(initial.city,this.cityOptions),initial.camera)){const url=new URL(location.href);url.searchParams.delete('resume');location.assign(url);}}break;
+      case 'reset-baseline':if(this.baseline){const initial=this.baseline.cameras?this.sceneForApp(this.baseline.id,this.baseline.density):createBaseline();if(await this.replaceCity(new City(initial.city,this.cityOptions),initial.camera)){const url=new URL(location.href);url.searchParams.delete('resume');location.assign(url);}}break;
       case 'import':document.querySelector('#import-file').click();break;
       case 'close-modal':this.ui.closeModal();break;case 'help':this.ui.help();break;case 'audio':this.ui.audio();break;
       case 'toggle-audio':await this.sound.enable();document.querySelector('.top-actions [data-action=audio]').innerHTML=icon(this.sound.enabled?'sound':'mute');this.ui.audio();break;
